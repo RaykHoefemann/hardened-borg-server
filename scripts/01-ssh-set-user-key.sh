@@ -13,6 +13,8 @@
 #   ./scripts/01-ssh-set-user-key.sh test test-key.pub
 #
 
+set -eu
+
 KEYDIR="config/keys"
 CONF="config/clients.conf"
 
@@ -23,6 +25,21 @@ fi
 
 USERNAME="$1"
 INPUT="$2"
+OK=0
+
+# Validate username (safe filename + config token)
+case "$USERNAME" in
+    ""|*[!A-Za-z0-9_.-]*)
+        echo "ERROR: invalid username '$USERNAME'"
+        echo "allowed chars: A-Z a-z 0-9 . _ -"
+        exit 1
+        ;;
+esac
+
+is_valid_pubkey() {
+    # Accepts common OpenSSH key formats and optional trailing comment.
+    echo "$1" | grep -Eq '^ssh-[A-Za-z0-9-]+ [A-Za-z0-9+/=]+( .*)?$'
+}
 
 # check if user exists
 if ! grep -q "^${USERNAME}:" "$CONF"; then
@@ -36,18 +53,26 @@ mkdir -p "$KEYDIR"
 # Fall 1: INPUT is a existing file
 if [ -f "$INPUT" ]; then
     echo "[key] Read key from file: $INPUT"
-    cp "$INPUT" "$TARGET"
-    OK=1
+    KEY_LINE="$(head -n 1 "$INPUT" | tr -d '\r')"
+    if is_valid_pubkey "$KEY_LINE"; then
+        printf '%s\n' "$KEY_LINE" > "$TARGET"
+        OK=1
+    fi
 else
     # Fall 2: INPUT is a Key-String
-    echo "$INPUT" | grep -q "^ssh-" && OK=1
+    is_valid_pubkey "$INPUT" && OK=1
     if [ "$OK" = "1" ]; then
         echo "[key] Write key string in file: $TARGET"
-        echo "$INPUT" > "$TARGET"
+        printf '%s\n' "$INPUT" > "$TARGET"
     else
         echo "ERROR: '$INPUT' isn't a file or a valid ssh key!"
         exit 1
     fi
+fi
+
+if [ "$OK" != "1" ]; then
+    echo "ERROR: key content in '$INPUT' is not a valid OpenSSH public key"
+    exit 1
 fi
 
 echo "[key] Public key saved in: $TARGET"

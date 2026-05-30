@@ -17,6 +17,9 @@ set -e
 
 LOG="/log/entrypoint.log"
 
+# Ensure log path exists before first log write.
+mkdir -p /log
+
 # Log Function
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG"
@@ -53,7 +56,11 @@ fi
 # set owner of repo
 # ---------------------------------------------------------
 log "Setting owner of /repo..."
-chown -R borg:borg /repo
+if [ -d /repo ]; then
+    chown -R borg:borg /repo
+else
+    log "WARNING: /repo not found, skipping chown"
+fi
 
 # ---------------------------------------------------------
 # start SSH

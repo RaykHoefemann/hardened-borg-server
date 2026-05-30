@@ -15,6 +15,8 @@
 #   MIRROR  external users (e.g. friends)
 #
 
+set -eu
+
 CONF="config/clients.conf"
 KEYDIR="config/keys"
 
@@ -27,6 +29,15 @@ fi
 USERNAME="$1"
 GROUP="$2"
 
+# Validate username (safe filename + config token)
+case "$USERNAME" in
+    ""|*[!A-Za-z0-9_.-]*)
+        echo "ERROR: invalid username '$USERNAME'"
+        echo "allowed chars: A-Z a-z 0-9 . _ -"
+        exit 1
+        ;;
+esac
+
 # validate group
 if [ "$GROUP" != "OWN" ] && [ "$GROUP" != "MIRROR" ]; then
     echo "ERROR: unknown group '$GROUP'"
@@ -38,14 +49,17 @@ fi
 REPO_SUBPATH="${GROUP}/${USERNAME}"
 CONTAINER_REPO="/repo/${REPO_SUBPATH}"
 
+mkdir -p "$(dirname "$CONF")"
+touch "$CONF"
+
 # check if user exists
-if grep -q "^${USERNAME}::" "$CONF"; then
+if grep -q "^${USERNAME}:" "$CONF"; then
     echo "ERROR: User '$USERNAME' already exists in clients.conf! Aborted."
     exit 1
 fi
 
 echo "[create] Create entry in clients.conf"
-echo "${USERNAME}:${GROUP}:${CONTAINER_REPO}" >> "$CONF"
+printf '%s\n' "${USERNAME}:${GROUP}:${CONTAINER_REPO}" >> "$CONF"
 
 echo "[create] Create empty public key file"
 mkdir -p "$KEYDIR"
