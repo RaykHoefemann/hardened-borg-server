@@ -13,7 +13,7 @@
 #   - Start the SSH daemon
 #
 
-set -e
+set -eu
 
 LOG="/log/entrypoint.log"
 
