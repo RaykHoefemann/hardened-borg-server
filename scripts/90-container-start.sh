@@ -11,6 +11,8 @@
 #   ./scripts/90-container-start.sh
 #
 
+set -e
+
 echo "[start] Starting Borg server..."
 systemctl --user start container-borg-server.service
 echo "[start] Done."
