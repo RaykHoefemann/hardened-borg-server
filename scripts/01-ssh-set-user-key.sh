@@ -13,6 +13,7 @@
 #   ./scripts/01-ssh-set-user-key.sh test test-key.pub
 #
 
+set -e
 #load setup for all scripts
 . "$(dirname "$0")/../config.sh"
 
