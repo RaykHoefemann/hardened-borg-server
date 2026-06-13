@@ -12,6 +12,8 @@
 #
 
 set -e
+#load setup for all scripts
+. "$(dirname "$0")/../config.sh"
 
 echo "[stop] Stopping Borg server..."
 systemctl --user stop container-borg-server.service
