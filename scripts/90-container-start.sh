@@ -16,5 +16,5 @@ set -e
 . "$(dirname "$0")/../config.sh"
 
 echo "[start] Starting Borg server..."
-systemctl --user start container-borg-server.service
+systemctl --user start "$SERVICE"
 echo "[start] Done."
