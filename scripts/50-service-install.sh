@@ -10,6 +10,8 @@
 #
 
 set -e
+#load setup for all scripts
+. "$(dirname "$0")/../config.sh"
 
 SERVICE_DIR="$HOME/.config/systemd/user"
 SERVICE_NAME="container-borg-server.service"
