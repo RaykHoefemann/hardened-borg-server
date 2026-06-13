@@ -5,7 +5,15 @@
 # Wrapper for borg serve.
 # Rejects and deletes unencrypted repositories.
 #
+
+set -e
+
 REPO="$1"
+
+if [ -z "$REPO" ]; then
+    echo "ERROR: No repository path given." >&2
+    exit 1
+fi
 
 if [ -f "$REPO/config" ]; then
     MODE=$(grep "^encryption" "$REPO/config" | cut -d= -f2 | tr -d ' ')
