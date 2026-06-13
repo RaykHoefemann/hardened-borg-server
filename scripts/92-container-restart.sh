@@ -12,6 +12,8 @@
 #   ./scripts/92-container-restart.sh
 #
 
+set -e
+
 echo "[restart] Restarting Borg server..."
 systemctl --user restart container-borg-server.service
 echo "[restart] Done."
