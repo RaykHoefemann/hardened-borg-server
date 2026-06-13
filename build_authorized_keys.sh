@@ -45,8 +45,10 @@ echo "" >> "$OUT"
 while IFS=":" read -r name group repo; do
     # skip empty lines and comments
     [ -z "$name" ] && continue
-    echo "$name" | grep -q "^#" && continue
-
+    case "$name" in
+        \#*) continue ;;
+    esac
+    
     # Log the found user
     log "[INFO] Found user: '$name'"
 
