@@ -18,4 +18,11 @@ set -e
 
 echo "[restart] Restarting Borg server..."
 systemctl --user restart "$SERVICE"
+if systemctl --user is-active --quiet "$SERVICE"; then
+    echo "[restart] Service is running."
+else
+    echo "ERROR: Service failed to restart!"
+    systemctl --user status "$SERVICE" --no-pager
+    exit 1
+fi
 echo "[restart] Done."
