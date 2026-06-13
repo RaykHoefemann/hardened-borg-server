@@ -40,23 +40,18 @@ if [ -z "$CONTAINER_EXISTS" ]; then
     echo "→ It might be running transiently under systemd."
 else
     # Try to inspect
-    INSPECT=$(podman inspect "$CONTAINER" 2>/dev/null)
-
-    if [ $? -ne 0 ]; then
+    if ! podman inspect "$CONTAINER" --format \
+    "Name: {{.Name}}
+    Image: {{.ImageName}}
+    Status: {{.State.Status}}
+    PID: {{.State.Pid}}
+    IP: {{.NetworkSettings.IPAddress}}
+    Ports: {{json .NetworkSettings.Ports}}
+    Mounts:
+    {{range .Mounts}}  - {{.Source}} -> {{.Destination}}
+    {{end}}" 2>/dev/null; then
         echo "Container is running, but 'podman inspect' is unavailable."
         echo "→ The container might be transient."
-    else
-        # Display details
-        podman inspect "$CONTAINER" --format \
-"Name: {{.Name}}
-Image: {{.ImageName}}
-Status: {{.State.Status}}
-PID: {{.State.Pid}}
-IP: {{.NetworkSettings.IPAddress}}
-Ports: {{json .NetworkSettings.Ports}}
-Mounts:
-{{range .Mounts}}  - {{.Source}} -> {{.Destination}}
-{{end}}"
     fi
 fi
 
