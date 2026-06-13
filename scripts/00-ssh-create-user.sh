@@ -15,8 +15,8 @@
 #   MIRROR  external users (e.g. friends)
 #
 
-CONF="config/clients.conf"
-KEYDIR="config/keys"
+#load setup for all scripts
+. "$(dirname "$0")/../config.sh"
 
 if [ $# -ne 2 ]; then
     echo "Usage: $0 <username> <group>"
