@@ -50,6 +50,12 @@ else
     fi
 fi
 
+if ! ssh-keygen -l -f "$TARGET" > /dev/null 2>&1; then
+    echo "ERROR: not a valid SSH public key!"
+    rm "$TARGET"
+    exit 1
+fi
+
 echo "[key] Public key saved in: $TARGET"
 echo "→ Please restart the container!"
 
