@@ -13,9 +13,8 @@
 #
 
 set -e
-
-SERVICE="container-borg-server.service"
-CONTAINER="borg-server"
+#load setup for all scripts
+. "$(dirname "$0")/../config.sh"
 
 echo "------------------------------------------------------------"
 echo "[status] Systemd Service Status"
