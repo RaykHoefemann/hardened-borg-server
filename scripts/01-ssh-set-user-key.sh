@@ -47,19 +47,13 @@ fi
 if [ -f "$INPUT" ]; then
     echo "[key] Read key from file: $INPUT"
     cp "$INPUT" "$TARGET"
-    OK=1
 else
     # Fall 2: INPUT is a Key-String
-    echo "$INPUT" | grep -q "^ssh-" && OK=1
-    if [ "$OK" = "1" ]; then
-        echo "[key] Write key string in file: $TARGET"
-        echo "$INPUT" > "$TARGET"
-    else
-        echo "ERROR: '$INPUT' isn't a file or a valid ssh key!"
-        exit 1
-    fi
+    echo "[key] Write key string in file: $TARGET"
+    echo "$INPUT" > "$TARGET"
 fi
 
+# checking ssh-key
 if ! ssh-keygen -l -f "$TARGET" > /dev/null 2>&1; then
     echo "ERROR: not a valid SSH public key!"
     rm "$TARGET"
