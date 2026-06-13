@@ -40,14 +40,11 @@ RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/s
     sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' /etc/ssh/sshd_config && \
     echo "AllowUsers borg" >> /etc/ssh/sshd_config
 
-# Copy 'build_authorized_keys.sh' into the image
+# Copy scripts into the image
 COPY build_authorized_keys.sh /build_authorized_keys.sh
-RUN chmod +x /build_authorized_keys.sh
-
-# Copy 'entrypoint.sh' into the image
 COPY entrypoint.sh /entrypoint.sh
 COPY borg-wrapper.sh /borg-wrapper.sh
-RUN chmod +x /entrypoint.sh /borg-wrapper.sh
+RUN chmod +x /entrypoint.sh /borg-wrapper.sh /build_authorized_keys.sh
 
 EXPOSE 22
 
