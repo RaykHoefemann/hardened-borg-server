@@ -41,10 +41,6 @@ else
     log "[INFO] Using existing SSH host keys."
 fi
 
-# sshd auf die Keys im Volume zeigen lassen
-sed -i "s|#HostKey /etc/ssh/ssh_host_ed25519_key|HostKey $HOST_KEY_DIR/ssh_host_ed25519_key|" /etc/ssh/sshd_config
-sed -i "s|#HostKey /etc/ssh/ssh_host_rsa_key|HostKey $HOST_KEY_DIR/ssh_host_rsa_key|" /etc/ssh/sshd_config
-
 # ---------------------------------------------------------
 # Prepare .ssh directory for user 'borg'
 # ---------------------------------------------------------
