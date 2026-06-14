@@ -1,15 +1,20 @@
-#!/bin/sh
-set -e
+#!/bin/bash
+set -euo pipefail
 
 REPO="$1"
 CONFIG="$REPO/config"
+
+if ! echo "$REPO" | grep -qE '^/[a-zA-Z0-9/_-]+$'; then
+    echo "DENY: invalid repo path" >&2
+    exit 1
+fi
 
 if [ ! -f "$CONFIG" ]; then
     echo "DENY: missing repo config" >&2
     exit 1
 fi
 
-MODE=$(grep "^encryption" "$CONFIG" | cut -d= -f2 | tr -d ' ')
+MODE=$(grep "^encryption" "$CONFIG" | head -n1 | cut -d= -f2 | tr -d ' ')
 
 case "$MODE" in
     repokey*|keyfile*)
