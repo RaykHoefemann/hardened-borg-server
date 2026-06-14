@@ -67,6 +67,8 @@ UsePAM no
 LoginGraceTime 15
 MaxAuthTries 2
 MaxSessions 5
+MaxStartups 3:50:10
+PerSourceMaxStartups 2
 EOF
 
 # Copy scripts into the image
