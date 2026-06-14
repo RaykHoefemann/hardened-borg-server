@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # build_authorized_keys.sh
 # ------------------------
@@ -7,7 +7,7 @@
 #   /config/keys/<name>.pub (public ssh-key from user)
 #
 
-set -eu
+set -euo pipefail
 
 CONF="/config/clients.conf"
 KEYDIR="/config/keys"
@@ -43,40 +43,51 @@ echo "" >> "$OUT"
 
 # read each line from clients.conf
 while IFS=":" read -r name group repo; do
-    # skip empty lines and comments
     [ -z "$name" ] && continue
     case "$name" in
         \#*) continue ;;
     esac
-    
-    # Log the found user
-    log "[INFO] Found user: '$name'"
 
-    KEYFILE="${KEYDIR}/${name}.pub"
-
-    if [ ! -f "$KEYFILE" ]; then
-        log "[WARN] No public key found for '$name' – will be skipped"
+    # Validate name (used in file path)
+    if ! echo "$name" | grep -qE '^[a-zA-Z0-9_-]+$'; then
+        log "[ERROR] Invalid name '$name' – skipping"
         continue
     fi
 
-    # Check if the keyfile is empty
+    # Validate group
+    if ! echo "$group" | grep -qE '^[a-zA-Z0-9_-]+$'; then
+        log "[ERROR] Invalid group '$group' for '$name' – skipping"
+        continue
+    fi
+    
+    # Validate repo path (used in forced command)
+    if ! echo "$repo" | grep -qE '^/[a-zA-Z0-9/_-]+$'; then
+        log "[ERROR] Invalid repo path for '$name': '$repo' – skipping"
+        continue
+    fi
+
+    log "[INFO] Found user: '$name'"
+    KEYFILE="${KEYDIR}/${name}.pub"
+
+    if [ ! -f "$KEYFILE" ]; then
+        log "[WARN] No public key found for '$name' – skipping"
+        continue
+    fi
     if [ ! -s "$KEYFILE" ]; then
-        log "[WARN] Public key file '$KEYFILE' for '$name' is empty – will be skipped"
+        log "[WARN] Public key file for '$name' is empty – skipping"
+        continue
+    fi
+
+    # Validate SSH key
+    if ! ssh-keygen -l -f "$KEYFILE" >> "$LOG" 2>&1; then
+        log "[ERROR] Invalid SSH key for '$name' – skipping"
         continue
     fi
 
     key="$(cat "$KEYFILE")"
-
-    # Log the key's content status (optional, only for debugging)
-    log "[INFO] Public key for '$name' is valid and non-empty"
-
-    # forced command with append-only
     CMD="/borg-wrapper.sh $repo"
-
-    # create new entry in authorized_keys
     echo "command=\"$CMD\",restrict $key" >> "$OUT"
-    log "[INFO] Added authorized key for '$name' with repo '$repo'"
-
+    log "[INFO] Added key for '$name' with repo '$repo'"
 done < "$CONF"
 
 # set permissions
