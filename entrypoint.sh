@@ -31,6 +31,7 @@ log "looking for SSH host keys..."
 # SSH Host Keys persistent halten
 HOST_KEY_DIR="/config/ssh_host_keys"
 mkdir -p "$HOST_KEY_DIR"
+chmod 700 "$HOST_KEY_DIR"
 
 if [ ! -f "$HOST_KEY_DIR/ssh_host_ed25519_key" ]; then
     log "[INFO] Generating new SSH host keys..."
