@@ -9,21 +9,21 @@ if ! echo "$REPO" | grep -qE '^/[a-zA-Z0-9/_-]+$'; then
     exit 1
 fi
 
-# Fall 1: Verzeichnis existiert nicht oder ist komplett leer
-# -> noch nie initialisiert, Client darf "borg init" ausführen
+# Case 1: directory does not exist or is completely empty
+# -> never initialized yet, client is allowed to run "borg init"
 if [ ! -e "$REPO" ] || [ -z "$(ls -A "$REPO" 2>/dev/null)" ]; then
     mkdir -p "$REPO"
     exec borg serve --restrict-to-path "$REPO" --append-only
 fi
 
-# Fall 2: Verzeichnis existiert und hat Inhalt, aber config fehlt
-# -> verdächtig (Korruption, manuelle Löschung, etc.), NICHT automatisch erlauben
+# Case 2: directory exists and has content, but config is missing
+# -> suspicious (corruption, manual deletion, etc.), do NOT allow automatically
 if [ ! -f "$CONFIG" ]; then
     echo "DENY: repo non-empty but config missing – needs manual admin review" >&2
     exit 1
 fi
 
-# Fall 3: Normalbetrieb – config vorhanden, Verschlüsselung prüfen
+# Case 3: normal operation – config present, check encryption mode
 MODE=$(grep "^encryption" "$CONFIG" | head -n1 | cut -d= -f2 | tr -d ' ')
 
 case "$MODE" in
