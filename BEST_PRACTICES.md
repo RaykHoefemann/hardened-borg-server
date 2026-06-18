@@ -1,52 +1,143 @@
-# Best Practices for borg-server
+# BEST PRACTICES — hardened-borg-server
 
-These are recommended practices for using this borg-server securely and effectively.  
-**Note:** These are guidelines for administrators; borg-server does **not enforce these practices**—they must be implemented at the operator level.
+This document defines the **required operational baseline** for secure deployments of hardened-borg-server.
 
----
+These practices are not enforced by the application layer itself, but are **mandatory to achieve the security guarantees described in the README**.
 
-## 🔐 Backup Encryption
-
-- Always **encrypt backups on the source server** before sending them to another borg-server (mirror/offsite replication).  
-  This ensures that mirrored backups remain private even if the target server is compromised.
+A deployment that does not follow these practices MUST be considered insecure.
 
 ---
 
-## 🔗 Secure Transport
+# 🔐 Security Model Context
 
-- All backups are transmitted over **SSH**, which provides authentication and encryption by default.  
-- For **external or untrusted network access**, consider using an additional VPN tunnel (e.g., WireGuard) to further isolate and protect SSH connections.  
-- Only expose the necessary **SSH port**; avoid exposing additional services.
+hardened-borg-server operates as part of a **two-layer security system**:
 
----
+- Application Layer (this project): access control and repository isolation
+- Host Layer (operator responsibility): system-level isolation and containment
 
-## 📝 Monitoring & Verification
-
-- Regularly monitor logs stored in `/log` to ensure backups are being received correctly.  
-- Periodically verify backup integrity using `borg check` or equivalent mechanisms.  
-- Test restoration procedures to ensure data can be recovered when needed.
+This document focuses on the correct configuration of both layers.
 
 ---
 
-## 🧪 Testing Before Production
+# 🧱 1. Host Security Baseline (MANDATORY)
 
-- Use borg-server’s **safe testing environment** to validate backup strategies before deploying to production.  
-- Simulate restore scenarios to confirm that backup and mirror workflows function as intended.
+A secure deployment requires a hardened host environment.
+
+## Required host characteristics
+
+- Immutable or minimal OS (recommended: Fedora CoreOS)
+- SELinux in enforcing mode (or equivalent MAC system)
+- Rootless container runtime (recommended: Podman)
+- Kernel-level isolation mechanisms enabled (namespaces, cgroups)
+- Strict firewall configuration (default deny, only SSH exposed)
+- Dedicated storage volumes for:
+  - repositories
+  - logs
+  - configuration
 
 ---
 
-## ⚙️ Operational Hygiene
+## ⚠️ Security rationale
 
-- Apply updates to both borg-server and the base system (`debian:stable-slim`) regularly to benefit from security patches.  
-- Maintain clear separation of repositories, logs, and configuration volumes to prevent accidental data leaks or overwrites.
+These controls mitigate system-level threats such as:
+
+- container escape or runtime breakout
+- privilege escalation to host system
+- unauthorized access to other services or data
+- persistence outside the application scope
+
+Without these controls, application-level security guarantees are significantly weakened.
 
 ---
 
-## 📌 Summary
+# 🔐 2. Backup Encryption (MANDATORY)
 
-Following these practices helps ensure:
+- Backups MUST be encrypted at the source before transmission.
+- Encryption must NOT rely on the server side.
 
-- Data confidentiality (via encryption)  
-- Data integrity (via append-only enforcement and verification)  
-- Minimal exposure to external threats (via secure transport and minimal open ports)  
-- Predictable and reliable backup operations
+## Why this matters
+
+This ensures that:
+
+- mirrored/offsite backups remain confidential
+- a compromised server does not expose backup contents
+- trust is not placed on the storage endpoint
+
+---
+
+# 🔗 3. Secure Transport (MANDATORY)
+
+- All communication MUST use SSH
+- Password authentication MUST be disabled
+- Root login MUST be disabled
+- Only required SSH port(s) may be exposed
+
+## Optional (recommended for untrusted networks)
+
+- Use a VPN tunnel (e.g. WireGuard) in addition to SSH
+
+---
+
+# 📝 4. Monitoring & Verification (SHOULD)
+
+- Monitor logs in `/log` regularly
+- Run periodic `borg check` integrity validation
+- Maintain audit visibility of backup execution
+
+---
+
+# 🧪 5. Restore Testing (SHOULD — CRITICAL OPERATIONAL CONTROL)
+
+- Regular restore tests MUST be performed
+- Backup existence alone is not sufficient for reliability
+- Restoration procedures must be validated under real conditions
+
+## Why this matters
+
+Backups are only valid if recovery is confirmed.
+
+---
+
+# ⚙️ 6. Operational Hygiene (SHOULD)
+
+- Keep borg-server and base system updated regularly
+- Use clear separation of:
+  - repositories
+  - logs
+  - configuration
+- Avoid mixing operational and storage concerns
+
+---
+
+# 🧱 7. Deployment Testing (SHOULD)
+
+Before production use:
+
+- Validate client configuration in a test environment
+- Simulate restore scenarios
+- Verify repository isolation between clients
+- Test mirror/offsite workflows
+
+---
+
+# 📌 Security Outcome
+
+A deployment following this baseline provides:
+
+- Confidential backup storage (via encryption at source)
+- Strong client isolation
+- Reduced attack surface via minimal exposure
+- Verified restore capability (operational integrity)
+- Containment of system-level compromise via host isolation
+
+---
+
+# ⚠️ Non-compliant deployments
+
+Any deployment that does NOT follow the mandatory sections:
+
+- Host Security Baseline
+- Backup Encryption
+- Secure Transport
+
+must be considered **not security-hardened**, regardless of application configuration.
