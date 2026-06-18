@@ -10,12 +10,13 @@ A deployment that does not follow these practices MUST be considered insecure.
 
 # 🔐 Security Model Context
 
-hardened-borg-server operates as part of a **two-layer security system**:
+hardened-borg-server operates as part of a **multi-layer security architecture**:
 
 - Application Layer (this project): access control and repository isolation
-- Host Layer (operator responsibility): system-level isolation and containment
+- Host Layer (operator responsibility): OS and container isolation
+- Network Perimeter Layer (operator responsibility): firewall and VPN access control
 
-This document focuses on the correct configuration of both layers.
+This document defines the required configuration for all layers.
 
 ---
 
@@ -29,11 +30,11 @@ A secure deployment requires a hardened host environment.
 - SELinux in enforcing mode (or equivalent MAC system)
 - Rootless container runtime (recommended: Podman)
 - Kernel-level isolation mechanisms enabled (namespaces, cgroups)
-- Strict firewall configuration (default deny, only SSH exposed)
 - Dedicated storage volumes for:
   - repositories
   - logs
   - configuration
+- Strict local privilege separation
 
 ---
 
@@ -46,22 +47,20 @@ These controls mitigate system-level threats such as:
 - unauthorized access to other services or data
 - persistence outside the application scope
 
-Without these controls, application-level security guarantees are significantly weakened.
+Without these controls, application-level security guarantees are significantly reduced.
 
 ---
 
 # 🔐 2. Backup Encryption (MANDATORY)
 
 - Backups MUST be encrypted at the source before transmission.
-- Encryption must NOT rely on the server side.
+- Encryption MUST NOT depend on the server.
 
 ## Why this matters
 
-This ensures that:
-
-- mirrored/offsite backups remain confidential
-- a compromised server does not expose backup contents
-- trust is not placed on the storage endpoint
+- protects confidentiality even if the server is compromised
+- prevents exposure of data in mirror/offsite setups
+- ensures trust is not placed on storage infrastructure
 
 ---
 
@@ -72,63 +71,102 @@ This ensures that:
 - Root login MUST be disabled
 - Only required SSH port(s) may be exposed
 
-## Optional (recommended for untrusted networks)
-
-- Use a VPN tunnel (e.g. WireGuard) in addition to SSH
+SSH is the only application-layer transport mechanism.
 
 ---
 
-# 📝 4. Monitoring & Verification (SHOULD)
+# 🌐 4. External SSH Access (VPN-RESTRICTED) (RECOMMENDED)
+
+When access from external networks is required, SSH MUST NOT be exposed directly to the internet.
+
+Instead:
+
+- SSH access MUST be restricted to a VPN-protected network
+- WireGuard SHOULD be used as the VPN solution
+- SSH MUST only be reachable after VPN authentication
+
+## Security goal
+
+SSH is never directly exposed to untrusted networks.
+
+---
+
+# 🧱 5. Network Perimeter Enforcement (OPNSENSE) (ADVANCED REQUIREMENT)
+
+A dedicated firewall/gateway SHOULD be used for external access control.
+
+Recommended setup:
+
+- OPNsense as primary firewall/router
+- WireGuard termination on OPNsense (preferred)
+- SSH port NOT forwarded to public internet
+- Only VPN interface may access SSH
+- Default-deny inbound firewall policy
+
+## Security rationale
+
+This layer protects against:
+
+- internet-wide port scanning
+- brute-force attacks on SSH
+- unauthorized direct access attempts
+- exposure of internal services
+
+It enforces a strict network boundary in front of the system.
+
+---
+
+# 📝 6. Monitoring & Verification (SHOULD)
 
 - Monitor logs in `/log` regularly
 - Run periodic `borg check` integrity validation
-- Maintain audit visibility of backup execution
+- Audit backup execution behavior
+- Ensure backups are actually being created and not silently failing
 
 ---
 
-# 🧪 5. Restore Testing (SHOULD — CRITICAL OPERATIONAL CONTROL)
+# 🧪 7. Restore Testing (SHOULD — CRITICAL)
 
 - Regular restore tests MUST be performed
-- Backup existence alone is not sufficient for reliability
-- Restoration procedures must be validated under real conditions
-
-## Why this matters
-
-Backups are only valid if recovery is confirmed.
+- Backups are only valid if restoration works
+- Test recovery under realistic conditions
 
 ---
 
-# ⚙️ 6. Operational Hygiene (SHOULD)
+# ⚙️ 8. Operational Hygiene (SHOULD)
 
-- Keep borg-server and base system updated regularly
-- Use clear separation of:
+- Keep borg-server and base system updated
+- Separate clearly:
   - repositories
   - logs
   - configuration
 - Avoid mixing operational and storage concerns
+- Use consistent and documented client configurations
 
 ---
 
-# 🧱 7. Deployment Testing (SHOULD)
+# 🧱 9. Deployment Validation (SHOULD)
 
-Before production use:
+Before production deployment:
 
-- Validate client configuration in a test environment
-- Simulate restore scenarios
-- Verify repository isolation between clients
-- Test mirror/offsite workflows
+- validate client isolation in test environment
+- simulate restore scenarios
+- test mirror/offsite replication
+- verify firewall and VPN rules
+- confirm SSH is not publicly exposed
 
 ---
 
 # 📌 Security Outcome
 
-A deployment following this baseline provides:
+A deployment that follows these practices provides:
 
-- Confidential backup storage (via encryption at source)
-- Strong client isolation
-- Reduced attack surface via minimal exposure
-- Verified restore capability (operational integrity)
-- Containment of system-level compromise via host isolation
+- Confidential backups (via client-side encryption)
+- Strong client isolation (application layer)
+- Reduced attack surface (host hardening)
+- Controlled network exposure (VPN + firewall)
+- Verified recoverability (restore testing)
+- Containment of compromise scenarios (multi-layer isolation)
 
 ---
 
