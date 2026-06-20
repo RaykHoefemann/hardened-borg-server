@@ -41,17 +41,26 @@ jobs:
           fi
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: |
-            ghcr.io/raykhoefemann/hardened-borg-server:${{ steps.meta.outputs.tag }}
-            ${{ steps.meta.outputs.stable == 'true' && format('ghcr.io/raykhoefemann/hardened-borg-server:latest') || '' }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/RaykHoefemann/hardened-borg-server
-            org.opencontainers.image.description=Hardened Borg Backup Server
-            org.opencontainers.image.licenses=GPL-3.0
-            org.opencontainers.image.title=Hardened Borg Server
-            org.opencontainers.image.url=https://github.com/RaykHoefemann/hardened-borg-server
-            org.opencontainers.image.version=${{ steps.meta.outputs.tag }}
+                uses: docker/build-push-action@v6
+                with:
+                  context: .
+                  push: true
+                  platforms: linux/amd64,linux/arm64
+                  tags: |
+                    ghcr.io/raykhoefemann/hardened-borg-server:${{ steps.meta.outputs.tag }}
+                    ${{ steps.meta.outputs.stable == 'true' && format('ghcr.io/raykhoefemann/hardened-borg-server:latest') || '' }}
+                  labels: |
+                    org.opencontainers.image.source=https://github.com/RaykHoefemann/hardened-borg-server
+                    org.opencontainers.image.description=Hardened Borg Backup Server
+                    org.opencontainers.image.licenses=GPL-3.0
+                    org.opencontainers.image.title=Hardened Borg Server
+                    org.opencontainers.image.url=https://github.com/RaykHoefemann/hardened-borg-server
+                    org.opencontainers.image.version=${{ steps.meta.outputs.tag }}
+                  annotations: |
+                    org.opencontainers.image.source=https://github.com/RaykHoefemann/hardened-borg-server
+                    org.opencontainers.image.description=Hardened Borg Backup Server
+                    org.opencontainers.image.licenses=GPL-3.0
+                    org.opencontainers.image.title=Hardened Borg Server
+                    org.opencontainers.image.url=https://github.com/RaykHoefemann/hardened-borg-server
+                    org.opencontainers.image.version=${{ steps.meta.outputs.tag }}
+
