@@ -9,6 +9,27 @@ if ! echo "$REPO" | grep -qE '^/[a-zA-Z0-9/_-]+$'; then
     exit 1
 fi
 
+# ---------------------------------------------------------
+# Non-borg commands (info channel)
+# ---------------------------------------------------------
+case "${SSH_ORIGINAL_COMMAND:-}" in
+    info)
+        if [ -f "$REPO/info.txt" ]; then
+            cat "$REPO/info.txt"
+        else
+            echo "no info available yet"
+        fi
+        exit 0
+        ;;
+    "")
+        # normal borg client connection, fall through below
+        ;;
+    *)
+        echo "DENY: unknown command" >&2
+        exit 1
+        ;;
+esac
+
 # Case 1: directory does not exist or is completely empty
 # -> never initialized yet, client is allowed to run "borg init"
 if [ ! -e "$REPO" ] || [ -z "$(ls -A "$REPO" 2>/dev/null)" ]; then
