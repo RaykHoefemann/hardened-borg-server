@@ -15,7 +15,7 @@
 
 set -e
 #load setup for all scripts
-. "$(dirname "$0")/../config.sh"
+. "$(dirname "$0")/config.sh"
 
 if [ $# -ne 2 ]; then
     echo "Usage: $0 <username> <public-key-file|public-key-string>"

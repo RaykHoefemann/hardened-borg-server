@@ -11,7 +11,7 @@
 
 set -e
 #load setup for all scripts
-. "$(dirname "$0")/../config.sh"
+. "$(dirname "$0")/config.sh"
 
 SERVICE_DIR="$HOME/.config/systemd/user"
 SOURCE_FILE="$(pwd)/systemd/$SERVICE_NAME"

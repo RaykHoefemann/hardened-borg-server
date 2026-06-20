@@ -14,7 +14,7 @@
 
 set -e
 #load setup for all scripts
-. "$(dirname "$0")/../config.sh"
+. "$(dirname "$0")/config.sh"
 
 echo "[restart] Restarting Borg server..."
 systemctl --user restart "$SERVICE"

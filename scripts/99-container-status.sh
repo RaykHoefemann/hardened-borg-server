@@ -14,7 +14,7 @@
 
 set -e
 #load setup for all scripts
-. "$(dirname "$0")/../config.sh"
+. "$(dirname "$0")/config.sh"
 
 echo "------------------------------------------------------------"
 echo "[status] Systemd Service Status"

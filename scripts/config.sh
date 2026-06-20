@@ -5,7 +5,7 @@
 # Central configuration for all borg-server scripts.
 # Source this file at the beginning of each script:
 #
-#   . "$(dirname "$0")/../config.sh"
+#   . "$(dirname "$0")/config.sh"
 #
 
 # Paths
