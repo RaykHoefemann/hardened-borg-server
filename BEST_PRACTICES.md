@@ -1,10 +1,10 @@
 # BEST PRACTICES — hardened-borg-server
 
-This document defines the **required operational baseline** for secure deployments of hardened-borg-server.
+This document defines the **required operational baseline** for secure deployments of hardened-borg-server, together with optional additional hardening layers.
 
-These practices are not enforced by the application layer itself, but are **mandatory to achieve the security guarantees described in the README**.
+Sections are individually marked **MANDATORY**, **RECOMMENDED**, **SHOULD**, or **OPTIONAL** to indicate how critical they are. Only the **MANDATORY** sections are required to achieve the security guarantees described in the README; the rest are defense-in-depth measures operators can add based on their own risk tolerance and resources.
 
-A deployment that does not follow these practices MUST be considered insecure.
+A deployment that does not follow the **MANDATORY** sections MUST be considered insecure.
 
 ---
 
@@ -12,11 +12,11 @@ A deployment that does not follow these practices MUST be considered insecure.
 
 hardened-borg-server operates as part of a **multi-layer security architecture**:
 
-- Application Layer (this project): access control and repository isolation
-- Host Layer (operator responsibility): OS and container isolation
-- Network Perimeter Layer (operator responsibility): firewall and VPN access control
+- Application Layer (this project): access control and repository isolation — provided by the application
+- Host Layer (operator responsibility, **mandatory**): OS and container isolation
+- Network Perimeter Layer (operator responsibility, **optional**): firewall and VPN access control as an additional hardening measure, on top of an architecture that is already designed to be safely reachable directly from the internet
 
-This document defines the required configuration for all layers.
+This document defines the required configuration for the mandatory layers, and example configuration for the optional hardening layers.
 
 ---
 
@@ -75,44 +75,46 @@ SSH is the only application-layer transport mechanism.
 
 ---
 
-# 🌐 4. External SSH Access (VPN-RESTRICTED) (RECOMMENDED)
+# 🌐 4. External SSH Access via VPN (OPTIONAL HARDENING)
 
-When access from external networks is required, SSH MUST NOT be exposed directly to the internet.
+hardened-borg-server is designed to be safely exposed directly to the internet (see README, Chapter 1) — the application-layer controls (key-only auth, forced commands, no shell access) are built specifically for that threat model and do not depend on a VPN being present.
 
-Instead:
+Restricting SSH access to a VPN-protected network is an **optional additional layer** that further reduces the attack surface and makes it harder for opportunistic attackers or compromised client devices to even reach the SSH port in the first place. It is not required to achieve the security guarantees described in the README.
 
-- SSH access MUST be restricted to a VPN-protected network
-- WireGuard SHOULD be used as the VPN solution
-- SSH MUST only be reachable after VPN authentication
+For deployments that want this extra layer:
+
+- SSH access MAY be restricted to a VPN-protected network
+- WireGuard CAN be used as the VPN solution
+- SSH MAY only be made reachable after VPN authentication
 
 ## Security goal
 
-SSH is never directly exposed to untrusted networks.
+Where used, this layer reduces internet-wide exposure of the SSH port (e.g. against port scanning and opportunistic brute-force attempts) on top of the existing application-layer protections — it does not replace them.
 
 ---
 
-# 🧱 5. Network Perimeter Enforcement (OPNSENSE) (ADVANCED REQUIREMENT)
+# 🧱 5. Network Perimeter Enforcement (OPNSENSE) (OPTIONAL, ADVANCED)
 
-A dedicated firewall/gateway SHOULD be used for external access control.
+For operators who choose to add the VPN layer from Chapter 4, a dedicated firewall/gateway MAY be used for additional network access control. This is one more optional, additive layer on top of the application-layer security — not a requirement for a secure deployment.
 
-Recommended setup:
+Example setup:
 
 - OPNsense as primary firewall/router
-- WireGuard termination on OPNsense (preferred)
-- SSH port NOT forwarded to public internet
-- Only VPN interface may access SSH
+- WireGuard termination on OPNsense (one possible option)
+- SSH port not forwarded to the public internet
+- Only the VPN interface may access SSH
 - Default-deny inbound firewall policy
 
 ## Security rationale
 
-This layer protects against:
+Where implemented, this layer adds protection against:
 
 - internet-wide port scanning
 - brute-force attacks on SSH
 - unauthorized direct access attempts
 - exposure of internal services
 
-It enforces a strict network boundary in front of the system.
+It is a defense-in-depth option for operators with the means and requirement for it, not a baseline expectation. Deployments without it are still considered secure as long as the mandatory sections (Chapters 1–3) are followed.
 
 ---
 
@@ -152,8 +154,7 @@ Before production deployment:
 - validate client isolation in test environment
 - simulate restore scenarios
 - test mirror/offsite replication
-- verify firewall and VPN rules
-- confirm SSH is not publicly exposed
+- if using the optional VPN/firewall layer (Chapter 4–5): verify firewall and VPN rules, confirm SSH is only reachable as intended
 
 ---
 
@@ -164,7 +165,7 @@ A deployment that follows these practices provides:
 - Confidential backups (via client-side encryption)
 - Strong client isolation (application layer)
 - Reduced attack surface (host hardening)
-- Controlled network exposure (VPN + firewall)
+- Optionally, further reduced network exposure (VPN + firewall, if deployed)
 - Verified recoverability (restore testing)
 - Containment of compromise scenarios (multi-layer isolation)
 

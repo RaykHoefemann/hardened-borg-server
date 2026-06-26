@@ -36,10 +36,12 @@ For this reason, this project explicitly recommends and is designed around a spe
 
 - **Fedora CoreOS** with an **immutable root filesystem** — the base system cannot be modified at runtime, which removes most persistence and tampering opportunities
 - **SELinux** in enforcing mode — mandatory access control confines what the container process can do even if it is compromised
-- **Rootless containers** (e.g. Podman) — the container runtime itself never runs with host root privileges, removing a major class of escape-to-host vulnerabilities
+- **Rootless containers via Podman** — Podman is the only container runtime that supports rootless operation on the assumed Fedora CoreOS host; the container runtime itself never runs with host root privileges, removing a major class of escape-to-host vulnerabilities
 - **XFS as the repository storage filesystem, with project quotas (pquota) enabled** — this is what allows per-client storage limits (see `clients.conf`, Chapter 6.1) to be enforced as a hard limit at the filesystem level, rather than merely tracked informationally by the application
 
 These four building blocks work together: immutability prevents persistence, SELinux constrains behavior, rootless execution removes the easiest privilege-escalation path, and XFS project quotas guarantee that no client can exceed its assigned storage allowance regardless of application-level behavior. Together they form the minimum baseline this project assumes is in place.
+
+Note: these four components are the **complete mandatory host baseline**. Firewall and VPN restrictions (covered separately in Chapter 1.1.3 and in `BEST_PRACTICES.md`, Chapters 4–5) are additional, optional hardening on top of this baseline — not a fifth mandatory component.
 
 ### 1.1.1. Why this layer is required
 
@@ -79,10 +81,11 @@ Building on the four core components introduced above, a secure deployment must 
 
 - **Fedora CoreOS** (immutable operating system)
 - **SELinux** in enforcing mode (mandatory access control)
-- **Rootless container runtime** (e.g. Podman)
+- **Podman as rootless container runtime** — the only runtime supporting rootless operation on Fedora CoreOS
 - **XFS filesystem with project quotas (pquota) enabled** for the repository storage volume
-- Proper firewall and network segmentation
 - Secure storage configuration
+
+Additionally, as **optional, defense-in-depth hardening** — not a requirement for a secure deployment, since the application layer (Chapter 1.2) is designed to be safely reachable directly from the internet — a firewall and/or VPN restriction (e.g. WireGuard) in front of the SSH port can further reduce the attack surface and make it harder for attackers or compromised client devices to even reach the server. See `BEST_PRACTICES.md`, Chapters 4–5, for details.
 
 When implemented correctly, this layer provides:
 
@@ -237,8 +240,7 @@ No information about other clients, server internals, or storage contents is eve
 # 4. Architecture Overview
 
 - Base image: `debian:stable-slim` with BorgBackup installed
-- Containerized runtime (Podman or Docker recommended)
-- Rootless execution strongly recommended
+- Containerized runtime: **Podman** — required, not just recommended; on the assumed Fedora CoreOS host (Chapter 1.1), Podman is the only runtime that supports rootless operation, and rootless execution is mandatory (see Chapter 1.1). Docker is not supported in this setup.
 - Systemd-compatible deployment supported
 
 ## 4.1. Storage Model
@@ -256,6 +258,8 @@ No information about other clients, server internals, or storage contents is eve
 
 # 5. Deployment Example
 
+## 5.1. Manual / Ad-hoc Start
+
 ```bash
 podman run \
   --name=hardened-borg-server \
@@ -266,6 +270,82 @@ podman run \
   --volume=$HOME/containers/borg-server/log:/log:Z \
   ghcr.io/raykhoefemann/hardened-borg-server:latest
 ```
+
+Useful for testing, but the container does not survive a reboot or a logout, and there is no automatic restart on failure.
+
+## 5.2. Persistent Deployment via systemd (Recommended)
+
+For production use, the container should run as a **rootless systemd user service** rather than being started manually. A ready-to-use unit file is provided at `systemd/container-borg-server.service`.
+
+```ini
+[Unit]
+Description=Borg Backup Server (Podman)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/podman run \
+    --name=borg-server \
+    --rm \
+    -e PUID=1111 \
+    -e PGID=1111 \
+    --publish=2222:22 \
+    --volume=%h/containers/borg-server/config:/config:Z \
+    --volume=%h/containers/borg-server/repo:/repo:Z \
+    --volume=%h/containers/borg-server/log:/log:Z \
+    ghcr.io/raykhoefemann/borg-server:0.1
+
+ExecStop=/usr/bin/podman stop borg-server
+
+Restart=on-failure
+RestartSec=5
+
+User=%u
+Group=%u
+Environment=PODMAN_SYSTEMD_UNIT=%n
+
+[Install]
+WantedBy=default.target
+```
+
+### 5.2.1. Why this is a *user* service, not a system service
+
+This unit is designed to be installed under `~/.config/systemd/user/`, not `/etc/systemd/system/`. This distinction matters specifically because rootless operation is mandatory (see Chapter 1.1):
+
+- Run as a **systemd user service** (`systemctl --user ...`), the unit executes inside your own user session, with the normal rootless Podman environment (`XDG_RUNTIME_DIR`, the user's own `containers/storage.conf`, subuid/subgid mappings, etc.) already in place. This is the supported way to run this project.
+- A `User=`/`Group=` directive in a **system-wide** unit (`/etc/systemd/system/`) does not reliably reproduce that environment — Podman can fail to locate the expected runtime directory or rootless storage configuration for that user, since system services don't inherit a full user login session by default. Use the user-service path described here rather than adapting this file into a system unit.
+
+### 5.2.2. Setup
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp systemd/container-borg-server.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now container-borg-server.service
+```
+
+Before relying on this for production, adjust `PUID`/`PGID` in the unit file: `1111` is an example value in the file shown above and must match the actual UID/GID you want the container's internal `borg` user mapped to — copying it unchanged may not match your host user.
+
+### 5.2.3. Lingering: surviving logout and reboot
+
+By default, systemd stops all user services once the user fully logs out, and user services do not start automatically at boot without an active login session. Since this server needs to run continuously, **enable lingering** for the user running the container:
+
+```bash
+loginctl enable-linger <username>
+```
+
+This tells systemd to start that user's systemd instance (and therefore this service) at boot and keep it running independently of whether that user is logged in interactively. Without this step, the backup server will stop the next time the host reboots or the session ends, even though `Restart=on-failure` is configured.
+
+### 5.2.4. A note on `--rm` combined with `Restart=on-failure`
+
+The provided unit uses `--rm` (remove the container on stop) together with a fixed `--name` and `Restart=on-failure`. This is a known, slightly fragile combination: if the container is not cleanly removed after a crash (for example, after an OOM kill), a subsequent automatic restart can fail with a "name already in use" error, because `podman run` tries to create a container with a name that technically still exists.
+
+In practice this is uncommon, but operators who want a more robust setup can:
+
+- add `--replace` to the `podman run` line, which tells Podman to remove any existing container with the same name before creating a new one, or
+- migrate to a **Podman Quadlet** (`.container` file under `~/.config/containers/systemd/`) instead of a hand-written `.service` file, which manages the container lifecycle more robustly and is the currently recommended long-term approach for new Podman/systemd deployments.
+
+The unit as provided is functional and sufficient for most deployments; this is a hardening suggestion, not a required change.
 
 ---
 
