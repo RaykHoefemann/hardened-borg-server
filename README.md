@@ -111,6 +111,7 @@ This project enforces security at the application level:
 - Client-side (keyfile) encryption enforced at connection time — repositories that are unencrypted, `authenticated`-only, or use server-side `repokey` are rejected (see 2.1.2)
 - Client isolation via configuration mapping
 - Minimal attack surface (SSH-only interface)
+- No monitoring, metrics, or status interface exposed to clients — all observability is host-side only (see 1.2.6)
 
 ### 1.2.1. Access Control
 
@@ -148,6 +149,16 @@ Given the DMZ-facing position described at the start of this chapter, the extern
 - No web interface
 - No HTTP API
 - SSH is the only external interface
+
+### 1.2.6. Monitoring
+
+Monitoring is deliberately **host-side only** and never exposed through the client-facing SSH interface. There is no metrics endpoint, status port, dashboard, or any additional listening service — adding one would widen the exact externally reachable surface that Chapter 1.2.5 keeps minimal. An operator does not need such an interface anyway: everything relevant is already available locally on the host, without opening anything new to the network:
+
+- **Disk usage of the underlying storage volume** — the `Disk usage:` line of `09-show-all-users.sh` (Chapter 8.5), read directly from the filesystem, independent of any single client's quota.
+- **Quota usage of every client** — the same script's per-user `USED` column, read live from each client's enforcing XFS project quota (the same mechanism the client-facing `info` command uses for its own usage, Chapter 7 — but here aggregated for every client at once, for the operator).
+- **How long the container has been running** — `systemctl --user status` output (surfaced by `99-container-status.sh`, Chapter 8.10) reports the service's active-since timestamp natively.
+
+All of this is read-only, local-only tooling that runs as the operator on the host — it adds no attack surface, since it observes the same host-side data (`clients.conf`, the XFS quotas, systemd/Podman state) that already exists for operational reasons, rather than introducing a new interface to query it.
 
 ---
 
