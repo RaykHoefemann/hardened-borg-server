@@ -70,8 +70,18 @@ jobs:
           annotations: ${{ steps.meta.outputs.annotations }}
 
       - name: Attest build provenance
+        # Not pushed to the OCI registry (push-to-registry defaults to false):
+        # the attestation is still uploaded to GitHub's Attestations API
+        # either way, which is what "gh attestation verify" reads from by
+        # default. Enabling push-to-registry additionally creates a
+        # "sha256-<digest>" pseudo-tag in GHCR for every build — that entry
+        # is not a real image, but GHCR's package UI lists (and can even
+        # badge as "Latest") it alongside actual version tags, which is
+        # confusing. Only needed if something verifies purely against the
+        # registry (e.g. Kyverno/Sigstore policy-controller admission
+        # checks, or `gh attestation verify --bundle-from-oci`) — not the
+        # case here.
         uses: actions/attest-build-provenance@v1
         with:
           subject-name: ghcr.io/raykhoefemann/hardened-borg-server
           subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true
