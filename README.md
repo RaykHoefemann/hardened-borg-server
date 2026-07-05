@@ -365,7 +365,7 @@ Before installing, review `scripts/config.sh` — in particular `HOST_REPO_BASE`
 systemctl --user enable --now container-borg-server.service
 ```
 
-`50-service-install.sh` generates the `EnvironmentFile` from `config.sh`, renders the unit template into `systemd/container-borg-server.service.rendered`, and symlinks that into `~/.config/systemd/user/`. Re-run it after any change to `config.sh` (e.g. bumping `IMAGE` to a new tag), then restart the service for the change to take effect — day-to-day start/stop/restart/status is handled by the scripts in Chapter 8.6–8.9:
+`50-service-install.sh` generates the `EnvironmentFile` from `config.sh`, renders the unit template into `systemd/container-borg-server.service.rendered`, and symlinks that into `~/.config/systemd/user/`. Re-run it after any change to `config.sh` (e.g. bumping `IMAGE` to a new tag), then restart the service for the change to take effect — day-to-day start/stop/restart/status is handled by the scripts in Chapter 8.7–8.10:
 
 ```bash
 ./scripts/50-service-install.sh
@@ -497,9 +497,32 @@ Used: 12.4 GiB of 50.0 GiB (24%)
 > below are administrative tools for the person operating the backup server
 > itself.
 
-Helper scripts under `scripts/` manage the server's clients, quotas, the systemd service, and the container's lifecycle (start/stop/restart/status). All of them source `scripts/config.sh` — the single source of truth for paths, the container image, and runtime values (see Chapter 6) — so nothing here needs separate configuration.
+Helper scripts under `scripts/` manage the server's clients, quotas, the systemd service, and the container's lifecycle (start/stop/restart/status). All of them source `scripts/config.sh` — the single source of truth for paths, the container image, and runtime values (see Chapter 8.1 below) — so nothing here needs separate configuration.
 
-## 8.1. 00-ssh-create-user.sh
+## 8.1. config.sh
+
+**Before running any other script in this chapter, review and adjust `scripts/config.sh`.** It is sourced by every script below and is the single place where host-specific values live — nothing else in the repo should need to be edited to get the server running.
+
+**Must be adjusted for your installation:**
+
+- `HOST_REPO_BASE` — the host path holding client repositories. **Must** point at an XFS filesystem with enforcing project quotas (`prjquota`) already active (see Chapter 1.1.3 / BEST_PRACTICES.md Chapter 1). This is also bind-mounted as `/repo` in the generated systemd unit (Chapter 5.2), so the container and the host scripts are always guaranteed to operate on the same directory.
+- `IMAGE` — the container image reference to run, e.g. `ghcr.io/raykhoefemann/hardened-borg-server:latest`. During the beta phase, `:latest` does not exist yet (no stable release has shipped) — set this to the exact pre-release tag you want to run instead, e.g. `ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.9` (see the [package's version list](https://github.com/RaykHoefemann/hardened-borg-server/pkgs/container/hardened-borg-server/versions) for current tags).
+
+**Derived automatically — normally left alone:**
+
+- `REPO_ROOT` — computed from the location of whichever script sourced `config.sh`; correct regardless of the directory you run scripts from.
+- `HOST_CONFIG_BASE`, `HOST_LOG_BASE` — kept inside the repo checkout (`${REPO_ROOT}/config`, `${REPO_ROOT}/log`) unless you have a reason to move them elsewhere.
+- `CONF`, `KEYDIR` — the exact `clients.conf` and key-storage paths used by `00`/`01`/`02`/`09`, derived from `HOST_CONFIG_BASE`.
+- `CONTAINER_REPO_BASE` — the container-side path prefix (`/repo/`); only relevant if you change the container's internal mount point, which the shipped image does not expect.
+
+**Fixed values — only change if you know why:**
+
+- `CONTAINER`, `SERVICE` — the Podman container name and systemd unit filename.
+- `SSH_PORT` — the port the container's SSH listens on (bind-mounted in the generated unit).
+- `PROJID_BASE` — the floor for auto-allocated XFS project IDs (Chapter 8.2 scans existing repos and starts above this).
+- `BORG_UID`, `BORG_GID` — the `borg` user's UID/GID **inside the container image**, fixed at build time in the Dockerfile. These must match the image you are actually running; only change them if you rebuilt the image with different values yourself. Used by `00-ssh-create-user.sh` to set correct host-side ownership via `podman unshare`.
+
+## 8.2. 00-ssh-create-user.sh
 
 Creates a new Borg client end-to-end: the host-side repository directory, an XFS project quota assigned and set to the given hard limit (requires enforcing `prjquota`, see Chapter 1.1.3), the `clients.conf` entry, and an empty public-key placeholder. Also sets correct host ownership on the new directory via `podman unshare` so the container's `borg` user can write to it.
 
@@ -518,7 +541,7 @@ Must be run as root (or with equivalent `CAP_SYS_ADMIN`) for the `xfs_quota` ope
 sudo ./scripts/00-ssh-create-user.sh user1-os1-pc1 OWN 50G
 ```
 
-## 8.2. 01-ssh-set-user-key.sh
+## 8.3. 01-ssh-set-user-key.sh
 
 Sets (or overwrites, with confirmation) the public SSH key for an existing client. Accepts either a path to a key file or the key string directly.
 
@@ -533,7 +556,7 @@ Sets (or overwrites, with confirmation) the public SSH key for an existing clien
 ./scripts/01-ssh-set-user-key.sh user1-os1-pc1 "ssh-ed25519 AAAA… user1-os1-pc1"
 ```
 
-## 8.3. 02-change-user-quota.sh
+## 8.4. 02-chance-user-quota.sh
 
 Changes the quota of an existing client. Looks up its host repository directory and existing XFS project id, applies the new hard limit immediately via `xfs_quota` (takes effect right away — no container restart needed for enforcement), and updates the `quota:` field in `clients.conf`.
 
@@ -542,16 +565,16 @@ Changes the quota of an existing client. Looks up its host repository directory 
 Must be run as root (or with equivalent `CAP_SYS_ADMIN`).
 
 ```bash
-sudo ./scripts/02-change-user-quota.sh <username> <new-quota>
+sudo ./scripts/02-chance-user-quota.sh <username> <new-quota>
 ```
 
 **Example:**
 
 ```bash
-sudo ./scripts/02-change-user-quota.sh user1-os1-pc1 100G
+sudo ./scripts/02-chance-user-quota.sh user1-os1-pc1 100G
 ```
 
-## 8.4. 09-show-all-users.sh
+## 8.5. 09-show-all-users.sh
 
 Prints an overview of every configured client, grouped by `OWN`/`MIRROR`, with each client's configured quota and its **live** storage usage — read the same way the client `info` channel reads it (directly from the enforcing XFS project quota via `df`, see Chapter 7), not just the static `clients.conf` value. Also reports total physical disk usage of the underlying storage volume. Read-only, does not require root.
 
@@ -559,7 +582,7 @@ Prints an overview of every configured client, grouped by `OWN`/`MIRROR`, with e
 ./scripts/09-show-all-users.sh
 ```
 
-## 8.5. 50-service-install.sh
+## 8.6. 50-service-install.sh
 
 Generates the systemd unit's `EnvironmentFile` from `config.sh`, renders the unit template (`systemd/container-borg-server.service`), and installs it as a symlink under `~/.config/systemd/user/` (see Chapter 5.2.2). Re-run after any change to `config.sh` (for example, bumping `IMAGE` to a new tag), then restart the service for the change to take effect.
 
@@ -568,7 +591,7 @@ Generates the systemd unit's `EnvironmentFile` from `config.sh`, renders the uni
 systemctl --user restart container-borg-server.service
 ```
 
-## 8.6. 90-container-start.sh
+## 8.7. 90-container-start.sh
 
 Starts the container via the systemd user service and confirms it reached the active state.
 
@@ -576,7 +599,7 @@ Starts the container via the systemd user service and confirms it reached the ac
 ./scripts/90-container-start.sh
 ```
 
-## 8.7. 91-container-stop.sh
+## 8.8. 91-container-stop.sh
 
 Stops the container via the systemd user service and confirms it reached the inactive state.
 
@@ -584,7 +607,7 @@ Stops the container via the systemd user service and confirms it reached the ina
 ./scripts/91-container-stop.sh
 ```
 
-## 8.8. 92-container-restart.sh
+## 8.9. 92-container-restart.sh
 
 Restarts the container via the systemd user service. **Run this after any change to `clients.conf`** (e.g. after `00-ssh-create-user.sh`, `01-ssh-set-user-key.sh`, or `02-chance-user-quota.sh`) — `authorized_keys` is rebuilt from `clients.conf` only at container start, so client additions, key changes, or quota updates only take effect for SSH access after a restart.
 
@@ -592,7 +615,7 @@ Restarts the container via the systemd user service. **Run this after any change
 ./scripts/92-container-restart.sh
 ```
 
-## 8.9. 99-container-status.sh
+## 8.10. 99-container-status.sh
 
 Shows a combined status view: the systemd service state, `podman ps` output, a detailed `podman inspect` (image, PID, network, mounts) if the container is currently registered with Podman, and the last 20 lines of the service's journal log.
 

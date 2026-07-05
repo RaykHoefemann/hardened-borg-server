@@ -49,7 +49,16 @@ PROJID_BASE=1000
 
 CONTAINER="borg-server"
 SERVICE="container-borg-server.service"
-IMAGE="ghcr.io/raykhoefemann/borg-server:0.1"
+# NOTE (beta phase): no stable release has been tagged yet, so ":latest" does
+# NOT exist on GHCR yet — only pre-release tags like "0.1.0-beta.9" do (see
+# .github/workflows/docker.yml: ":latest" is only published for tags without
+# a "-" suffix). If you are testing a beta build, override this to the exact
+# pre-release tag you want to run, e.g.:
+#   IMAGE="ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.9"
+# This will be updated back to a real, existing tag once a stable release
+# ships; until then ":latest" here is a forward-looking placeholder and will
+# fail to pull if used as-is.
+IMAGE="ghcr.io/raykhoefemann/hardened-borg-server:latest"
 SSH_PORT=2222
 
 # UID/GID of the 'borg' user INSIDE the container. Baked into the image at
