@@ -37,7 +37,7 @@ For this reason, this project explicitly recommends and is designed around a spe
 - **Fedora CoreOS** with an **immutable root filesystem** — the base system cannot be modified at runtime, which removes most persistence and tampering opportunities
 - **SELinux** in enforcing mode — mandatory access control confines what the container process can do even if it is compromised
 - **Rootless containers via Podman** — Podman is the only container runtime that supports rootless operation on the assumed Fedora CoreOS host; the container runtime itself never runs with host root privileges, removing a major class of escape-to-host vulnerabilities
-- **XFS as the repository storage filesystem, with project quotas (pquota) enabled** — this is what allows per-client storage limits (see `clients.conf`, Chapter 6.1) to be enforced as a hard limit at the filesystem level, rather than merely tracked informationally by the application
+- **XFS as the repository storage filesystem, mounted with enforcing project quotas (`prjquota`, equivalently `pquota`)** — this is what allows per-client storage limits (see `clients.conf`, Chapter 6.1) to be enforced as a hard limit at the filesystem level, rather than merely tracked informationally by the application. The mount must be **enforcing**; the accounting-only variant (`pqnoenforce`) is **not** sufficient, because it neither caps usage nor surfaces per-client usage to the (unprivileged) container. As a useful side effect of enforcing mode, XFS reports each client's quota through `statvfs()`, which is how the `info` channel (Chapter 7) reads live usage without any privileges
 
 These four building blocks work together: immutability prevents persistence, SELinux constrains behavior, rootless execution removes the easiest privilege-escalation path, and XFS project quotas guarantee that no client can exceed its assigned storage allowance regardless of application-level behavior. Together they form the minimum baseline this project assumes is in place.
 
@@ -82,7 +82,7 @@ Building on the four core components introduced above, a secure deployment must 
 - **Fedora CoreOS** (immutable operating system)
 - **SELinux** in enforcing mode (mandatory access control)
 - **Podman as rootless container runtime** — the only runtime supporting rootless operation on Fedora CoreOS
-- **XFS filesystem with project quotas (pquota) enabled** for the repository storage volume
+- **XFS filesystem mounted with enforcing project quotas (`prjquota`)** for the repository storage volume — enforcing mode is mandatory; `pqnoenforce` (accounting only) does not satisfy this requirement
 - Secure storage configuration
 
 Additionally, as **optional, defense-in-depth hardening** — not a requirement for a secure deployment, since the application layer (Chapter 1.2) is designed to be safely reachable directly from the internet — a firewall and/or VPN restriction (e.g. WireGuard) in front of the SSH port can further reduce the attack surface and make it harder for attackers or compromised client devices to even reach the server. See `BEST_PRACTICES.md`, Chapters 4–5, for details.
@@ -94,7 +94,7 @@ When implemented correctly, this layer provides:
 - significantly reduced attack surface of the base system
 - prevention of trivial privilege escalation paths
 - reduced blast radius of application compromise
-- hard, filesystem-enforced per-client storage limits (via XFS pquota), independent of and in addition to application-level quota tracking
+- hard, filesystem-enforced per-client storage limits (via enforcing XFS project quotas), independent of and in addition to application-level quota tracking
 
 See `BEST_PRACTICES.md` for the required operational baseline.
 
@@ -108,6 +108,7 @@ This project enforces security at the application level:
 - Repository isolation per client
 - Forced command execution (no interactive shell access)
 - Append-only enforcement at application layer
+- Client-side (keyfile) encryption enforced at connection time — repositories that are unencrypted, `authenticated`-only, or use server-side `repokey` are rejected (see 2.1.2)
 - Client isolation via configuration mapping
 - Minimal attack surface (SSH-only interface)
 
@@ -158,6 +159,7 @@ When deployed according to `BEST_PRACTICES.md` on a properly hardened host syste
 - no shell or interactive access for clients
 - server-side enforced access control via forced commands
 - append-only backup semantics at application level
+- server-side enforcement of client-held keyfile encryption (non-keyfile/unencrypted repositories rejected at connection time)
 - no cross-client access via configuration isolation
 - minimal external attack surface (SSH only)
 
@@ -198,6 +200,22 @@ Recommended practice for clients:
 - Never store the only copy of the key on the same machine that is being backed up — if that machine is lost, stolen, or destroyed, an on-device-only key is lost along with it
 - Treat key loss as equivalent in severity to total data loss when planning a backup strategy
 
+### 2.1.2. Server-Side Enforcement of Client-Held Encryption
+
+The guarantee in 2.1 — that the server never holds a key capable of decrypting client data — only holds if clients actually use an encryption mode whose key stays on the client. Borg also supports modes that would undermine this: `repokey` stores the (passphrase-wrapped) key **inside the repository on the server**, `authenticated` stores data in **plaintext** (integrity-protected only), and `none` provides no encryption at all. Relying on every client to choose the right mode would make the privacy guarantee a matter of discipline rather than design.
+
+To make it structural, the server **verifies the encryption mode of every repository on each connection** and accepts only client-held keyfile modes:
+
+- **Accepted:** `keyfile`, `keyfile-blake2` — the key material lives exclusively on the client; nothing on the server can decrypt the data, even under full server compromise.
+- **Rejected at connection time:**
+  - `repokey` / `repokey-blake2` — key stored in the repository; only passphrase-wrapped and therefore offline-crackable if the server is breached.
+  - `authenticated` / `authenticated-blake2` — data stored in plaintext (MAC only, no confidentiality).
+  - `none` — unencrypted.
+
+Two independent checks must both pass, and the connection is refused on any error or ambiguity (fail-closed): the repository's manifest key type must be a keyfile type, **and** the repository config must contain no server-side key material. Because Borg does not record the mode in the repository config, the manifest key type is used as the authoritative signal. A rejected repository never reaches the Borg session, so no server-decryptable or plaintext data is ever accepted.
+
+> **Client provisioning consequence:** clients must initialize their repositories with `borg init --encryption=keyfile-blake2` (or `keyfile`). A repository created with any other mode will be refused on its first real backup — see the key-custody requirement in 2.1.1, which is especially critical in keyfile mode since the key exists only on the client.
+
 ## 2.2. Client Isolation & No Cross-Visibility
 
 - Each client is mapped to its own dedicated repository path (see 1.2.3)
@@ -215,21 +233,21 @@ Recommended practice for clients:
 The read-only `info` command (see Chapter 7) intentionally exposes only the minimum data necessary:
 
 - Server-side: name, location, contact
-- Client-side: the requesting client's own username and quota
+- Client-side: the requesting client's own username, quota, and current storage usage against that quota
 
-No information about other clients, server internals, or storage contents is ever exposed through this channel.
+The usage figure is the client's own consumption only, derived from its own repository (see Chapter 7). No information about other clients, server internals, or storage contents is ever exposed through this channel.
 
 ---
 
 # 3. Features
 
 - 🔒 Security-focused design (minimal attack surface)
-- 🔐 Privacy-by-design (client-side encryption, server never sees plaintext or keys)
+- 🔐 Privacy-by-design (client-held keyfile encryption enforced server-side; server never sees plaintext or keys)
 - 👥 Multi-client backup support
 - 🗂️ Strict repository isolation per client
 - 🔁 Mirror/offsite backup ingestion support
-- 📦 Per-client quota enforcement (hard limit at host filesystem level via XFS pquota)
-- ℹ️ Read-only client info channel (server contact + quota info via SSH)
+- 📦 Per-client quota enforcement (hard limit at host filesystem level via enforcing XFS project quotas)
+- ℹ️ Read-only client info channel (server contact, quota, and live usage via SSH)
 - ⚙️ Fully config-driven behavior
 - 🧪 Safe testing environment for backup validation
 - 📝 Centralized logging in `/log`
@@ -371,7 +389,7 @@ user-pc2:OWN:/repo/OWN/user-pc2:20G
 friend1:MIRROR:/repo/MIRROR/friend1:200G
 ```
 
-> Quota enforcement happens at the host filesystem level via XFS project quotas (see Chapter 1.1.3) — when the host is set up as required, exceeding the configured quota is a hard limit, not merely advisory. The value in `clients.conf` is read and validated by the application and also surfaced via the `info` command (see Chapter 7), but the actual hard enforcement is provided by the underlying XFS pquota mechanism, not by the application itself.
+> Quota enforcement happens at the host filesystem level via enforcing XFS project quotas (see Chapter 1.1.3) — when the host is set up as required, exceeding the configured quota is a hard limit, not merely advisory. The value in `clients.conf` is read and validated by the application and used to provision the per-repository project limit; the actual hard enforcement is provided by the underlying XFS project-quota mechanism, not by the application itself. Live usage against this limit is reported to the client through the `info` command (see Chapter 7), read directly from the enforcing quota via `statvfs()`.
 
 ## 6.2. SSH Keys
 
@@ -420,7 +438,7 @@ Each client can query basic server and account information over the same SSH con
 ssh -p 2222 borg@<server-host> info
 ```
 
-This returns a small, read-only text file (`info.txt`, stored inside the client's own repository path) containing:
+This returns two things: a small, read-only text file (`info.txt`, stored inside the client's own repository path) describing the server and the client's account, followed by a single live line reporting current storage usage against the client's quota:
 
 ```
 [server]
@@ -431,10 +449,13 @@ contact: admin@example.com
 [client]
 user: user1-os1-pc1
 quota: 50G
+
+Used: 12.4 GiB of 50.0 GiB (24%)
 ```
 
-- `info.txt` is generated and updated automatically whenever `authorized_keys` is rebuilt (i.e. on every container start), based on `clients.conf` and `server_info.conf`.
-- It is read-only from the client's perspective — clients cannot modify it.
+- `info.txt` is generated and updated automatically whenever `authorized_keys` is rebuilt (i.e. on every container start), based on `clients.conf` and `server_info.conf`. It is read-only from the client's perspective — clients cannot modify it.
+- The `Used:` line is computed **live at query time** from the client's own repository directory via `statvfs()`. Because the repository sits under an enforcing XFS project quota (Chapter 1.1.3), `statvfs()` reports the quota's limit and current consumption directly, so no elevated privileges, quota tooling, or host-side helper are needed inside the container. The reported limit is the actual filesystem-enforced quota, not merely the configured `clients.conf` value.
+  - *Diagnostic:* if this line reports the size of the whole underlying disk instead of the per-client limit, project-quota enforcement is not active on the repository mount (i.e. the mount is missing `prjquota` / is `pqnoenforce`).
 - No interactive shell, TTY, or any command other than `info` and the normal Borg protocol is accepted; any other command is rejected.
 - See Chapter 2.4 for the privacy rationale behind what this channel does and does not expose.
 

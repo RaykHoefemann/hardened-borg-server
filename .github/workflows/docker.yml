@@ -12,6 +12,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write        # required to mint the Sigstore signing identity
+      attestations: write    # required to publish the build attestation
 
     steps:
       - name: Checkout
@@ -41,6 +43,7 @@ jobs:
           fi
 
       - name: Build and push Docker image
+        id: push
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -64,3 +67,10 @@ jobs:
             org.opencontainers.image.title=Hardened Borg Server
             org.opencontainers.image.url=https://github.com/RaykHoefemann/hardened-borg-server
             org.opencontainers.image.version=${{ steps.meta.outputs.tag }}
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ghcr.io/raykhoefemann/hardened-borg-server
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
