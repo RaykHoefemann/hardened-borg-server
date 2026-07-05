@@ -650,3 +650,23 @@ However, secure operation also depends on proper configuration and operational p
 - Exposing only the necessary SSH port
 - Regular monitoring and verification of backups
 - Secure, offline backup of each client's encryption key/passphrase (see Chapter 2.1.1) — this is a client-side responsibility that the server cannot help with or recover from
+
+---
+
+# 10. Roadmap
+
+Planned features, not yet implemented. Listed here for visibility; timelines are not committed.
+
+## 10.1. Automated Archive Pruning
+
+Automated, operator-configurable retention policies (e.g. "keep 7 daily, 4 weekly, 6 monthly" per client), so old archives are cleaned up without a manual `borg prune` run.
+
+This needs to be reconciled carefully with the append-only enforcement described in Chapter 1.2.4: today, deletion is intentionally something a client cannot trigger. Automated pruning will need to be a distinct, deliberate server/operator-side mechanism — not a relaxation of what a client connection is allowed to do — so the existing append-only guarantee is not weakened by this feature.
+
+## 10.2. Mirroring Own Repositories to a Foreign Backup Server
+
+The ability for this server to push/replicate the repositories it hosts to a **different, external backup server** for offsite redundancy — the reverse direction of the existing `MIRROR` client group (Chapter 6.1), which is about *receiving* backups from external/friend clients, not sending this server's own hosted data elsewhere.
+
+This replication is planned as an **exact 1:1 copy** of the repository — a full, byte-for-byte replica, not a selective or filtered transfer. There is no point in this pipeline where the server can inspect, redact, or otherwise limit what the foreign server receives: it gets literally the same repository this server holds.
+
+This makes client-side encryption not just a good idea but an absolute precondition for this feature: the foreign backup server is, by definition, outside this project's trust boundary — a third party whose own security this project has no control over. The entire confidentiality of the mirrored copy depends on the client having already encrypted every archive with a client-held key **before** it ever reached this server in the first place. As with any repository handled by this project, the client-held keyfile encryption model (Chapter 2.1.2) is expected to carry over unchanged: a mirrored copy remains only as readable as the original — the encryption key stays with whoever holds it today, not with either server. An unencrypted repository must never be mirrored this way, since doing so would hand the foreign server a complete, plaintext copy of everything.
