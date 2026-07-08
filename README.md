@@ -47,11 +47,11 @@ a recommendation:
 | **rootless Podman** | Required runtime. Rootless execution is a security boundary of the design; rootful containers and Docker are not supported. |
 | **XFS with enforcing `prjquota`** | Hard, filesystem-level per-client quotas — `pqnoenforce` (accounting only) does **not** satisfy this |
 
+This project intentionally targets a narrow deployment model. If your environment doesn't match these requirements, another Borg-based solution will likely be a better fit.
+
 A firewall and/or VPN (e.g. WireGuard) in front of the SSH port is **optional**
 defense-in-depth — the application layer is designed to be safely reachable
 directly from the internet. See [`BEST_PRACTICES.md`](BEST_PRACTICES.md).
-
-This project intentionally targets a narrow deployment model. If your environment doesn't match these requirements, another Borg-based solution will likely be a better fit.
 
 ---
 
