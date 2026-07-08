@@ -1,6 +1,6 @@
 # hardened-borg-server
 
-**Security-hardened BorgBackup server for controlled multi-client environments**
+**Security-hardened BorgBackup server for isolated multi-client backup environments**
 
 A minimal, auditable server wrapper around BorgBackup that receives backups from
 multiple clients under strict isolation. Every client is confined to its own
