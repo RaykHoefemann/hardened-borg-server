@@ -34,7 +34,7 @@ attack surface by design.
 
 ---
 
-## Is this for you?
+## Requirements and intended use
 
 This is **not** a plug-and-play backup appliance. The application layer is only
 as strong as the host it runs on, so the host stack below is **mandatory**, not
@@ -44,7 +44,7 @@ a recommendation:
 |---|---|
 | **Fedora CoreOS** (immutable OS) | Reduced, atomic, tamper-resistant base system |
 | **SELinux** — enforcing | Mandatory access control; containment of a compromised process |
-| **rootless Podman** | Only runtime supporting rootless operation on FCOS; Docker is not supported |
+| **rootless Podman** | Required runtime. Rootless execution is a security boundary of the design; rootful containers and Docker are not supported. |
 | **XFS with enforcing `prjquota`** | Hard, filesystem-level per-client quotas — `pqnoenforce` (accounting only) does **not** satisfy this |
 
 A firewall and/or VPN (e.g. WireGuard) in front of the SSH port is **optional**
@@ -55,7 +55,7 @@ This project intentionally targets a narrow deployment model. If your environmen
 
 ---
 
-## Quickstart (test container)
+## Quickstart (container test)
 
 > **Beta:** the `:latest` tag does not exist on GHCR yet. Replace it with a
 > current pre-release tag, e.g.
