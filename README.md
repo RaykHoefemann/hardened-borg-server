@@ -16,7 +16,7 @@ attack surface by design.
 
 ## Key properties
 
-- **Privacy by design** — client-held keyfile encryption, *enforced* server-side.
+- **Privacy by design** — client-side keyfile encryption, *enforced* server-side.
   The server never sees plaintext or keys, and rejects any repo that isn't
   keyfile-encrypted.
 - **Strict per-client isolation** — no cross-visibility, no metadata leakage
