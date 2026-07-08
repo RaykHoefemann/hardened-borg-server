@@ -51,9 +51,7 @@ A firewall and/or VPN (e.g. WireGuard) in front of the SSH port is **optional**
 defense-in-depth — the application layer is designed to be safely reachable
 directly from the internet. See [`BEST_PRACTICES.md`](BEST_PRACTICES.md).
 
-**If that stack isn't yours** — or you want a web interface and one-click
-setup — this project is not the right fit, and that's okay. If it *is* yours,
-read on.
+This project intentionally targets a narrow deployment model. If your environment doesn't match these requirements, another Borg-based solution will likely be a better fit.
 
 ---
 
