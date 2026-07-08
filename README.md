@@ -14,6 +14,26 @@ attack surface by design.
 
 ---
 
+## Key properties
+
+- **Privacy by design** — client-held keyfile encryption, *enforced* server-side.
+  The server never sees plaintext or keys, and rejects any repo that isn't
+  keyfile-encrypted.
+- **Strict per-client isolation** — no cross-visibility, no metadata leakage
+  between clients.
+- **Hard per-client quotas** — enforced at the host filesystem level via XFS
+  project quotas, independent of application-level tracking.
+- **Append-only semantics** — protection against retroactive tampering by a
+  compromised client.
+- **Fully config-driven** — nothing is provisioned beyond what is explicitly
+  declared in `/config`.
+- **Minimal, auditable surface** — no orchestration layer, deterministic
+  execution, centralized logging.
+- **Multi-client + mirror/offsite ingestion** — client→server and
+  server→server flows.
+
+---
+
 ## Is this for you?
 
 This is **not** a plug-and-play backup appliance. The application layer is only
@@ -34,26 +54,6 @@ directly from the internet. See [`BEST_PRACTICES.md`](BEST_PRACTICES.md).
 **If that stack isn't yours** — or you want a web interface and one-click
 setup — this project is not the right fit, and that's okay. If it *is* yours,
 read on.
-
----
-
-## Key properties
-
-- **Privacy by design** — client-held keyfile encryption, *enforced* server-side.
-  The server never sees plaintext or keys, and rejects any repo that isn't
-  keyfile-encrypted.
-- **Strict per-client isolation** — no cross-visibility, no metadata leakage
-  between clients.
-- **Hard per-client quotas** — enforced at the host filesystem level via XFS
-  project quotas, independent of application-level tracking.
-- **Append-only semantics** — protection against retroactive tampering by a
-  compromised client.
-- **Fully config-driven** — nothing is provisioned beyond what is explicitly
-  declared in `/config`.
-- **Minimal, auditable surface** — no orchestration layer, deterministic
-  execution, centralized logging.
-- **Multi-client + mirror/offsite ingestion** — client→server and
-  server→server flows.
 
 ---
 
