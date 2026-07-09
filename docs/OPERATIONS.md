@@ -145,7 +145,9 @@ Helper scripts under `scripts/` manage the server's clients, quotas, the systemd
 
 Creates a new Borg client end-to-end: the host-side repository directory, an XFS project quota assigned and set to the given hard limit (requires enforcing `prjquota`, see Chapter 1.1.3), the `clients.conf` entry, and an empty public-key placeholder. Also sets correct host ownership on the new directory via `podman unshare` so the container's `borg` user can write to it.
 
-Must be run as root (or with equivalent `CAP_SYS_ADMIN`) for the `xfs_quota` operations.
+Run as the normal operator user, not as root — only the individual
+`xfs_quota` calls inside the script elevate via `sudo` (you'll be prompted
+there) for the operations that need `CAP_SYS_ADMIN`.
 
 ```bash
 ./scripts/00-ssh-create-user.sh <username> <group> <quota>
@@ -157,7 +159,7 @@ Must be run as root (or with equivalent `CAP_SYS_ADMIN`) for the `xfs_quota` ope
 **Example:**
 
 ```bash
-sudo ./scripts/00-ssh-create-user.sh user1-os1-pc1 OWN 50G
+./scripts/00-ssh-create-user.sh user1-os1-pc1 OWN 50G
 ```
 
 ## 9.3. 01-ssh-set-user-key.sh
@@ -181,16 +183,18 @@ Changes the quota of an existing client. Looks up its host repository directory 
 
 > The container still needs a restart to refresh the *displayed* `quota:` value in the client's `info.txt` (see Chapter 8) — the actual enforced limit and the live `Used: X of Y` figure update immediately regardless, since both are read straight from the filesystem quota.
 
-Must be run as root (or with equivalent `CAP_SYS_ADMIN`).
+Run as the normal operator user, not as root — only the individual
+`xfs_quota` calls inside the script elevate via `sudo` (you'll be prompted
+there) for the operations that need `CAP_SYS_ADMIN`.
 
 ```bash
-sudo ./scripts/02-change-user-quota.sh <username> <new-quota>
+./scripts/02-change-user-quota.sh <username> <new-quota>
 ```
 
 **Example:**
 
 ```bash
-sudo ./scripts/02-change-user-quota.sh user1-os1-pc1 100G
+./scripts/02-change-user-quota.sh user1-os1-pc1 100G
 ```
 
 ## 9.5. 09-show-all-users.sh
@@ -210,7 +214,15 @@ Generates the systemd unit's `EnvironmentFile` from `config.sh`, renders the uni
 systemctl --user restart container-borg-server.service
 ```
 
-## 9.7. 90-container-start.sh
+## 9.7. 51-service-uninstall.sh
+
+Reverses `50-service-install.sh`: stops and disables the systemd unit, removes its symlink from `~/.config/systemd/user/`, and deletes the generated `EnvironmentFile` and rendered unit. Does **not** touch the container image or any data under `HOST_CONFIG_BASE`/`HOST_REPO_BASE`/`HOST_LOG_BASE` — clients, repositories, and logs are left untouched.
+
+```bash
+./scripts/51-service-uninstall.sh
+```
+
+## 9.8. 90-container-start.sh
 
 Starts the container via the systemd user service and confirms it reached the active state.
 
@@ -218,7 +230,7 @@ Starts the container via the systemd user service and confirms it reached the ac
 ./scripts/90-container-start.sh
 ```
 
-## 9.8. 91-container-stop.sh
+## 9.9. 91-container-stop.sh
 
 Stops the container via the systemd user service and confirms it reached the inactive state.
 
@@ -226,7 +238,7 @@ Stops the container via the systemd user service and confirms it reached the ina
 ./scripts/91-container-stop.sh
 ```
 
-## 9.9. 92-container-restart.sh
+## 9.10. 92-container-restart.sh
 
 Restarts the container via the systemd user service. **Run this after any change to `clients.conf`** (e.g. after `00-ssh-create-user.sh`, `01-ssh-set-user-key.sh`, or `02-change-user-quota.sh`) — `authorized_keys` is rebuilt from `clients.conf` only at container start, so client additions, key changes, or quota updates only take effect for SSH access after a restart.
 
@@ -234,7 +246,7 @@ Restarts the container via the systemd user service. **Run this after any change
 ./scripts/92-container-restart.sh
 ```
 
-## 9.10. 99-container-status.sh
+## 9.11. 99-container-status.sh
 
 Shows a combined status view: the systemd service state, `podman ps` output, a detailed `podman inspect` (image, PID, network, mounts) if the container is currently registered with Podman, and the last 20 lines of the service's journal log.
 

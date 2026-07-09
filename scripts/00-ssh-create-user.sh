@@ -21,8 +21,10 @@
 # Quota:
 #   Format: <number>G (e.g. 10G, 50G, 200G)
 #
-# Requires: root (or equivalent CAP_SYS_ADMIN) for xfs_quota. Must run on the
-# HOST, not inside the container.
+# Run as the normal operator user, NOT as root: only the individual
+# xfs_quota calls that need CAP_SYS_ADMIN are elevated internally via sudo
+# (you'll be prompted for your password there). Must run on the HOST, not
+# inside the container.
 #
 
 set -e
@@ -39,11 +41,6 @@ fi
 USERNAME="$1"
 GROUP="$2"
 QUOTA="$3"
-
-if [ "$(id -u)" -ne 0 ]; then
-    echo "ERROR: this script must run as root (needed for xfs_quota)."
-    exit 1
-fi
 
 if [ -z "${HOST_REPO_BASE:-}" ]; then
     echo "ERROR: HOST_REPO_BASE is not set in config.sh."
@@ -92,7 +89,7 @@ if [ -z "$BASE_MOUNT" ]; then
     echo "ERROR: could not resolve filesystem mount for '$HOST_REPO_BASE'."
     exit 1
 fi
-if ! xfs_quota -x -c 'state -p' "$BASE_MOUNT" 2>/dev/null | grep -qE '^[[:space:]]*Enforcement:[[:space:]]*ON'; then
+if ! sudo xfs_quota -x -c 'state -p' "$BASE_MOUNT" 2>/dev/null | grep -qE '^[[:space:]]*Enforcement:[[:space:]]*ON'; then
     echo "ERROR: '$HOST_REPO_BASE' resolves to mount '$BASE_MOUNT', which does not"
     echo "have enforcing XFS project quotas (prjquota). This usually means either:"
     echo "  - the intended storage volume is not mounted (HOST_REPO_BASE is"
@@ -163,7 +160,7 @@ if [ -z "$XFS_MOUNT" ]; then
 fi
 
 # Verify the mount is enforcing project quotas before we rely on it.
-if ! xfs_quota -x -c 'state -p' "$XFS_MOUNT" 2>/dev/null | grep -qE '^[[:space:]]*Enforcement:[[:space:]]*ON'; then
+if ! sudo xfs_quota -x -c 'state -p' "$XFS_MOUNT" 2>/dev/null | grep -qE '^[[:space:]]*Enforcement:[[:space:]]*ON'; then
     echo "ERROR: '$XFS_MOUNT' does not have enforcing XFS project quotas (prjquota)."
     echo "This is a mandatory host requirement (see BEST_PRACTICES.md Chapter 1)."
     rmdir "$HOST_REPO" 2>/dev/null
@@ -183,10 +180,10 @@ done
 PROJID=$((PROJID + 1))
 
 echo "[create] Assigning XFS project id $PROJID to $HOST_REPO"
-xfs_quota -x -c "project -s -p $HOST_REPO $PROJID" "$XFS_MOUNT" >/dev/null
+sudo xfs_quota -x -c "project -s -p $HOST_REPO $PROJID" "$XFS_MOUNT" >/dev/null
 
 echo "[create] Setting hard quota: $QUOTA"
-xfs_quota -x -c "limit -p bhard=${QUOTA} ${PROJID}" "$XFS_MOUNT"
+sudo xfs_quota -x -c "limit -p bhard=${QUOTA} ${PROJID}" "$XFS_MOUNT"
 
 echo "[create] Create entry in clients.conf"
 echo "${USERNAME}:${GROUP}:${CONTAINER_REPO}:${QUOTA}" >> "$CONF"

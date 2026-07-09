@@ -20,8 +20,10 @@
 # Quota:
 #   Format: <number>G (e.g. 10G, 50G, 200G)
 #
-# Requires: root (or equivalent CAP_SYS_ADMIN) for xfs_quota. Must run on the
-# HOST, not inside the container.
+# Run as the normal operator user, NOT as root: only the individual
+# xfs_quota calls that need CAP_SYS_ADMIN are elevated internally via sudo
+# (you'll be prompted for your password there). Must run on the HOST, not
+# inside the container.
 #
 
 set -e
@@ -36,11 +38,6 @@ fi
 
 USERNAME="$1"
 QUOTA="$2"
-
-if [ "$(id -u)" -ne 0 ]; then
-    echo "ERROR: this script must run as root (needed for xfs_quota)."
-    exit 1
-fi
 
 if [ -z "${HOST_REPO_BASE:-}" ]; then
     echo "ERROR: HOST_REPO_BASE is not set in config.sh."
@@ -125,7 +122,7 @@ if [ -z "$XFS_MOUNT" ]; then
     exit 1
 fi
 
-if ! xfs_quota -x -c 'state -p' "$XFS_MOUNT" 2>/dev/null | grep -qE '^[[:space:]]*Enforcement:[[:space:]]*ON'; then
+if ! sudo xfs_quota -x -c 'state -p' "$XFS_MOUNT" 2>/dev/null | grep -qE '^[[:space:]]*Enforcement:[[:space:]]*ON'; then
     echo "ERROR: '$XFS_MOUNT' does not have enforcing XFS project quotas (prjquota)."
     echo "This is a mandatory host requirement (see BEST_PRACTICES.md Chapter 1)."
     exit 1
@@ -141,7 +138,7 @@ case "$PROJID" in
 esac
 
 echo "[quota] Applying new hard limit on host: project id $PROJID -> $QUOTA"
-xfs_quota -x -c "limit -p bhard=${QUOTA} ${PROJID}" "$XFS_MOUNT"
+sudo xfs_quota -x -c "limit -p bhard=${QUOTA} ${PROJID}" "$XFS_MOUNT"
 
 # rewrite clients.conf, changing only the quota field (4) of the matching user.
 # awk with -F:/OFS=: preserves all other fields verbatim, including the repo

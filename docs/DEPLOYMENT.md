@@ -122,7 +122,7 @@ Before installing, review `scripts/config.sh` — in particular `HOST_REPO_BASE`
 systemctl --user enable --now container-borg-server.service
 ```
 
-`50-service-install.sh` generates the `EnvironmentFile` from `config.sh`, renders the unit template into `systemd/container-borg-server.service.rendered`, and symlinks that into `~/.config/systemd/user/`. Re-run it after any change to `config.sh` (e.g. bumping `IMAGE` to a new tag), then restart the service for the change to take effect — day-to-day start/stop/restart/status is handled by the scripts in Chapter 9.7–9.10:
+`50-service-install.sh` generates the `EnvironmentFile` from `config.sh`, renders the unit template into `systemd/container-borg-server.service.rendered`, and symlinks that into `~/.config/systemd/user/`. Re-run it after any change to `config.sh` (e.g. bumping `IMAGE` to a new tag), then restart the service for the change to take effect — day-to-day start/stop/restart/status is handled by the scripts in Chapter 9.8–9.11:
 
 ```bash
 ./scripts/50-service-install.sh

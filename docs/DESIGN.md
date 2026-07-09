@@ -154,7 +154,7 @@ Monitoring is deliberately **host-side only** and never exposed through the clie
 
 - **Disk usage of the underlying storage volume** — the `Disk usage:` line of `09-show-all-users.sh` (Chapter 9.5), read directly from the filesystem, independent of any single client's quota.
 - **Quota usage of every client** — the same script's per-user `USED` column, read live from each client's enforcing XFS project quota (the same mechanism the client-facing `info` command uses for its own usage, Chapter 8 — but here aggregated for every client at once, for the operator).
-- **How long the container has been running** — `systemctl --user status` output (surfaced by `99-container-status.sh`, Chapter 9.10) reports the service's active-since timestamp natively.
+- **How long the container has been running** — `systemctl --user status` output (surfaced by `99-container-status.sh`, Chapter 9.11) reports the service's active-since timestamp natively.
 
 All of this is read-only, local-only tooling that runs as the operator on the host — it adds no attack surface, since it observes the same host-side data (`clients.conf`, the XFS quotas, systemd/Podman state) that already exists for operational reasons, rather than introducing a new interface to query it.
 
