@@ -51,7 +51,7 @@ This project intentionally targets a narrow deployment model. If your environmen
 
 A firewall and/or VPN (e.g. WireGuard) in front of the SSH port is **optional**
 defense-in-depth — the application layer is designed to be safely reachable
-directly from the internet. See [`BEST_PRACTICES.md`](BEST_PRACTICES.md).
+directly from the internet. See [`BEST_PRACTICES.md`](docs/BEST_PRACTICES.md).
 
 ---
 
@@ -86,7 +86,7 @@ automatic restart. For production, run it as a rootless systemd **user** service
 | [Design & Threat Model](docs/DESIGN.md) | The *why*: security, privacy, and data-integrity models (the deep dive) |
 | [Deployment](docs/DEPLOYMENT.md) | Architecture, `podman run`, and the systemd user-service setup |
 | [Operations](docs/OPERATIONS.md) | `clients.conf`, SSH keys, `server_info.conf`, the info channel, host-management scripts |
-| [Best Practices](BEST_PRACTICES.md) | Required operational baseline and defense-in-depth hardening |
+| [Best Practices](docs/BEST_PRACTICES.md) | Required operational baseline and defense-in-depth hardening |
 | [Roadmap](ROADMAP.md) | Pruning, mirroring, `borg check`, Quadlet migration |
 
 New here and evaluating? Read this page, then
