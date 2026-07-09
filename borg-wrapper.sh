@@ -7,6 +7,18 @@
 # The repo path is fixed per client; $SSH_ORIGINAL_COMMAND is never trusted for
 # it. Client isolation = forced command + restrict + borg's --restrict-to-path.
 #
+# COMMAND POLICY (default-deny):
+#   Exactly two things are permitted over this key:
+#     * the literal string "info"        -> our own read-only info channel
+#     * a "borg serve ..." invocation    -> a real borg client connection
+#   Everything else — an empty command (interactive login attempt), arbitrary
+#   strings, shell metacharacters — is rejected. Note: $SSH_ORIGINAL_COMMAND is
+#   only INSPECTED to classify the connection; for the borg path its arguments
+#   are discarded and we exec our OWN hardened `borg serve` below. borg subcommands
+#   (create/prune/delete/...) are NOT visible here and cannot be filtered — they
+#   are a single opaque `borg serve` protocol on stdin/stdout. Per-operation
+#   restriction is what --append-only provides (segment-level + transaction log).
+#
 # OPERATING REQUIREMENTS (all mandatory — see README):
 #   * borg 1.2.x            Debian stable container; the segment format assumed
 #                           by the encryption check below is the 1.2 format.
@@ -31,7 +43,7 @@ if ! echo "$REPO" | grep -qE '^/[a-zA-Z0-9/_-]+$'; then
 fi
 
 # ---------------------------------------------------------
-# Non-borg commands (info channel)
+# Command gating (default-deny). Only 'info' and 'borg serve ...' get through.
 # ---------------------------------------------------------
 case "${SSH_ORIGINAL_COMMAND:-}" in
     info)
@@ -50,11 +62,16 @@ case "${SSH_ORIGINAL_COMMAND:-}" in
         fi
         exit 0
         ;;
-    "")
-        # normal borg client connection, fall through below
+    "borg serve"|"borg serve "*)
+        # Legitimate borg client connection. The client-supplied arguments are
+        # deliberately ignored — we exec our own hardened `borg serve` below.
+        # (borg still honors only a safe allowlist from $SSH_ORIGINAL_COMMAND:
+        #  log level and --lock-wait. It cannot override --restrict-to-path or
+        #  --append-only, which come from our forced invocation.)
         ;;
     *)
-        echo "DENY: unknown command" >&2
+        # Empty string (interactive login attempt) or anything else -> deny.
+        echo "DENY: only 'borg serve' and 'info' are permitted" >&2
         exit 1
         ;;
 esac
