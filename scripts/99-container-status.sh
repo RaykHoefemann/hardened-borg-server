@@ -17,6 +17,19 @@ set -e
 . "$(dirname "$0")/config.sh"
 
 echo "------------------------------------------------------------"
+echo "[status] Installed Release"
+echo "------------------------------------------------------------"
+# The host half of a release is these scripts, which the container image does
+# not carry — so the image tag alone never answers "what is installed here".
+echo "Host scripts: ${RELEASE_VERSION}"
+echo "Configured image: ${IMAGE}"
+if [ "$RELEASE_VERSION" = "unknown" ]; then
+    echo "→ No VERSION file found. This tree was not installed from a release"
+    echo "  tag (see docs/SERVERINSTALL.md step 1)."
+fi
+
+echo
+echo "------------------------------------------------------------"
 echo "[status] Systemd Service Status"
 echo "------------------------------------------------------------"
 systemctl --user status "$SERVICE" --no-pager

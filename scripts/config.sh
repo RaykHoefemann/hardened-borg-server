@@ -25,6 +25,15 @@
 # correct regardless of where a script is invoked from.
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# The release this tree came from. Single source of truth for the version:
+# the VERSION file is what SERVERINSTALL clones by tag, what IMAGE below is
+# derived from, and what 99-container-status.sh reports — so host side and
+# container side cannot drift apart by forgetting to bump one of them. A CI
+# check enforces that VERSION, the git tag and the documented image tag agree.
+# "unknown" means this tree was assembled by hand rather than installed from a
+# release.
+RELEASE_VERSION="$(cat "${REPO_ROOT}/VERSION" 2>/dev/null || echo unknown)"
+
 # --- Host-side paths -------------------------------------------------------
 
 # Config and log storage: kept inside the repo checkout itself.
@@ -56,16 +65,16 @@ PROJID_BASE=1000
 
 CONTAINER="borg-server"
 SERVICE="container-borg-server.service"
-# NOTE (beta phase): no stable release has been tagged yet, so ":latest" does
-# NOT exist on GHCR yet — only pre-release tags like "0.1.0-beta.16" do (see
-# .github/workflows/docker.yml: ":latest" is only published for tags without
-# a "-" suffix). If you are testing a beta build, override this to the exact
-# pre-release tag you want to run, e.g.:
-#   IMAGE="ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.16"
-# This will be updated back to a real, existing tag once a stable release
-# ships; until then ":latest" here is a forward-looking placeholder and will
-# fail to pull if used as-is.
-IMAGE="ghcr.io/raykhoefemann/hardened-borg-server:latest"
+# Derived from VERSION above, so a checkout of a release tag already points at
+# the image built from that same commit — no editing needed to get a working
+# pull. This used to default to ":latest", which does NOT exist during the beta
+# phase (see .github/workflows/docker.yml: ":latest" is only published for tags
+# without a "-" suffix), so a fresh install could not pull anything at all.
+#
+# Override this to pin a digest instead of a tag once you have verified the
+# image — tags are mutable, digests are not. See docs/VERIFICATION.md, Test 0:
+#   IMAGE="ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest>"
+IMAGE="ghcr.io/raykhoefemann/hardened-borg-server:${RELEASE_VERSION}"
 SSH_PORT=2222
 
 # UID/GID of the 'borg' user INSIDE the container. Baked into the image at

@@ -52,10 +52,14 @@ fi
 consistency_fail=0
 
 GIT_TAG="$(grep -oE '^RELEASE=v[A-Za-z0-9._-]+' docs/SERVERINSTALL.md 2>/dev/null | head -1 | sed 's/^RELEASE=//')"
+VERSION_FILE="$(tr -d '[:space:]' < VERSION 2>/dev/null)"
 
 mapfile -t VERSIONS < <(printf '%s\n' "${TAGS[@]}" | grep -v '^latest$')
 
-if [ -z "$GIT_TAG" ]; then
+if [ -z "$VERSION_FILE" ]; then
+    echo "FAIL VERSION is missing or empty — scripts/config.sh derives IMAGE from it"
+    consistency_fail=1
+elif [ -z "$GIT_TAG" ]; then
     echo "FAIL SERVERINSTALL.md no longer pins a release tag (expected a 'RELEASE=v...' line)"
     consistency_fail=1
 elif [ "${#VERSIONS[@]}" -eq 0 ]; then
@@ -63,11 +67,14 @@ elif [ "${#VERSIONS[@]}" -eq 0 ]; then
 elif [ "${#VERSIONS[@]}" -gt 1 ]; then
     echo "FAIL documentation names more than one image version: ${VERSIONS[*]}"
     consistency_fail=1
-elif [ "${GIT_TAG#v}" != "${VERSIONS[0]}" ]; then
-    echo "FAIL release halves disagree: SERVERINSTALL clones ${GIT_TAG}, docs pin image ${VERSIONS[0]}"
+elif [ "${GIT_TAG#v}" != "$VERSION_FILE" ]; then
+    echo "FAIL SERVERINSTALL clones ${GIT_TAG} but VERSION says ${VERSION_FILE}"
+    consistency_fail=1
+elif [ "$VERSION_FILE" != "${VERSIONS[0]}" ]; then
+    echo "FAIL VERSION says ${VERSION_FILE} but the docs pin image ${VERSIONS[0]}"
     consistency_fail=1
 else
-    printf 'ok   git tag %s matches image tag %s\n' "$GIT_TAG" "${VERSIONS[0]}"
+    printf 'ok   VERSION, git tag %s and image tag %s all agree\n' "$GIT_TAG" "${VERSIONS[0]}"
 fi
 echo
 

@@ -54,12 +54,13 @@ host actually needs: `config`, `scripts`, `systemd`.
 
 ```bash
 INSTALL_PATH=~/containers/borg-server
-RELEASE=v0.1.0-beta.16
+RELEASE=v0.1.0-beta.17
 mkdir -p "$INSTALL_PATH"
 
 git clone --branch "$RELEASE" --depth 1 \
   https://github.com/RaykHoefemann/hardened-borg-server.git ~/tmp/hardened-borg-server
 cp -r ~/tmp/hardened-borg-server/config ~/tmp/hardened-borg-server/scripts ~/tmp/hardened-borg-server/systemd "$INSTALL_PATH"/
+cp ~/tmp/hardened-borg-server/VERSION "$INSTALL_PATH"/
 rm -rf ~/tmp/hardened-borg-server
 
 cd "$INSTALL_PATH"
@@ -115,7 +116,12 @@ $EDITOR scripts/config.sh
 ```
 
 - `HOST_REPO_BASE` → the XFS/`prjquota` mount noted in step 0 (e.g. `/var/mnt/borg-repo`)
-- `IMAGE` → the exact tag pulled in step 2
+
+`IMAGE` already points at the image built from this same release — it is
+derived from the `VERSION` file copied in step 1, so there is nothing to edit
+unless you want to pin a digest instead of a tag ([Verification](VERIFICATION.md),
+Test 0). That is the stronger form and worth doing once you have verified the
+image.
 
 Leave everything else at its default unless you have a specific reason to
 change it (Operations Chapter 9.1 explains what each remaining value does).

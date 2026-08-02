@@ -139,10 +139,11 @@ Helper scripts under `scripts/` manage the server's clients, quotas, the systemd
 **Must be adjusted for your installation:**
 
 - `HOST_REPO_BASE` — the host path holding client repositories. **Must** point at an XFS filesystem with enforcing project quotas (`prjquota`) already active (see Chapter 1.1.3 / BEST_PRACTICES.md Chapter 1). This is also bind-mounted as `/repo` in the generated systemd unit (Chapter 6.2), so the container and the host scripts are always guaranteed to operate on the same directory.
-- `IMAGE` — the container image reference to run, e.g. `ghcr.io/raykhoefemann/hardened-borg-server:latest`. During the beta phase, `:latest` does not exist yet (no stable release has shipped) — set this to the exact pre-release tag you want to run instead, e.g. `ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.16` (see the [package's version list](https://github.com/RaykHoefemann/hardened-borg-server/pkgs/container/hardened-borg-server/versions) for current tags).
+- `IMAGE` — normally left alone: it is derived from the `VERSION` file, so a checkout of a release tag already points at the image built from that same commit. Change it only to **pin a digest** instead of a mutable tag, which is the stronger form once you have verified the image (`ghcr.io/raykhoefemann/hardened-borg-server@sha256:…`, see [Verification](VERIFICATION.md) Test 0).
 
 **Derived automatically — normally left alone:**
 
+- `RELEASE_VERSION` — read from the `VERSION` file at the installation root, copied there by SERVERINSTALL step 1. It is the single source of truth for the version: `IMAGE` is derived from it, `99-container-status.sh` reports it, and a CI check enforces that it agrees with the git tag and the documented image tag. Reports `unknown` if the tree was assembled by hand rather than installed from a release tag.
 - `REPO_ROOT` — computed from the location of whichever script sourced `config.sh`; correct regardless of the directory you run scripts from.
 - `HOST_CONFIG_BASE`, `HOST_LOG_BASE` — kept inside the repo checkout (`${REPO_ROOT}/config`, `${REPO_ROOT}/log`) unless you have a reason to move them elsewhere.
 - `CONF`, `KEYDIR` — the exact `clients.conf` and key-storage paths used by `00`/`01`/`02`/`09`, derived from `HOST_CONFIG_BASE`.
