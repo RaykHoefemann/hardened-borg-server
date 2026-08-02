@@ -274,10 +274,18 @@ Shows a combined status view, opening with the release identity of this installa
 Host scripts:     0.1.0-beta.19
 Configured image: ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.19
 Running image:    0.1.0-beta.19
+Bundled borg:     borg 1.4.0
+Base OS:          Debian 13.6
 Source:           https://github.com/RaykHoefemann/hardened-borg-server
 ```
 
-`Running image` is read from the `VERSION` baked into the image at build time, via `podman exec` against the live container. It is the only one of these figures that survives a digest pin: with `IMAGE` set to a `sha256:` reference, the configured value says nothing about which release is actually serving clients. It is omitted when the container is not running.
+The last four come from a single `podman exec` against the live container and are omitted when it is not running.
+
+`Running image` is read from the `VERSION` baked in at build time. It is the only one of these figures that survives a digest pin: with `IMAGE` set to a `sha256:` reference, the configured value says nothing about which release is actually serving clients.
+
+`Bundled borg` is worth checking after any base image change. The wrapper's encryption check reads the repository's on-disk manifest and is therefore version-sensitive; the note at the top of `borg-wrapper.sh` records which Borg versions a release was tested against, and this line is what is actually running. `Base OS` is there for judging whether a Debian advisory applies to this deployment.
+
+These are operator diagnostics and deliberately do **not** appear in the client `info` channel, which stays limited to what a client needs in order to verify the server (Chapter 2.4).
 
 A difference between `Host scripts` and `Running image` is reported explicitly — the two halves of a release are meant to match, and they drift when an image is not restarted after an upgrade, or when `IMAGE` points at a different release than the checkout the scripts came from.
 

@@ -24,14 +24,33 @@ echo "------------------------------------------------------------"
 echo "Host scripts:     ${RELEASE_VERSION}"
 echo "Configured image: ${IMAGE}"
 
-# What the RUNNING container reports about itself, read from the VERSION baked
-# into the image at build time. This is the only figure that survives a digest
-# pin — with IMAGE set to a sha256 reference the tag says nothing about which
-# release is actually serving clients. Empty if the container is not running.
-RUNNING_VERSION="$(podman exec "$CONTAINER" cat /VERSION 2>/dev/null | tr -d '[:space:]' || true)"
-if [ -n "$RUNNING_VERSION" ]; then
-    echo "Running image:    ${RUNNING_VERSION}"
-fi
+# What the RUNNING container reports about itself. One exec rather than three,
+# and empty throughout if the container is not running.
+#
+#   Running image  — from the VERSION baked in at build time. The only figure
+#                    that survives a digest pin: with IMAGE set to a sha256
+#                    reference, the configured value says nothing about which
+#                    release is actually serving clients.
+#   Bundled borg   — the wrapper's encryption check reads the repository's
+#                    on-disk manifest and is therefore version-sensitive. The
+#                    note at the top of borg-wrapper.sh records which versions
+#                    a release was tested against; this is what is actually
+#                    running, and the two are worth comparing after any base
+#                    image change.
+#   Base OS        — for judging whether a Debian advisory applies to you.
+RUNTIME_INFO="$(podman exec "$CONTAINER" sh -c '
+    printf "version=%s\n" "$(tr -d "[:space:]" < /VERSION 2>/dev/null)"
+    printf "borg=%s\n"    "$(borg --version 2>/dev/null)"
+    printf "debian=%s\n"  "$(cat /etc/debian_version 2>/dev/null)"
+' 2>/dev/null || true)"
+
+RUNNING_VERSION="$(printf '%s\n' "$RUNTIME_INFO" | sed -n 's/^version=//p')"
+RUNNING_BORG="$(printf '%s\n' "$RUNTIME_INFO" | sed -n 's/^borg=//p')"
+RUNNING_DEBIAN="$(printf '%s\n' "$RUNTIME_INFO" | sed -n 's/^debian=//p')"
+
+[ -n "$RUNNING_VERSION" ] && echo "Running image:    ${RUNNING_VERSION}"
+[ -n "$RUNNING_BORG" ]    && echo "Bundled borg:     ${RUNNING_BORG}"
+[ -n "$RUNNING_DEBIAN" ]  && echo "Base OS:          Debian ${RUNNING_DEBIAN}"
 echo "Source:           ${SOURCE_URL}"
 
 if [ "$RELEASE_VERSION" = "unknown" ]; then
