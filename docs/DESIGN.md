@@ -251,10 +251,21 @@ Neither destination records backup *contents* — and that is structural rather 
 
 The read-only `info` command (see Chapter 8) intentionally exposes only the minimum data necessary:
 
-- Server-side: name, location, contact
-- Client-side: the requesting client's own username, quota, and current storage usage against that quota
+- **Server:** name, location, contact
+- **Software:** the release version of the running image, and the URL of the source repository it was built from
+- **Client:** the requesting client's own username, quota, and current storage usage against that quota
 
 The usage figure is the client's own consumption only, derived from its own repository (see Chapter 8). No information about other clients, server internals, or storage contents is ever exposed through this channel.
+
+### Why the version is disclosed deliberately
+
+Announcing a server's software version is conventionally treated as something to avoid. Here it is a considered exception, for three reasons:
+
+- **The source is public anyway.** Withholding the version does not withhold the code; it only makes it harder for the client to know *which* public code is running. That is obscurity purchased entirely at the legitimate user's expense.
+- **The channel is authenticated.** Only a client whose key the operator installed can reach it — the same key that already grants a Borg session. It tells an unauthenticated attacker nothing.
+- **It is what makes the deployment checkable.** A client can see which release serves it, read that release's source and its notes, and judge whether a fix that matters to it is actually deployed. A project that asks its users to verify rather than believe (see [Verification](VERIFICATION.md)) cannot simultaneously withhold the one fact needed to do so.
+
+The version and source are baked into the image at build time rather than read from operator-editable configuration, so a deployment cannot present itself as a release it is not. Combined with the build provenance attestation on the published image, a client can follow the chain from what it is told, to the release, to the commit it was built from.
 
 ---
 

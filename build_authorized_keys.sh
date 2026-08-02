@@ -17,6 +17,15 @@ KEYDIR="/config/keys"
 OUT="/home/borg/.ssh/authorized_keys"
 TMPOUT="${OUT}.tmp"
 SERVER_INFO="/config/server_info.conf"
+
+# Identity of the software itself, as opposed to the operator's deployment.
+# Baked into the image at build time (Dockerfile), so it cannot be edited into
+# something untrue by whoever runs the container. "unknown" means the image was
+# built outside the release pipeline.
+VERSION_FILE="/VERSION"
+RELEASE_VERSION="$(tr -d '[:space:]' < "$VERSION_FILE" 2>/dev/null)"
+[ -n "$RELEASE_VERSION" ] || RELEASE_VERSION="unknown"
+SOURCE_URL="https://github.com/RaykHoefemann/hardened-borg-server"
 LOG="/log/build_authorized_keys.log"
 
 # Log Function
@@ -146,6 +155,10 @@ while IFS=":" read -r name group repo quota; do
 name: ${SERVER_NAME}
 location: ${SERVER_LOCATION}
 contact: ${SERVER_CONTACT}
+
+[software]
+version: ${RELEASE_VERSION}
+source: ${SOURCE_URL}
 
 [client]
 user: ${name}

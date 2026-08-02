@@ -77,6 +77,12 @@ MaxStartups 3:50:10
 PerSourceMaxStartups 2
 EOF
 
+# The release this image was built from. Baked in rather than mounted: what a
+# client is told must describe the software actually serving it, not whatever
+# the host happens to have in its installation directory. CI enforces that this
+# file, the git tag and the published image tag all agree.
+COPY VERSION /VERSION
+
 # Copy scripts into the image
 COPY build_authorized_keys.sh /build_authorized_keys.sh
 COPY entrypoint.sh /entrypoint.sh

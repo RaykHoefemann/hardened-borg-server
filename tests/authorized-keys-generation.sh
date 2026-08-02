@@ -54,6 +54,7 @@ elif sudo -n true 2>/dev/null; then
     MODE=sudo
     sudo mkdir -p /config/keys /log /repo /home/borg/.ssh
     sudo chown -R "$(id -u):$(id -g)" /config /log /repo /home/borg
+    sudo install -m 644 "$WORK/VERSION" /VERSION
 else
     echo "FAIL neither bubblewrap nor passwordless sudo is available;" >&2
     echo "     the absolute paths this script needs cannot be provided." >&2
@@ -67,6 +68,8 @@ trap 'rm -rf "$WORK"' EXIT
 # A valid key to reuse; generated once.
 ssh-keygen -q -t ed25519 -N '' -C 'fixture' -f "$WORK/id" || exit 1
 VALID_KEY="$(cat "$WORK/id.pub")"
+
+printf '9.9.9-test\n' > "$WORK/VERSION"
 
 mkdir -p "$WORK/shim"
 printf '#!/bin/sh\nexit 0\n' > "$WORK/shim/chown"
@@ -108,6 +111,7 @@ generate() {
         --ro-bind /etc /etc --proc /proc --dev /dev \
         --ro-bind "$SCRIPT" /build_authorized_keys.sh \
         --ro-bind "$WORK/shim" /shim \
+        --ro-bind "$WORK/VERSION" /VERSION \
         --bind "$CFG" /config --bind "$LOGD" /log \
         --bind "$REPOD" /repo --bind "$SSHD" /home/borg/.ssh \
         --setenv PATH /shim:/usr/bin:/usr/sbin:/bin:/sbin \
@@ -161,6 +165,15 @@ assert "1.4 info.txt generated with the client's quota" $?
 
 grep -q 'name: testserver' "$REPOD/OWN/user1/info.txt" 2>/dev/null
 assert "1.5 info.txt carries server_info.conf" $?
+
+# The client is told which software serves it and where to read its source —
+# both baked into the image rather than taken from operator-editable config,
+# so a deployment cannot claim to be a version it is not.
+grep -q 'version: 9.9.9-test' "$REPOD/OWN/user1/info.txt" 2>/dev/null
+assert "1.6 info.txt reports the image's release version" $?
+
+grep -q 'source: https://github.com/RaykHoefemann/hardened-borg-server' "$REPOD/OWN/user1/info.txt" 2>/dev/null
+assert "1.7 info.txt reports the source repository" $?
 
 # --- 2. key-file injection ---------------------------------------------------
 #

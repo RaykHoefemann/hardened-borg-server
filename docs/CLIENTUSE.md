@@ -77,6 +77,10 @@ name: backup01.example.com
 location: Frankfurt, DE
 contact: admin@example.com
 
+[software]
+version: 0.1.0-beta.18
+source: https://github.com/RaykHoefemann/hardened-borg-server
+
 [client]
 user: user1-os1-pc1
 quota: 50G
