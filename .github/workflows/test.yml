@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Weekly, because one of these checks does not depend on the repository
+  # changing: registry tags are deleted over time, and a documented tag can
+  # stop being pullable without a single commit being made.
+  schedule:
+    - cron: "0 6 * * 1"
   workflow_dispatch:
 
 jobs:
@@ -30,6 +35,16 @@ jobs:
 
       - name: Run wrapper gating tests
         run: tests/wrapper-gating.sh
+
+  doc-image-tags:
+    name: documented image tags are pullable
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check documented tags against GHCR
+        run: tests/doc-image-tags.sh
 
   shellcheck:
     name: shellcheck
