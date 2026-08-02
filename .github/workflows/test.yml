@@ -36,6 +36,27 @@ jobs:
       - name: Run wrapper gating tests
         run: tests/wrapper-gating.sh
 
+  host-side:
+    name: build_authorized_keys.sh & host scripts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # build_authorized_keys.sh writes to absolute paths (/config, /log,
+      # /repo, /home/borg/.ssh); bubblewrap gives each case a tmpfs root with
+      # the fixtures bound there, so the real script runs unmodified.
+      - name: Install bubblewrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bubblewrap
+
+      - name: authorized_keys generation and input validation
+        run: tests/authorized-keys-generation.sh
+
+      - name: Host scripts (01, 09)
+        run: tests/host-scripts.sh
+
   doc-image-tags:
     name: documented image tags are pullable
     runs-on: ubuntu-latest

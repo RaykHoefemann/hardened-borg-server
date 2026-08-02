@@ -44,22 +44,36 @@ if [ -s "$TARGET" ]; then
     esac
 fi
 
+# Stage the new key beside the target and validate it BEFORE replacing
+# anything. Writing straight to $TARGET and deleting it on a failed check
+# would destroy a working key whenever the replacement turns out to be
+# invalid — the client would lose access at the next container restart, and
+# the operator would have no copy left to restore from. Same
+# validate-then-swap pattern build_authorized_keys.sh uses for
+# authorized_keys.
+TMP="${TARGET}.tmp"
+
 # Fall 1: INPUT is a existing file
 if [ -f "$INPUT" ]; then
     echo "[key] Read key from file: $INPUT"
-    cp "$INPUT" "$TARGET"
+    cp "$INPUT" "$TMP"
 else
     # Fall 2: INPUT is a Key-String
     echo "[key] Write key string in file: $TARGET"
-    echo "$INPUT" > "$TARGET"
+    echo "$INPUT" > "$TMP"
 fi
 
 # checking ssh-key
-if ! ssh-keygen -l -f "$TARGET" > /dev/null 2>&1; then
+if ! ssh-keygen -l -f "$TMP" > /dev/null 2>&1; then
     echo "ERROR: not a valid SSH public key!"
-    rm "$TARGET"
+    rm -f "$TMP"
+    if [ -s "$TARGET" ]; then
+        echo "[key] Existing key for '$USERNAME' left unchanged."
+    fi
     exit 1
 fi
+
+mv "$TMP" "$TARGET"
 
 echo "[key] Public key saved in: $TARGET"
 echo "→ Please restart the container!"
