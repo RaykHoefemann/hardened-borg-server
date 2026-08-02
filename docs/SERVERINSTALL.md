@@ -54,14 +54,28 @@ host actually needs: `config`, `scripts`, `systemd`.
 
 ```bash
 INSTALL_PATH=~/containers/borg-server
+RELEASE=v0.1.0-beta.14
 mkdir -p "$INSTALL_PATH"
 
-git clone https://github.com/RaykHoefemann/hardened-borg-server.git ~/tmp/hardened-borg-server
+git clone --branch "$RELEASE" --depth 1 \
+  https://github.com/RaykHoefemann/hardened-borg-server.git ~/tmp/hardened-borg-server
 cp -r ~/tmp/hardened-borg-server/config ~/tmp/hardened-borg-server/scripts ~/tmp/hardened-borg-server/systemd "$INSTALL_PATH"/
 rm -rf ~/tmp/hardened-borg-server
 
 cd "$INSTALL_PATH"
 ```
+
+**Clone a tag, not the default branch.** The host scripts are as much a part
+of a release as the container image is, and they are the half that the image
+does *not* carry — `09-show-all-users.sh`, the provisioning scripts and the
+systemd unit all run on the host, from this checkout. Cloning `main` would
+leave you with an unversioned mixture: a pinned image alongside whatever
+happened to be committed that day, with no way to state which combination you
+are running.
+
+`$RELEASE` and the image tag in `scripts/config.sh` are meant to match. A CI
+check enforces that the two stay in step, so following this guide gives you a
+host side and a container side that were released together.
 
 All remaining steps in this guide are run from `$INSTALL_PATH` —
 `scripts/config.sh` derives every other path (`HOST_CONFIG_BASE`,

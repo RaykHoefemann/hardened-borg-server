@@ -42,6 +42,35 @@ if [ "${#TAGS[@]}" -eq 0 ]; then
     exit 0
 fi
 
+# --- release consistency ----------------------------------------------------
+#
+# A release has two halves. The container comes from an image tag; the host
+# scripts come from a git tag cloned in SERVERINSTALL step 1 — and the image
+# does not carry them, so they cannot be versioned by it. Bumping one and
+# forgetting the other yields a deployment nobody can name.
+
+consistency_fail=0
+
+GIT_TAG="$(grep -oE '^RELEASE=v[A-Za-z0-9._-]+' docs/SERVERINSTALL.md 2>/dev/null | head -1 | sed 's/^RELEASE=//')"
+
+mapfile -t VERSIONS < <(printf '%s\n' "${TAGS[@]}" | grep -v '^latest$')
+
+if [ -z "$GIT_TAG" ]; then
+    echo "FAIL SERVERINSTALL.md no longer pins a release tag (expected a 'RELEASE=v...' line)"
+    consistency_fail=1
+elif [ "${#VERSIONS[@]}" -eq 0 ]; then
+    echo "note no concrete image version documented — only ':latest'"
+elif [ "${#VERSIONS[@]}" -gt 1 ]; then
+    echo "FAIL documentation names more than one image version: ${VERSIONS[*]}"
+    consistency_fail=1
+elif [ "${GIT_TAG#v}" != "${VERSIONS[0]}" ]; then
+    echo "FAIL release halves disagree: SERVERINSTALL clones ${GIT_TAG}, docs pin image ${VERSIONS[0]}"
+    consistency_fail=1
+else
+    printf 'ok   git tag %s matches image tag %s\n' "$GIT_TAG" "${VERSIONS[0]}"
+fi
+echo
+
 # Anonymous pull token; GHCR requires one even for public repositories.
 TOKEN="$(curl -fsSL --max-time 30 \
     "https://ghcr.io/token?scope=repository:${IMAGE_REPO}:pull&service=ghcr.io" \
@@ -83,8 +112,8 @@ for tag in "${TAGS[@]}"; do
 done
 
 echo
-if [ "$fail" -ne 0 ]; then
-    echo "$fail documented tag(s) cannot be pulled. Update them to a published tag."
+if [ "$fail" -ne 0 ] || [ "$consistency_fail" -ne 0 ]; then
+    [ "$fail" -ne 0 ] && echo "$fail documented tag(s) cannot be pulled. Update them to a published tag."
     exit 1
 fi
 echo "all documented tags are published"

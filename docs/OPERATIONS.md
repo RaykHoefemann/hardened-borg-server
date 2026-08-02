@@ -137,7 +137,7 @@ Helper scripts under `scripts/` manage the server's clients, quotas, the systemd
 **Must be adjusted for your installation:**
 
 - `HOST_REPO_BASE` — the host path holding client repositories. **Must** point at an XFS filesystem with enforcing project quotas (`prjquota`) already active (see Chapter 1.1.3 / BEST_PRACTICES.md Chapter 1). This is also bind-mounted as `/repo` in the generated systemd unit (Chapter 6.2), so the container and the host scripts are always guaranteed to operate on the same directory.
-- `IMAGE` — the container image reference to run, e.g. `ghcr.io/raykhoefemann/hardened-borg-server:latest`. During the beta phase, `:latest` does not exist yet (no stable release has shipped) — set this to the exact pre-release tag you want to run instead, e.g. `ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.13` (see the [package's version list](https://github.com/RaykHoefemann/hardened-borg-server/pkgs/container/hardened-borg-server/versions) for current tags).
+- `IMAGE` — the container image reference to run, e.g. `ghcr.io/raykhoefemann/hardened-borg-server:latest`. During the beta phase, `:latest` does not exist yet (no stable release has shipped) — set this to the exact pre-release tag you want to run instead, e.g. `ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.14` (see the [package's version list](https://github.com/RaykHoefemann/hardened-borg-server/pkgs/container/hardened-borg-server/versions) for current tags).
 
 **Derived automatically — normally left alone:**
 
