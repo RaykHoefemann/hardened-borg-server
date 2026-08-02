@@ -37,7 +37,7 @@ Architecture overview and how to run the server — from an ad-hoc test containe
 
 > **Beta phase note:** no stable release has been tagged yet, so the `:latest`
 > tag below does not exist on GHCR yet. Replace it with the exact pre-release
-> tag you want to test, e.g. `ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.18`
+> tag you want to test, e.g. `ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.19`
 > (see the [package's version list](https://github.com/RaykHoefemann/hardened-borg-server/pkgs/container/hardened-borg-server/versions)
 > for the current tags). This note will be removed once a stable release ships.
 
@@ -117,7 +117,7 @@ This unit is designed to be installed under `~/.config/systemd/user/`, not `/etc
 
 ### 6.2.2. Setup
 
-Before installing, review `scripts/config.sh` — in particular `HOST_REPO_BASE` (must point at your enforcing-prjquota XFS volume, see Chapter 1.1.3) and `IMAGE` (during the beta phase, `:latest` does not exist yet — set this to the exact pre-release tag you want to run, e.g. `ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.18`).
+Before installing, review `scripts/config.sh` — in particular `HOST_REPO_BASE` (must point at your enforcing-prjquota XFS volume, see Chapter 1.1.3) and `IMAGE` (during the beta phase, `:latest` does not exist yet — set this to the exact pre-release tag you want to run, e.g. `ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.19`).
 
 ```bash
 ./scripts/50-service-install.sh
