@@ -35,8 +35,31 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT="$ROOT/build_authorized_keys.sh"
 
 [ -f "$SCRIPT" ] || { echo "not found: $SCRIPT" >&2; exit 1; }
-command -v bwrap      >/dev/null || { echo "bubblewrap is required" >&2; exit 1; }
 command -v ssh-keygen >/dev/null || { echo "ssh-keygen is required" >&2; exit 1; }
+
+# Two ways to give the script its absolute paths. bubblewrap is preferred
+# because it needs no privileges, but unprivileged user namespaces are
+# restricted on some hosts (Ubuntu 24.04 confines them via AppArmor), so a
+# sudo-backed fallback using the real directories exists. If neither works the
+# suite fails rather than skipping: a check that quietly stops checking is the
+# failure mode this whole test tree exists to prevent.
+MODE=""
+if command -v bwrap >/dev/null 2>&1 \
+   && bwrap --tmpfs / --ro-bind /usr /usr --symlink usr/bin /bin \
+            --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
+            --symlink usr/sbin /sbin --proc /proc --dev /dev \
+            -- /usr/bin/true 2>/dev/null; then
+    MODE=bwrap
+elif sudo -n true 2>/dev/null; then
+    MODE=sudo
+    sudo mkdir -p /config/keys /log /repo /home/borg/.ssh
+    sudo chown -R "$(id -u):$(id -g)" /config /log /repo /home/borg
+else
+    echo "FAIL neither bubblewrap nor passwordless sudo is available;" >&2
+    echo "     the absolute paths this script needs cannot be provided." >&2
+    exit 1
+fi
+echo "sandbox mode: $MODE"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -52,33 +75,47 @@ chmod +x "$WORK/shim/chown"
 pass=0 fail=0
 RC=0; FIX=""
 
+CFG=""; LOGD=""; REPOD=""; SSHD=""
+
 new_fixture() { # new_fixture — fresh /config, /log, /repo, /home/borg/.ssh
-    FIX="$WORK/case$RANDOM$RANDOM"
-    mkdir -p "$FIX/config/keys" "$FIX/log" "$FIX/repo" "$FIX/ssh"
+    if [ "$MODE" = bwrap ]; then
+        FIX="$WORK/case$RANDOM$RANDOM"
+        CFG="$FIX/config"; LOGD="$FIX/log"; REPOD="$FIX/repo"; SSHD="$FIX/ssh"
+        mkdir -p "$CFG/keys" "$LOGD" "$REPOD" "$SSHD"
+    else
+        CFG=/config; LOGD=/log; REPOD=/repo; SSHD=/home/borg/.ssh
+        rm -rf /config/* /log/* /repo/* /home/borg/.ssh/*
+        mkdir -p "$CFG/keys"
+    fi
     printf 'name=testserver\nlocation=Testville\ncontact=admin@example.com\n' \
-        > "$FIX/config/server_info.conf"
+        > "$CFG/server_info.conf"
 }
 
 add_key() { # add_key <client> [content]
-    if [ $# -ge 2 ]; then printf '%s\n' "$2" > "$FIX/config/keys/$1.pub"
-    else printf '%s\n' "$VALID_KEY" > "$FIX/config/keys/$1.pub"; fi
+    if [ $# -ge 2 ]; then printf '%s\n' "$2" > "$CFG/keys/$1.pub"
+    else printf '%s\n' "$VALID_KEY" > "$CFG/keys/$1.pub"; fi
 }
 
 generate() {
+    if [ "$MODE" = sudo ]; then
+        PATH="$WORK/shim:$PATH" /usr/bin/bash "$SCRIPT" >"$WORK/out" 2>"$WORK/err"
+        RC=$?
+        return
+    fi
     bwrap --tmpfs / \
         --ro-bind /usr /usr --symlink usr/bin /bin --symlink usr/lib /lib \
         --symlink usr/lib64 /lib64 --symlink usr/sbin /sbin \
         --ro-bind /etc /etc --proc /proc --dev /dev \
         --ro-bind "$SCRIPT" /build_authorized_keys.sh \
         --ro-bind "$WORK/shim" /shim \
-        --bind "$FIX/config" /config --bind "$FIX/log" /log \
-        --bind "$FIX/repo" /repo --bind "$FIX/ssh" /home/borg/.ssh \
+        --bind "$CFG" /config --bind "$LOGD" /log \
+        --bind "$REPOD" /repo --bind "$SSHD" /home/borg/.ssh \
         --setenv PATH /shim:/usr/bin:/usr/sbin:/bin:/sbin \
         -- /usr/bin/bash /build_authorized_keys.sh >"$WORK/out" 2>"$WORK/err"
     RC=$?
 }
 
-keys_file() { cat "$FIX/ssh/authorized_keys" 2>/dev/null; }
+keys_file() { cat "$SSHD/authorized_keys" 2>/dev/null; }
 key_lines() { keys_file | grep -c '^command=' ; }
 
 ok()  { pass=$((pass+1)); printf 'ok   %s\n' "$1"; }
@@ -103,7 +140,7 @@ new_fixture
   echo 'user1:OWN:/repo/OWN/user1:50G'
   echo 'user2:OWN:/repo/OWN/user2:20G'
   echo 'friend1:MIRROR:/repo/MIRROR/friend1:200G'
-} > "$FIX/config/clients.conf"
+} > "$CFG/clients.conf"
 add_key user1; add_key user2; add_key friend1
 generate
 
@@ -119,10 +156,10 @@ unprefixed=$(keys_file | grep -vE '^[[:space:]]*(#|$)' | grep -cv '^command="/bo
 keys_file | grep -q '^command="/borg-wrapper.sh /repo/OWN/user1",restrict ssh-ed25519 '
 assert "1.3 entry carries the client's own repo path and 'restrict'" $?
 
-[ -f "$FIX/repo/OWN/user1/info.txt" ] && grep -q 'quota: 50G' "$FIX/repo/OWN/user1/info.txt"
+[ -f "$REPOD/OWN/user1/info.txt" ] && grep -q 'quota: 50G' "$REPOD/OWN/user1/info.txt"
 assert "1.4 info.txt generated with the client's quota" $?
 
-grep -q 'name: testserver' "$FIX/repo/OWN/user1/info.txt" 2>/dev/null
+grep -q 'name: testserver' "$REPOD/OWN/user1/info.txt" 2>/dev/null
 assert "1.5 info.txt carries server_info.conf" $?
 
 # --- 2. key-file injection ---------------------------------------------------
@@ -132,7 +169,7 @@ assert "1.5 info.txt carries server_info.conf" $?
 # forced command.
 
 new_fixture
-echo 'user1:OWN:/repo/OWN/user1:50G' > "$FIX/config/clients.conf"
+echo 'user1:OWN:/repo/OWN/user1:50G' > "$CFG/clients.conf"
 add_key user1 "$VALID_KEY
 $VALID_KEY evil-second-entry"
 generate
@@ -142,7 +179,7 @@ generate
 assert "2.2 the injected second line is discarded" $?
 
 new_fixture
-echo 'user1:OWN:/repo/OWN/user1:50G' > "$FIX/config/clients.conf"
+echo 'user1:OWN:/repo/OWN/user1:50G' > "$CFG/clients.conf"
 add_key user1 "$VALID_KEY
 no-forced-command-here ssh-rsa AAAA"
 generate
@@ -153,7 +190,7 @@ unprefixed=$(keys_file | grep -vE '^[[:space:]]*(#|$)' | grep -cv '^command=')
 
 check_rejected() { # check_rejected <desc> <clients.conf line>
     new_fixture
-    printf '%s\n' "$2" > "$FIX/config/clients.conf"
+    printf '%s\n' "$2" > "$CFG/clients.conf"
     # Give every plausible client name a key, so rejection cannot be
     # attributed to a missing key file.
     add_key "$(printf '%s' "$2" | cut -d: -f1)" 2>/dev/null
@@ -177,18 +214,18 @@ check_rejected "3.10 missing quota field rejected"     'user1:OWN:/repo/OWN/x'
 # --- 4. key-file problems ----------------------------------------------------
 
 new_fixture
-echo 'user1:OWN:/repo/OWN/user1:50G' > "$FIX/config/clients.conf"
+echo 'user1:OWN:/repo/OWN/user1:50G' > "$CFG/clients.conf"
 generate
 [ "$RC" -ne 0 ] || [ "$(key_lines)" -eq 0 ]; assert "4.1 missing key file yields no entry" $?
 
 new_fixture
-echo 'user1:OWN:/repo/OWN/user1:50G' > "$FIX/config/clients.conf"
-: > "$FIX/config/keys/user1.pub"
+echo 'user1:OWN:/repo/OWN/user1:50G' > "$CFG/clients.conf"
+: > "$CFG/keys/user1.pub"
 generate
 [ "$RC" -ne 0 ] || [ "$(key_lines)" -eq 0 ]; assert "4.2 empty key file yields no entry" $?
 
 new_fixture
-echo 'user1:OWN:/repo/OWN/user1:50G' > "$FIX/config/clients.conf"
+echo 'user1:OWN:/repo/OWN/user1:50G' > "$CFG/clients.conf"
 add_key user1 "this is not an ssh key"
 generate
 [ "$RC" -ne 0 ] || [ "$(key_lines)" -eq 0 ]; assert "4.3 malformed key rejected" $?
@@ -199,28 +236,28 @@ generate
 # an empty file would lock every client out at once.
 
 new_fixture
-echo 'bad name:OWN:/repo/OWN/x:50G' > "$FIX/config/clients.conf"
+echo 'bad name:OWN:/repo/OWN/x:50G' > "$CFG/clients.conf"
 printf '# previous file\ncommand="/borg-wrapper.sh /repo/OWN/old",restrict ssh-ed25519 AAAA old\n' \
-    > "$FIX/ssh/authorized_keys"
+    > "$SSHD/authorized_keys"
 generate
 [ "$RC" -ne 0 ]; assert "5.1 no valid entries exits non-zero" $?
 keys_file | grep -q 'old'
 assert "5.2 the existing authorized_keys is preserved, not truncated" $?
-[ ! -f "$FIX/ssh/authorized_keys.tmp" ]; assert "5.3 no temporary file left behind" $?
+[ ! -f "$SSHD/authorized_keys.tmp" ]; assert "5.3 no temporary file left behind" $?
 
 # --- 6. server_info.conf is mandatory ---------------------------------------
 
 new_fixture
-echo 'user1:OWN:/repo/OWN/user1:50G' > "$FIX/config/clients.conf"
+echo 'user1:OWN:/repo/OWN/user1:50G' > "$CFG/clients.conf"
 add_key user1
-printf 'name=testserver\n' > "$FIX/config/server_info.conf"
+printf 'name=testserver\n' > "$CFG/server_info.conf"
 generate
 [ "$RC" -ne 0 ]; assert "6.1 incomplete server_info.conf aborts" $?
 
 # --- 7. comments and blank lines --------------------------------------------
 
 new_fixture
-printf '# a comment\n\nuser1:OWN:/repo/OWN/user1:50G\n' > "$FIX/config/clients.conf"
+printf '# a comment\n\nuser1:OWN:/repo/OWN/user1:50G\n' > "$CFG/clients.conf"
 add_key user1
 generate
 [ "$(key_lines)" -eq 1 ]; assert "7.1 comments and blank lines are skipped" $?
