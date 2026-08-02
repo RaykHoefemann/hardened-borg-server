@@ -46,6 +46,11 @@ additionally needs the GitHub CLI (`gh`), authenticated — and is best run
 *before* the installation, since its whole purpose is to decide whether the
 image should be run at all.
 
+No hardware to spare? [Test Environment](TESTENV.md) builds a throwaway bench
+on one VM that covers every test on this page, and shows how to make each test
+*fail* on purpose — a test that has only ever passed has not been shown to
+discriminate.
+
 Several tests leave roughly 1 MB behind permanently — under a correctly
 functioning server you cannot delete it, which is precisely the point.
 

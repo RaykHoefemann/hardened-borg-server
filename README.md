@@ -97,6 +97,7 @@ automatic restart. For production, run it as a rootless systemd **user** service
 
 | Document | What it covers |
 |---|---|
+| [Test Environment](docs/TESTENV.md) | Try it or rehearse on a throwaway VM — from nothing to a completed verification run |
 | [Server Installation](docs/SERVERINSTALL.md) | Step by step from a bare host to a running server with its first client |
 | [Client Usage](docs/CLIENTUSE.md) | The client side: repo init, key custody, backups, restores, and what append-only changes for you |
 | [Design & Threat Model](docs/DESIGN.md) | The *why*: security, privacy, and data-integrity models — plus scope and residual risk (Chapter 4) |
@@ -111,8 +112,9 @@ automatic restart. For production, run it as a rootless systemd **user** service
 New here and evaluating? Read this page, then
 [Design & Threat Model](docs/DESIGN.md) — start with its Chapter 4, which
 states in one place what this project does, what it leaves to you, and what it
-cannot do at all. Ready to run it? Follow
-[Server Installation](docs/SERVERINSTALL.md) end to end, then hand
+cannot do at all. Want to try it before committing hardware? [Test Environment](docs/TESTENV.md)
+gets you to a working setup on a single throwaway VM. Ready to run it for real?
+Follow [Server Installation](docs/SERVERINSTALL.md) end to end, then hand
 [Client Usage](docs/CLIENTUSE.md) to whoever is being backed up.
 
 ---
