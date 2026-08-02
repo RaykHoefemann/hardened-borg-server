@@ -1,12 +1,14 @@
 > **Docs:** [Overview](../README.md) · [Design & Threat Model](../docs/DESIGN.md) · [Deployment](../docs/DEPLOYMENT.md) · [Operations](../docs/OPERATIONS.md) · [Recovery](../docs/RECOVERY.md) · [Verification](../docs/VERIFICATION.md) · [Best Practices](../docs/BEST_PRACTICES.md) · [Roadmap](../ROADMAP.md)
 >
-> Chapter numbers are kept from the original single-file README. Where they live now: **1–3** → Design · **5–6** → Deployment · **7–10** → Operations · **11** → Roadmap.
+> Chapter numbers are kept from the original single-file README. Where they live now: **1–4** → Design · **5–6** → Deployment · **7–10** → Operations · **11** → Roadmap.
 
 ---
 
 # Design & Threat Model
 
 This document covers the *why* behind hardened-borg-server, organized around its three core focuses — **Security** (Chapter 1), **Privacy** (Chapter 2), and **Data Integrity** (Chapter 3). Deployment, configuration, and operations live in the sibling docs linked above.
+
+**Evaluating whether to run this?** Start with [Chapter 4, Scope & Residual Risk](#4-scope--residual-risk). It states in one place what this project handles, what it hands to you, what is not built yet, and what can never be solved here — then come back for the reasoning.
 
 ---
 
@@ -292,5 +294,71 @@ As with the host security layer (Chapter 1.1), some parts of integrity live belo
 
 - The storage filesystem (XFS) protects its own metadata with CRCs but does **not** checksum file *data* blocks. Detection of data-block corruption therefore relies on Borg's per-chunk authentication and on `borg check` (3.1, 3.3), not on the filesystem itself.
 - Protection against physical media failure — redundancy, scrubbing, replacing failing disks — is a host/storage concern (e.g. RAID and disk monitoring), outside this project's scope in the same way host hardening is (Chapter 1.1). This application makes corruption *detectable*; keeping a second copy so that detected corruption is also *recoverable* is what the offsite mirroring roadmap item (Chapter 11.2) and the operator's own storage design are for.
+
+---
+
+---
+
+# 4. Scope & Residual Risk
+
+Chapters 1–3 describe what this project does and why. This chapter states, in one place, **what it does not do** — what it hands to the operator, what is not built yet, and what can never be solved here at all.
+
+It exists because those boundaries are otherwise scattered across five documents, and scattered honesty reads like hidden honesty. An evaluator should be able to see the full picture without assembling it. Where a property is verifiable, the relevant test in [Verification](VERIFICATION.md) is named — nothing in the first table should be taken on trust.
+
+## 4.1. Handled by this project
+
+| Threat | Mechanism | Verify |
+|---|---|---|
+| Compromised client deletes archives | Append-only, applied unconditionally to every connection (1.2.4) | Test 9 |
+| Compromised client destroys the whole repository | Same | Test 10 |
+| Client obtains a shell or runs arbitrary commands | Forced command + `restrict`, default-deny gating (1.2.1) | Tests 1, 2 |
+| Client reads another client's data or metadata | Fixed per-key repo path + `--restrict-to-path` (1.2.3, 2.2) | Test 7 |
+| Operator or server-side attacker reads backup contents | Client-held keyfile encryption, enforced at connection time (2.1.2) | Tests 6, 8 |
+| One client exhausts storage for the others | Enforcing XFS project quota (1.1.3) | Test 5 |
+| Undetected modification of stored data | Borg per-chunk authentication tags, verified on read (3.1) | — |
+| Password guessing, credential reuse | Key-only SSH; passwords and root login disabled (1.2.1) | Test 1 |
+
+The residual risk across this entire table is the same single point: every one of these properties depends on the client's key being bound to the forced command. One `authorized_keys` line without it voids all of them simultaneously, and nothing else in the system would look wrong. That is why Test 3 exists.
+
+## 4.2. Handed to the operator
+
+This project provides **no host-level security whatsoever** (1.1). These are not shared responsibilities — they are entirely yours, and the application's guarantees inherit their weaknesses:
+
+| Concern | Who handles it |
+|---|---|
+| Container escape, privilege escalation to host | Rootless Podman, SELinux enforcing, immutable OS — operator |
+| Physical media failure, bit rot at the device level | RAID, scrubbing, disk monitoring — operator (3.5) |
+| Storage capacity over time | Quota sizing and monitoring — operator ([Operations](OPERATIONS.md) 10) |
+| Backing up the server's own configuration | Operator ([Operations](OPERATIONS.md) 7.5) |
+| Network exposure of the SSH port | Optional firewall/VPN; the application is designed to be safely exposed without one (1.1.3) |
+
+## 4.3. Not built yet
+
+Documented as roadmap items, and **absent today**. A deployment must be planned as though they do not exist, because they do not:
+
+| Gap | Consequence today | Item |
+|---|---|---|
+| No offsite replication | Site loss, or loss of the storage volume, means total loss | 11.2 |
+| No snapshots of the storage volume | Operator error against the repositories has no local recovery path | 11.5 |
+| No scheduled integrity verification | On-disk corruption is detected when data is read, not before | 11.3 |
+
+Deliberately **not** on this list because it will not be built: automated pruning (11.1). Nothing is ever deleted; capacity is bounded by quotas and managed by monitoring instead ([Operations](OPERATIONS.md) 10).
+
+## 4.4. Cannot be solved here
+
+Not gaps, and not roadmap items. These follow from the design and would require giving up the properties in 4.1 to change:
+
+| Situation | Why nothing can be done |
+|---|---|
+| Client loses its key or passphrase | No key material, escrow or recovery path exists server-side — that absence *is* the privacy guarantee (2.1.1) |
+| Attacker holds root on the host | Nothing hosted on a system defends it against its own root. The answer is a copy the machine cannot reach, i.e. an append-only offsite target (11.2) |
+| Metadata visible to the server | Repository sizes, backup timing and client names are necessarily known to the server. Only *contents* are protected |
+| Space stranded by failed backups | Append-only forbids reclaiming uncommitted segments; raising the quota does not recover them ([Operations](OPERATIONS.md) 10.4) |
+
+## 4.5. How to read this chapter
+
+If you are evaluating whether to run this: 4.1 is what you get, 4.2 is what you must build yourself, 4.3 is what you must plan around, and 4.4 is what you must accept.
+
+A deployment that satisfies 4.1 but not 4.2 is not secure — the application layer alone was never sufficient (1.3). A deployment that satisfies both but ignores 4.3 is secure and will still lose everything to a failed disk.
 
 ---

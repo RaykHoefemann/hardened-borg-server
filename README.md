@@ -83,13 +83,14 @@ automatic restart. For production, run it as a rootless systemd **user** service
 
 | Document | What it covers |
 |---|---|
-| [Design & Threat Model](docs/DESIGN.md) | The *why*: security, privacy, and data-integrity models (the deep dive) |
+| [Design & Threat Model](docs/DESIGN.md) | The *why*: security, privacy, and data-integrity models — plus scope and residual risk (Chapter 4) |
 | [Deployment](docs/DEPLOYMENT.md) | Architecture, `podman run`, and the systemd user-service setup |
 | [Operations](docs/OPERATIONS.md) | `clients.conf`, SSH keys, `server_info.conf`, the info channel, host-management scripts |
 | [Recovery](docs/RECOVERY.md) | Incident handling: accidental deletion, operator error, data loss, restoring data |
 | [Verification](docs/VERIFICATION.md) | Test every claimed guarantee against your own installation — don't take them on faith |
 | [Best Practices](docs/BEST_PRACTICES.md) | Required operational baseline and defense-in-depth hardening |
 | [Roadmap](ROADMAP.md) | Mirroring, `borg check`, Quadlet migration, storage snapshots — and why pruning was dropped |
+| [Security Policy](SECURITY.md) | Reporting a vulnerability — including a documented guarantee that turns out not to hold |
 
 New here and evaluating? Read this page, then
 [Design & Threat Model](docs/DESIGN.md). Ready to run it? Go straight to
