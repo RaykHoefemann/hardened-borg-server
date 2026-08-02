@@ -117,6 +117,18 @@ over time, and it makes every later upgrade a deliberate act.
 
 ---
 
+> **Tests 1, 2 and 8 are also checked automatically.** `tests/wrapper-gating.sh`
+> drives `borg-wrapper.sh` directly against real Borg repositories and runs on
+> every push — 27 cases covering path validation, default-deny gating,
+> injected commands, and the keyfile-only encryption policy. It asserts, among
+> other things, that the exec line is *exactly* the wrapper's own invocation,
+> so no client-supplied argument can widen `--restrict-to-path` or disable
+> `--append-only`.
+>
+> That suite tests the code. The tests below test **your deployment** — that
+> the code is what is actually running, wired up as intended. Neither replaces
+> the other, and you can run the suite yourself against a checkout.
+
 ## 1. No interactive shell ⚠️
 
 **Claim** — [Design](DESIGN.md) Chapter 1.2: a client key grants no shell

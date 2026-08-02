@@ -1,0 +1,57 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  wrapper-gating:
+    name: borg-wrapper.sh gating & policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The suite drives the real wrapper against real Borg repositories, so
+      # borgbackup is needed both as the `borg` CLI (to build fixtures) and as
+      # the Python module the wrapper's encryption check imports.
+      - name: Install borgbackup
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends borgbackup
+
+      - name: Record versions
+        run: |
+          borg --version
+          python3 --version
+          python3 -c "from borg.repository import LoggedIO; print('borg module: ok')"
+
+      - name: Run wrapper gating tests
+        run: tests/wrapper-gating.sh
+
+  shellcheck:
+    name: shellcheck (advisory)
+    runs-on: ubuntu-latest
+    # Advisory for now: the findings in the shipped scripts have not been
+    # triaged yet, and a red build on day one teaches nobody anything. Drop
+    # this line once they are addressed, so that regressions actually fail.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+
+      - name: Lint shell scripts
+        run: |
+          shellcheck --severity=warning \
+            borg-wrapper.sh \
+            entrypoint.sh \
+            build_authorized_keys.sh \
+            scripts/*.sh \
+            tests/*.sh
