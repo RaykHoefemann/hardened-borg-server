@@ -87,7 +87,7 @@ automatic restart. For production, run it as a rootless systemd **user** service
 | [Deployment](docs/DEPLOYMENT.md) | Architecture, `podman run`, and the systemd user-service setup |
 | [Operations](docs/OPERATIONS.md) | `clients.conf`, SSH keys, `server_info.conf`, the info channel, host-management scripts |
 | [Best Practices](docs/BEST_PRACTICES.md) | Required operational baseline and defense-in-depth hardening |
-| [Roadmap](ROADMAP.md) | Pruning, mirroring, `borg check`, Quadlet migration |
+| [Roadmap](ROADMAP.md) | Pruning, mirroring, `borg check`, Quadlet migration, storage snapshots |
 
 New here and evaluating? Read this page, then
 [Design & Threat Model](docs/DESIGN.md). Ready to run it? Go straight to
