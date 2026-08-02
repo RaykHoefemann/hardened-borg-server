@@ -76,6 +76,26 @@ elif [ "$VERSION_FILE" != "${VERSIONS[0]}" ]; then
 else
     printf 'ok   VERSION, git tag %s and image tag %s all agree\n' "$GIT_TAG" "${VERSIONS[0]}"
 fi
+
+# The source URL exists twice by necessity: once on the host (config.sh, shown
+# by 99-container-status.sh) and once inside the image
+# (build_authorized_keys.sh, reported to clients through the info channel).
+# They must not drift, or an operator and a client would be pointed at
+# different repositories.
+SRC_HOST="$(grep -oE '^SOURCE_URL="[^"]+"' scripts/config.sh 2>/dev/null | head -1)"
+SRC_IMAGE="$(grep -oE '^SOURCE_URL="[^"]+"' build_authorized_keys.sh 2>/dev/null | head -1)"
+
+if [ -z "$SRC_HOST" ] || [ -z "$SRC_IMAGE" ]; then
+    echo "FAIL SOURCE_URL missing from scripts/config.sh or build_authorized_keys.sh"
+    consistency_fail=1
+elif [ "$SRC_HOST" != "$SRC_IMAGE" ]; then
+    echo "FAIL SOURCE_URL differs between host and image:"
+    echo "       host:  $SRC_HOST"
+    echo "       image: $SRC_IMAGE"
+    consistency_fail=1
+else
+    printf 'ok   SOURCE_URL identical on host and in image\n'
+fi
 echo
 
 # Anonymous pull token; GHCR requires one even for public repositories.

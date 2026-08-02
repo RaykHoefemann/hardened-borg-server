@@ -147,6 +147,7 @@ Helper scripts under `scripts/` manage the server's clients, quotas, the systemd
 
 **Derived automatically — normally left alone:**
 
+- `SOURCE_URL` — where this software comes from, shown by `99-container-status.sh`. The image carries the same constant and reports it to clients through the `info` channel (Chapter 8); a CI check enforces that the two agree, so an operator and a client are never pointed at different repositories.
 - `RELEASE_VERSION` — read from the `VERSION` file at the installation root, copied there by SERVERINSTALL step 1. It is the single source of truth for the version: `IMAGE` is derived from it, `99-container-status.sh` reports it, and a CI check enforces that it agrees with the git tag and the documented image tag. Reports `unknown` if the tree was assembled by hand rather than installed from a release tag.
 - `REPO_ROOT` — computed from the location of whichever script sourced `config.sh`; correct regardless of the directory you run scripts from.
 - `HOST_CONFIG_BASE`, `HOST_LOG_BASE` — kept inside the repo checkout (`${REPO_ROOT}/config`, `${REPO_ROOT}/log`) unless you have a reason to move them elsewhere.
@@ -267,7 +268,20 @@ Restarts the container via the systemd user service. **Run this after any change
 
 ## 9.11. 99-container-status.sh
 
-Shows a combined status view: the systemd service state, `podman ps` output, a detailed `podman inspect` (image, PID, network, mounts) if the container is currently registered with Podman, and the last 20 lines of the service's journal log.
+Shows a combined status view, opening with the release identity of this installation:
+
+```
+Host scripts:     0.1.0-beta.18
+Configured image: ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.18
+Running image:    0.1.0-beta.18
+Source:           https://github.com/RaykHoefemann/hardened-borg-server
+```
+
+`Running image` is read from the `VERSION` baked into the image at build time, via `podman exec` against the live container. It is the only one of these figures that survives a digest pin: with `IMAGE` set to a `sha256:` reference, the configured value says nothing about which release is actually serving clients. It is omitted when the container is not running.
+
+A difference between `Host scripts` and `Running image` is reported explicitly — the two halves of a release are meant to match, and they drift when an image is not restarted after an upgrade, or when `IMAGE` points at a different release than the checkout the scripts came from.
+
+After that: the systemd service state, `podman ps` output, a detailed `podman inspect` (image, PID, network, mounts) if the container is currently registered with Podman, and the last 20 lines of the service's journal log.
 
 ```bash
 ./scripts/99-container-status.sh

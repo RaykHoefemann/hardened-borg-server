@@ -21,11 +21,29 @@ echo "[status] Installed Release"
 echo "------------------------------------------------------------"
 # The host half of a release is these scripts, which the container image does
 # not carry — so the image tag alone never answers "what is installed here".
-echo "Host scripts: ${RELEASE_VERSION}"
+echo "Host scripts:     ${RELEASE_VERSION}"
 echo "Configured image: ${IMAGE}"
+
+# What the RUNNING container reports about itself, read from the VERSION baked
+# into the image at build time. This is the only figure that survives a digest
+# pin — with IMAGE set to a sha256 reference the tag says nothing about which
+# release is actually serving clients. Empty if the container is not running.
+RUNNING_VERSION="$(podman exec "$CONTAINER" cat /VERSION 2>/dev/null | tr -d '[:space:]' || true)"
+if [ -n "$RUNNING_VERSION" ]; then
+    echo "Running image:    ${RUNNING_VERSION}"
+fi
+echo "Source:           ${SOURCE_URL}"
+
 if [ "$RELEASE_VERSION" = "unknown" ]; then
+    echo
     echo "→ No VERSION file found. This tree was not installed from a release"
     echo "  tag (see docs/SERVERINSTALL.md step 1)."
+elif [ -n "$RUNNING_VERSION" ] && [ "$RUNNING_VERSION" != "$RELEASE_VERSION" ]; then
+    echo
+    echo "→ MISMATCH: host scripts are ${RELEASE_VERSION}, the running container"
+    echo "  is ${RUNNING_VERSION}. The two halves of a release are meant to match."
+    echo "  Either the image was not restarted after an upgrade, or IMAGE points"
+    echo "  at a different release than the checkout these scripts came from."
 fi
 
 echo

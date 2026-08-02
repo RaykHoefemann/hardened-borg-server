@@ -34,6 +34,12 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # release.
 RELEASE_VERSION="$(cat "${REPO_ROOT}/VERSION" 2>/dev/null || echo unknown)"
 
+# Where this software comes from. The image carries the same constant (see
+# build_authorized_keys.sh, which reports it to clients through the info
+# channel); a CI check enforces that the two agree, so an operator and a
+# client are never pointed at different sources.
+SOURCE_URL="https://github.com/RaykHoefemann/hardened-borg-server"
+
 # --- Host-side paths -------------------------------------------------------
 
 # Config and log storage: kept inside the repo checkout itself.
