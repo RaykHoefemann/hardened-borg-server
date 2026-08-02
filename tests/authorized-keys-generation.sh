@@ -54,7 +54,6 @@ elif sudo -n true 2>/dev/null; then
     MODE=sudo
     sudo mkdir -p /config/keys /log /repo /home/borg/.ssh
     sudo chown -R "$(id -u):$(id -g)" /config /log /repo /home/borg
-    sudo install -m 644 "$WORK/VERSION" /VERSION
 else
     echo "FAIL neither bubblewrap nor passwordless sudo is available;" >&2
     echo "     the absolute paths this script needs cannot be provided." >&2
@@ -70,6 +69,14 @@ ssh-keygen -q -t ed25519 -N '' -C 'fixture' -f "$WORK/id" || exit 1
 VALID_KEY="$(cat "$WORK/id.pub")"
 
 printf '9.9.9-test\n' > "$WORK/VERSION"
+
+# In sudo mode the script reads /VERSION directly; bwrap binds the fixture in
+# place instead. This has to happen after $WORK exists — putting it in the mode
+# detection above referenced $WORK before mktemp had run, which only the sudo
+# branch reached, so it passed locally under bwrap and failed on the runner.
+if [ "$MODE" = sudo ]; then
+    sudo install -m 644 "$WORK/VERSION" /VERSION
+fi
 
 mkdir -p "$WORK/shim"
 printf '#!/bin/sh\nexit 0\n' > "$WORK/shim/chown"
