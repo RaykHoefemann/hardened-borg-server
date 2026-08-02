@@ -20,8 +20,14 @@
 #   restriction is what --append-only provides (segment-level + transaction log).
 #
 # OPERATING REQUIREMENTS (all mandatory — see README):
-#   * borg 1.2.x            Debian stable container; the segment format assumed
-#                           by the encryption check below is the 1.2 format.
+#   * borg 1.2.x or 1.4.x   The encryption check below reads the manifest's
+#                           TYPE byte through borg's own segment reader. Both
+#                           versions are exercised by tests/wrapper-gating.sh:
+#                           1.2.8 on the CI runner and whatever the image
+#                           actually ships (1.4.0 as of debian:trixie-slim),
+#                           the latter run against this file as installed in
+#                           the image. Do not assume an untested version works
+#                           — bump the base image and the tests together.
 #   * python3               Pulled in automatically by the borgbackup package.
 #   * XFS project quotas, mounted 'prjquota' (ENFORCING) with a per-repo project
 #                           id and limit. Enforcement caps each client's storage

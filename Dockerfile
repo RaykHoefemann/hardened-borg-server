@@ -10,7 +10,14 @@
 # secure Borg server that works identically to your Debian test setup.
 # -----------------------------------------------------------------------------
 
-FROM debian:stable-slim
+# Pinned to a named Debian release rather than the "stable" alias. "stable"
+# moves whenever Debian promotes a new release, and doing so silently changed
+# the bundled BorgBackup from 1.2.x to 1.4.0 — across a major version, under a
+# wrapper whose encryption check reads the repository's on-disk manifest.
+# Nothing broke, but nobody decided it either. Bumping this line is now a
+# deliberate act, to be made together with a run of the test suite against the
+# built image.
+FROM debian:trixie-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 

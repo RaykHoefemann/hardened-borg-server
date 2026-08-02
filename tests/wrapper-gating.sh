@@ -24,7 +24,11 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-WRAPPER="$ROOT/borg-wrapper.sh"
+
+# Defaults to the wrapper in this checkout. Override to point at the copy
+# installed in a built image (WRAPPER=/borg-wrapper.sh), so the suite can be
+# run against the artifact that actually ships rather than only the source.
+WRAPPER="${WRAPPER:-$ROOT/borg-wrapper.sh}"
 
 [ -f "$WRAPPER" ] || { echo "not found: $WRAPPER" >&2; exit 1; }
 command -v borg    >/dev/null || { echo "borgbackup is required" >&2; exit 1; }

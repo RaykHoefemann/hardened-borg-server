@@ -36,6 +36,30 @@ jobs:
       - name: Run wrapper gating tests
         run: tests/wrapper-gating.sh
 
+  shipped-image:
+    name: wrapper suite inside the built image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The job above runs the wrapper against the runner's borg. The image
+      # ships its own, and the two drifted apart unnoticed once "stable" moved
+      # Debian from bookworm to trixie and borg from 1.2.x to 1.4.0. This job
+      # exercises the wrapper as installed, against the version that actually
+      # ships, so a base image bump cannot silently change what is delivered.
+      - name: Build the image
+        run: docker build -t borg-server:ci .
+
+      - name: Record the shipped borg version
+        run: docker run --rm --entrypoint /usr/bin/borg borg-server:ci --version
+
+      - name: Run the gating suite against /borg-wrapper.sh
+        run: |
+          docker run --rm -v "$PWD/tests:/tests:ro" \
+            -e WRAPPER=/borg-wrapper.sh \
+            --entrypoint /bin/bash borg-server:ci /tests/wrapper-gating.sh
+
   host-side:
     name: build_authorized_keys.sh & host scripts
     runs-on: ubuntu-latest
