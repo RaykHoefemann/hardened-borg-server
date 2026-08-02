@@ -100,7 +100,7 @@ automatic restart. For production, run it as a rootless systemd **user** service
 | [Server Installation](docs/SERVERINSTALL.md) | Step by step from a bare host to a running server with its first client |
 | [Client Usage](docs/CLIENTUSE.md) | The client side: repo init, key custody, backups, restores, and what append-only changes for you |
 | [Design & Threat Model](docs/DESIGN.md) | The *why*: security, privacy, and data-integrity models — plus scope and residual risk (Chapter 4) |
-| [Deployment](docs/DEPLOYMENT.md) | Architecture, `podman run`, and the systemd user-service setup |
+| [Deployment](docs/DEPLOYMENT.md) | Architecture, `podman run`, the systemd user-service setup, and upgrading or rolling back |
 | [Operations](docs/OPERATIONS.md) | `clients.conf`, SSH keys, `server_info.conf`, the info channel, host-management scripts |
 | [Recovery](docs/RECOVERY.md) | Incident handling: accidental deletion, operator error, data loss, restoring data |
 | [Verification](docs/VERIFICATION.md) | Test every claimed guarantee against your own installation — don't take them on faith |

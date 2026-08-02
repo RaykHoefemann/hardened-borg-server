@@ -250,3 +250,6 @@ is verified reachable with correct quota enforcement.
   — Chapters 1–3 are mandatory, the rest is optional defense-in-depth.
 - **Day-to-day administration** (quota changes, status checks, more scripts):
   [Operations](OPERATIONS.md) Chapter 9.
+- **Upgrading later:** [Deployment](DEPLOYMENT.md) Chapter 6.3 — do *not* simply
+  repeat step 1 against an existing installation, it overwrites `config.sh` and
+  `server_info.conf`.

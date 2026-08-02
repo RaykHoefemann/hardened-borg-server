@@ -6,7 +6,7 @@
 
 # Deployment
 
-Architecture overview and how to run the server — from an ad-hoc test container to a persistent rootless systemd user service.
+Architecture overview and how to run the server — from an ad-hoc test container to a persistent rootless systemd user service, and how to move an existing installation to a new release (Chapter 6.3) or back to an old one (Chapter 6.4).
 
 ---
 
@@ -151,5 +151,108 @@ In practice this is uncommon, but operators who want a more robust setup can:
 - migrate to a **Podman Quadlet** (`.container` file under `~/.config/containers/systemd/`) instead of a hand-written `.service` file, which manages the container lifecycle more robustly and is the currently recommended long-term approach for new Podman/systemd deployments.
 
 The unit as provided is functional and sufficient for most deployments; this is a hardening suggestion, not a required change.
+
+---
+
+## 6.3. Upgrading to a new release
+
+A release has two halves and an upgrade moves both. The container image carries `borg-wrapper.sh`, `entrypoint.sh` and `build_authorized_keys.sh`; everything else an operator runs — the provisioning scripts, the systemd unit, `config.sh` — comes from the git checkout. Since the `VERSION` file is baked into the image, **every release changes the image**, even ones whose only substantive changes are host-side.
+
+### What you must not lose
+
+Two files in an installation are yours, not the release's, and a careless upgrade overwrites both:
+
+- **`scripts/config.sh`** — holds `HOST_REPO_BASE`, and your digest pin if you set one. It is shipped code *and* per-host configuration in one file, which is why the procedure below backs it up and diffs rather than simply copying.
+- **`config/server_info.conf`** — you edited it in SERVERINSTALL step 7; the repository ships it with placeholder values.
+
+> ⚠️ **Do not re-run SERVERINSTALL step 1 against an existing installation.** `cp -r` merges into existing directories and overwrites same-named files, so copying `config/` would replace your `server_info.conf` with the template, and copying `scripts/` would replace your `config.sh`. Your `clients.conf` and `config/keys/` survive only because the repository does not ship them.
+
+### Procedure
+
+Run it outside a backup window: the restart interrupts any transfer in progress, and a client caught mid-run has to repeat it.
+
+```bash
+cd "$INSTALL_PATH"
+NEW=v0.1.0-beta.19
+
+# 1. Record where you are, so you can tell afterwards that something changed
+./scripts/99-container-status.sh | head -8
+
+# 2. Keep what is yours
+cp scripts/config.sh /tmp/config.sh.previous
+
+# 3. Fetch the new release
+git clone --branch "$NEW" --depth 1 \
+  https://github.com/RaykHoefemann/hardened-borg-server.git ~/tmp/upgrade
+```
+
+Verify the new image **before** pulling it — the provenance attestation is what makes the next step something other than trust ([Verification](VERIFICATION.md), Test 0):
+
+```bash
+# 4. Verify, then pull
+gh attestation verify "oci://ghcr.io/raykhoefemann/hardened-borg-server:${NEW#v}" \
+  --repo RaykHoefemann/hardened-borg-server
+podman pull "ghcr.io/raykhoefemann/hardened-borg-server:${NEW#v}"
+
+# 5. Replace only the release's own files — note that config/ is NOT copied
+cp -r ~/tmp/upgrade/scripts ~/tmp/upgrade/systemd "$INSTALL_PATH"/
+cp ~/tmp/upgrade/VERSION "$INSTALL_PATH"/
+rm -rf ~/tmp/upgrade
+
+# 6. Restore your settings into the new config.sh
+diff /tmp/config.sh.previous scripts/config.sh
+$EDITOR scripts/config.sh          # re-apply HOST_REPO_BASE, and a digest pin if you use one
+
+# 7. Re-render the unit from config.sh and restart
+./scripts/50-service-install.sh
+./scripts/92-container-restart.sh
+```
+
+The `diff` in step 6 is the point of the backup: it shows both your own settings and any new fields the release introduced, which a blind copy of the old file back into place would silently discard.
+
+### Confirm the upgrade actually landed
+
+```bash
+./scripts/99-container-status.sh | head -8
+```
+
+All three figures must agree:
+
+```
+Host scripts:     0.1.0-beta.19
+Configured image: ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.19
+Running image:    0.1.0-beta.19
+```
+
+A `MISMATCH` line here is the normal outcome of forgetting step 7 — the files on disk are new while the container still runs the old image. From a client, `ssh -p 2222 borg@<server> info` should now report the new version in its `[software]` section, since `info.txt` is regenerated at container start.
+
+### What an upgrade does not touch
+
+Repositories, client encryption keys, quotas and XFS project IDs are all untouched: nothing in the procedure writes to `HOST_REPO_BASE`, and there is no schema migration. Borg's on-disk format is not changed by a release of this project.
+
+The one thing to read release notes for is a change of the **bundled Borg version**. The wrapper's encryption check reads the repository manifest, so it is version-sensitive by nature — see the note at the top of `borg-wrapper.sh`, which records which Borg versions a release was tested against.
+
+## 6.4. Rolling back
+
+Rollback is deliberately symmetric with the upgrade, and it is why [Verification](VERIFICATION.md) Test 0 recommends pinning a digest: a digest names exactly one image forever, so going back is unambiguous.
+
+```bash
+cd "$INSTALL_PATH"
+OLD=v0.1.0-beta.18
+
+git clone --branch "$OLD" --depth 1 \
+  https://github.com/RaykHoefemann/hardened-borg-server.git ~/tmp/rollback
+cp -r ~/tmp/rollback/scripts ~/tmp/rollback/systemd "$INSTALL_PATH"/
+cp ~/tmp/rollback/VERSION "$INSTALL_PATH"/
+rm -rf ~/tmp/rollback
+
+$EDITOR scripts/config.sh          # re-apply HOST_REPO_BASE as in the upgrade
+./scripts/50-service-install.sh
+./scripts/92-container-restart.sh
+```
+
+Because `IMAGE` is derived from `VERSION`, restoring the older `VERSION` also restores the older image reference — the two halves move together in both directions.
+
+Rolling back the software does not roll back data, and cannot: append-only means nothing written since the upgrade is removed by going back. That is the intended behaviour, not a limitation — for undoing damage to a repository, see [Recovery](RECOVERY.md) Section 1.
 
 ---
