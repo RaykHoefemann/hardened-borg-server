@@ -1,6 +1,6 @@
 > **Docs:** [Overview](../README.md) · [Design & Threat Model](../docs/DESIGN.md) · [Deployment](../docs/DEPLOYMENT.md) · [Operations](../docs/OPERATIONS.md) · [Recovery](../docs/RECOVERY.md) · [Verification](../docs/VERIFICATION.md) · [Best Practices](../docs/BEST_PRACTICES.md) · [Roadmap](../ROADMAP.md)
 >
-> Chapter numbers are kept from the original single-file README. Where they live now: **1–3** → Design · **5–6** → Deployment · **7–9** → Operations · **11** → Roadmap.
+> Chapter numbers are kept from the original single-file README. Where they live now: **1–3** → Design · **5–6** → Deployment · **7–10** → Operations · **11** → Roadmap.
 
 ---
 
@@ -235,9 +235,15 @@ Two independent checks must both pass, and the connection is refused on any erro
 
 ## 2.3. Logging
 
-- Centralized logs are stored in `/log`
-- Logs do **not** contain client-identifying information such as client names or IP addresses
-- Logs are limited to operational data needed for diagnosing the service itself, not for tracking client activity
+Logging has two destinations, and they carry deliberately different data.
+
+**`/log` — provisioning and startup.** `entrypoint.log` and `build_authorized_keys.log` record the container's startup sequence and how `authorized_keys` was generated. These entries do reference **client names, groups, repository paths and quotas** — a provisioning log that cannot name what it provisioned is useless for diagnosing a failed client setup. All of it is data that already lives in `clients.conf` on the same host, so this exposes nothing the operator does not already hold.
+
+What `/log` does **not** contain: backup content, archive names, per-backup activity, or client IP addresses. Nothing there records what a client backed up, or when.
+
+**The host journal — SSH connections.** `sshd` runs with `-e` and logs to stderr, which Podman forwards into the systemd journal on the host rather than into `/log`. Those entries include source IP addresses and key fingerprints, as they would for any SSH service. This is host-side only and is never reachable through the client-facing interface (Chapter 1.2.6).
+
+Neither destination records backup *contents* — and that is structural rather than a matter of logging policy: the server never holds a key (Chapter 2.1), so it could not log readable content even if it were configured to try.
 
 ## 2.4. Info Channel
 

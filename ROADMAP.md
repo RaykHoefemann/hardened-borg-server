@@ -1,6 +1,6 @@
 > **Docs:** [Overview](README.md) · [Design & Threat Model](docs/DESIGN.md) · [Deployment](docs/DEPLOYMENT.md) · [Operations](docs/OPERATIONS.md) · [Recovery](docs/RECOVERY.md) · [Verification](docs/VERIFICATION.md) · [Best Practices](docs/BEST_PRACTICES.md) · [Roadmap](ROADMAP.md)
 >
-> Chapter numbers are kept from the original single-file README. Where they live now: **1–3** → Design · **5–6** → Deployment · **7–9** → Operations · **11** → Roadmap.
+> Chapter numbers are kept from the original single-file README. Where they live now: **1–3** → Design · **5–6** → Deployment · **7–10** → Operations · **11** → Roadmap.
 
 ---
 
@@ -8,11 +8,19 @@
 
 Planned features, not yet implemented. Listed here for visibility; timelines are not committed.
 
-## 11.1. Automated Archive Pruning
+One entry (11.1) records a feature that was deliberately **dropped**. It is kept rather than removed so the decision and its reasoning stay visible — a roadmap that silently loses items teaches readers nothing about how the project makes choices.
 
-Automated, operator-configurable retention policies (e.g. "keep 7 daily, 4 weekly, 6 monthly" per client), so old archives are cleaned up without a manual `borg prune` run.
+## 11.1. Automated Archive Pruning — dropped
 
-This needs to be reconciled carefully with the append-only enforcement described in Chapter 1.2.4: today, deletion is intentionally something a client cannot trigger. Automated pruning will need to be a distinct, deliberate server/operator-side mechanism — not a relaxation of what a client connection is allowed to do — so the existing append-only guarantee is not weakened by this feature.
+Previously planned: operator-configurable retention policies (e.g. "keep 7 daily, 4 weekly, 6 monthly" per client), so old archives would be cleaned up without a manual `borg prune` run.
+
+**This is no longer a goal.** The entry is kept rather than deleted so that the decision is on record and the chapter numbering stays stable.
+
+The reasoning is the one this project applies everywhere else: deletion is the single operation that can destroy a backup, and an automated retention mechanism would perform it regularly, unattended, against repositories whose contents the server cannot read and cannot verify afterwards. Its failure mode is silent and irreversible. Weighed against unbounded storage growth — which is visible, gradual, and answerable by adding a disk — the trade is not close.
+
+The consequence is deliberate, and is documented as normal operation rather than as a gap: nothing is ever deleted, consumption is bounded by per-client quotas instead of retention policies, and capacity is managed by monitoring and by raising limits. See [Operations](docs/OPERATIONS.md) Chapter 10.
+
+What this does **not** rule out is a **manual, operator-side** reclamation tool for exceptional situations. Space stranded by repeatedly failed backups (Operations, Chapter 10.4) currently has no answer other than the transaction rollback in [Recovery](docs/RECOVERY.md) Section 1, which is designed for accidents rather than for cleanup. Any such tool would be a deliberate, attended action — never a schedule, and never reachable from a client connection.
 
 ## 11.2. Mirroring Own Repositories to a Foreign Backup Server
 
@@ -35,7 +43,7 @@ Two consequences follow directly:
 
 This is the same guarantee this project already provides to its own clients, applied one level up: when mirroring outward, **this server is the client**, and it must be treated with exactly the distrust it applies to everyone connecting to it. Where the foreign server runs this project too, the property already exists and only needs to be configured deliberately. Where it is a third party's infrastructure, append-only must be **verified before the target is used**, not assumed from a description — an unverified remote is not an offsite backup, it is a copy that happens to be far away.
 
-Practical consequence to plan for: an append-only remote never reclaims space on its own. Compaction there becomes a coordinated, deliberate operator action on the foreign side, subject to the same reasoning as automated pruning here (11.1) — it must not be reachable from the replication connection.
+Practical consequence to plan for: an append-only remote never reclaims space on its own. Compaction there becomes a coordinated, deliberate operator action on the foreign side, subject to the same reasoning this project applies to every mutating operation — it must not be reachable from the replication connection.
 
 ### Verifying the guarantee
 
@@ -92,7 +100,7 @@ The privacy model (Chapter 2.1) directly shapes what this feature can and cannot
 
 Two existing guarantees must be preserved when this lands:
 
-- **Append-only (Chapter 1.2.4):** `borg check` has a `--repair` mode that *modifies* the repository. As with automated pruning (11.1), repair must never be reachable from a client connection and must be a distinct, deliberate operator-side action. The scheduled check itself runs strictly read-only; repair stays manual.
+- **Append-only (Chapter 1.2.4):** `borg check` has a `--repair` mode that *modifies* the repository. Repair must never be reachable from a client connection and must be a distinct, deliberate operator-side action. The scheduled check itself runs strictly read-only; repair stays manual.
 - **Host-side-only observability (Chapter 1.2.6):** results surface to the operator on the host (log output and exit status, e.g. driven by a systemd timer), not through a new client-facing interface or port. Whether a "last checked" timestamp is later surfaced to clients through the existing `info` channel (Chapter 8) is a separate, deliberate decision — doing so would widen what that channel reports and is intentionally out of scope for the first iteration.
 
 Practical considerations: `borg check` is I/O-intensive, so scheduling must avoid colliding with active backup windows, and each per-repository check should run under the same isolation the rest of the server uses.
@@ -121,7 +129,7 @@ Unlike the other items on this list, this is **not an optional enhancement**. Fo
 
 - **Operator error.** A mistyped `rm -rf` against the storage volume destroys every hosted repository at once, and the only remaining copy is offsite.
 - **Destructive software running on the host.** Ransomware or a runaway process acting outside the rootless container is beyond anything the application layer can defend against — up to, but not including, an attacker who holds root (see the scope boundary below).
-- **The server's own mutating operations.** Automated pruning (11.1) and `borg check --repair` (11.3) both deliberately write to repositories from the operator side, bypassing append-only by design. Each is a new opportunity to destroy data through a bug or a wrong parameter — and both are planned features, so this is a risk the project is about to create for itself.
+- **The server's own mutating operations.** `borg check --repair` (11.3) deliberately writes to repositories from the operator side, bypassing append-only by design, as would any manual reclamation tooling (11.1). Each is an opportunity to destroy data through a bug or a wrong parameter — and 11.3 is a planned feature, so this is a risk the project is about to create for itself.
 
 Without snapshots, every one of these ends in the same place: a full restore from the offsite mirror (11.2). That is slow, depends on a third party's availability, and is a disproportionate response to what is usually a small, local, entirely recoverable mistake. Snapshots turn it into a local rollback measured in seconds, and — because a snapshot can be compared against the live tree — they also answer *what* changed and *when* it started, which no restore from offsite can tell you.
 
@@ -176,4 +184,4 @@ This fits the privacy model exactly as 11.3 does (Chapter 2.1): it inspects repo
 
 ### Retention
 
-Retention should follow how long each failure class takes to notice — accidental deletion is found within hours, a slow compromise possibly only after weeks — so a short dense window is not sufficient on its own; comparison needs enough history to answer *when* a change first appeared. Mutating operator-side operations should additionally take a named snapshot immediately beforehand and retain it until the result has been verified. This covers automated pruning (11.1) and `borg check --repair` (11.3), and equally the append-only transaction rollback used to undo a client's accidental archive deletion (Recovery, Section 1) — an operation that removes segment files by hand, on a repository whose contents the operator cannot read, and that is today made reversible only by moving those files to a quarantine directory instead of deleting them. A snapshot replaces that improvisation with a proper one.
+Retention should follow how long each failure class takes to notice — accidental deletion is found within hours, a slow compromise possibly only after weeks — so a short dense window is not sufficient on its own; comparison needs enough history to answer *when* a change first appeared. Mutating operator-side operations should additionally take a named snapshot immediately beforehand and retain it until the result has been verified. This covers `borg check --repair` (11.3), any manual reclamation tooling (11.1), and equally the append-only transaction rollback used to undo a client's accidental archive deletion (Recovery, Section 1) — an operation that removes segment files by hand, on a repository whose contents the operator cannot read, and that is today made reversible only by moving those files to a quarantine directory instead of deleting them. A snapshot replaces that improvisation with a proper one.

@@ -89,7 +89,7 @@ automatic restart. For production, run it as a rootless systemd **user** service
 | [Recovery](docs/RECOVERY.md) | Incident handling: accidental deletion, operator error, data loss, restoring data |
 | [Verification](docs/VERIFICATION.md) | Test every claimed guarantee against your own installation — don't take them on faith |
 | [Best Practices](docs/BEST_PRACTICES.md) | Required operational baseline and defense-in-depth hardening |
-| [Roadmap](ROADMAP.md) | Pruning, mirroring, `borg check`, Quadlet migration, storage snapshots |
+| [Roadmap](ROADMAP.md) | Mirroring, `borg check`, Quadlet migration, storage snapshots — and why pruning was dropped |
 
 New here and evaluating? Read this page, then
 [Design & Threat Model](docs/DESIGN.md). Ready to run it? Go straight to

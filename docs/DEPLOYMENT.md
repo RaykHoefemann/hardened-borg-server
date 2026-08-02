@@ -1,6 +1,6 @@
 > **Docs:** [Overview](../README.md) · [Design & Threat Model](../docs/DESIGN.md) · [Deployment](../docs/DEPLOYMENT.md) · [Operations](../docs/OPERATIONS.md) · [Recovery](../docs/RECOVERY.md) · [Verification](../docs/VERIFICATION.md) · [Best Practices](../docs/BEST_PRACTICES.md) · [Roadmap](../ROADMAP.md)
 >
-> Chapter numbers are kept from the original single-file README. Where they live now: **1–3** → Design · **5–6** → Deployment · **7–9** → Operations · **11** → Roadmap.
+> Chapter numbers are kept from the original single-file README. Where they live now: **1–3** → Design · **5–6** → Deployment · **7–10** → Operations · **11** → Roadmap.
 
 ---
 
