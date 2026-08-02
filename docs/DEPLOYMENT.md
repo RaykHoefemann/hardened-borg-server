@@ -54,6 +54,8 @@ podman run \
 
 Useful for testing, but the container does not survive a reboot or a logout, and there is no automatic restart on failure.
 
+> **Verify the image before you trust it.** Every published image carries a Sigstore build-provenance attestation tying its digest to the commit and workflow that produced it, so you can confirm it was built from this repository rather than merely named after it. For anything beyond a throwaway test, verify it and then pin the resulting digest in `scripts/config.sh` instead of a mutable tag — see [Verification](VERIFICATION.md), Test 0.
+
 ## 6.2. Persistent Deployment via systemd (Recommended)
 
 For production use, the container should run as a **rootless systemd user service** rather than being started manually. A ready-to-use unit **template** is provided at `systemd/container-borg-server.service`.

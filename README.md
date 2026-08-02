@@ -25,6 +25,15 @@ attack surface by design.
   project quotas, independent of application-level tracking.
 - **Append-only semantics** — protection against retroactive tampering by a
   compromised client.
+- **Nothing is ever deleted** — there is no pruning and no retention policy,
+  by design: deletion is the one operation that can destroy a backup. Storage
+  grows without bound, is capped per client by quota, and is managed by
+  monitoring and by adding capacity. **If you need archives to expire — for
+  retention rules, compliance, or fixed storage — this project is the wrong
+  fit.** See [Operations](docs/OPERATIONS.md) Chapter 10.
+- **Verifiable, not just documented** — the published image carries a build
+  provenance attestation, and every guarantee above has a test you can run
+  yourself. See [Verification](docs/VERIFICATION.md).
 - **Fully config-driven** — nothing is provisioned beyond what is explicitly
   declared in `/config`.
 - **Minimal, auditable surface** — no orchestration layer, deterministic
@@ -76,6 +85,11 @@ podman run \
 This is fine for testing, but does **not** survive reboot/logout and has no
 automatic restart. For production, run it as a rootless systemd **user** service
 — see [Deployment](docs/DEPLOYMENT.md).
+
+> **Before running it anywhere you care about,** verify that the image was
+> actually built from this repository — it carries a build provenance
+> attestation for exactly that purpose. One command, and it is the check every
+> other guarantee rests on: [Verification](docs/VERIFICATION.md), Test 0.
 
 ---
 

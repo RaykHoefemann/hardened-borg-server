@@ -41,7 +41,10 @@ Status markers:
 
 You need a client machine with an SSH key already provisioned on the server
 (see [Server Installation](SERVERINSTALL.md), step 9), and a willingness to
-write a small amount of throwaway data into the repository.
+write a small amount of throwaway data into the repository. Test 0
+additionally needs the GitHub CLI (`gh`), authenticated — and is best run
+*before* the installation, since its whole purpose is to decide whether the
+image should be run at all.
 
 Several tests leave roughly 1 MB behind permanently — under a correctly
 functioning server you cannot delete it, which is precisely the point.
@@ -49,6 +52,68 @@ functioning server you cannot delete it, which is precisely the point.
 Throughout, replace `<server>` with your server host, `2222` with your
 configured `SSH_PORT`, and `<repo>` with the repository URL assigned to the
 client, e.g. `ssh://borg@<server>:2222/repo/OWN/user1-os1-pc1`.
+
+---
+
+## 0. The image was built from this source ⚠️
+
+**Run this before the others.** Every test below examines the behaviour of a
+running container. If that container was not built from the source you
+reviewed, all of them verify the wrong artifact — correctly, and pointlessly.
+This is the only test whose failure invalidates the entire rest of the page.
+
+**Claim** — each published image carries a Sigstore build-provenance
+attestation, produced by this repository's own workflow
+(`.github/workflows/docker.yml`), tying the image digest to the commit and
+workflow run that built it.
+
+**Why it matters** — the documentation, the wrapper's source, and this test
+page are all public and auditable. The thing you actually run is a binary blob
+pulled from a registry. Without this check, reviewing the source proves
+nothing about what is executing.
+
+**Run**
+
+```bash
+gh attestation verify \
+  oci://ghcr.io/raykhoefemann/hardened-borg-server:<tag> \
+  --repo RaykHoefemann/hardened-borg-server
+```
+
+**Pass** — verification succeeds, and the attestation names **this**
+repository and the `.github/workflows/docker.yml` workflow, at the git tag
+matching the image tag you pulled.
+
+**Fail** — no attestation found, verification errors, or an attestation naming
+a different repository or workflow. Do not run the image; obtain it again from
+the documented location and re-check.
+
+**Where the attestation lives:** it is uploaded to GitHub's Attestations API
+and deliberately *not* pushed into the registry, so `gh attestation verify`
+finds it by default. Tools that verify strictly against the OCI registry
+(`cosign` against the registry, Kyverno or Sigstore policy-controller
+admission checks) will **not** find it and will report its absence — that is a
+property of where it is stored, not evidence that it is missing.
+
+**Then pin what you verified.** Tags are mutable: verifying
+`:0.1.0-beta.9` today says nothing about what that tag points to next month.
+Resolve it once and pin the digest in `scripts/config.sh`:
+
+```bash
+podman pull ghcr.io/raykhoefemann/hardened-borg-server:<tag>
+podman image inspect --format '{{.Digest}}' ghcr.io/raykhoefemann/hardened-borg-server:<tag>
+```
+
+```sh
+IMAGE="ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest>"
+```
+
+A pinned digest is the only form in which the result of this test stays true
+over time, and it makes every later upgrade a deliberate act.
+
+> Marked unverified because it was derived from the published workflow rather
+> than executed against a live tag. If you run it, the output is worth
+> reporting back.
 
 ---
 
@@ -393,6 +458,7 @@ effect for that connection. Return to test 3.
 
 | # | Property | Status |
 |---|---|---|
+| 0 | Image built from this source (do this first) | ☐ |
 | 1 | No interactive shell | ☐ |
 | 2 | Default-deny on commands | ☐ |
 | 3 | Every key bound to the forced command | ☐ |
@@ -404,9 +470,10 @@ effect for that connection. Return to test 3.
 | 9 | Append-only enforced | ☐ |
 | 10 | Repository destruction blocked | ☐ |
 
-A deployment that fails any of 1–5 should not be considered hardened. A
-deployment that fails 6–10 is not providing the guarantees this project
-exists to provide.
+A deployment that fails **test 0** has not been verified at all — the
+remaining results describe an artifact of unknown origin. A deployment that
+fails any of 1–5 should not be considered hardened. A deployment that fails
+6–10 is not providing the guarantees this project exists to provide.
 
 ## What this document does not cover
 
