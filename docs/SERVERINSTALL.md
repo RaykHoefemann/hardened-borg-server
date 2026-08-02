@@ -54,7 +54,7 @@ host actually needs: `config`, `scripts`, `systemd`.
 
 ```bash
 INSTALL_PATH=~/containers/borg-server
-RELEASE=v0.1.0-beta.14
+RELEASE=v0.1.0-beta.15
 mkdir -p "$INSTALL_PATH"
 
 git clone --branch "$RELEASE" --depth 1 \
@@ -87,8 +87,19 @@ installation directory becomes the new root all scripts operate from.
 ## 2. Get the container image
 
 ```bash
-podman pull ghcr.io/raykhoefemann/hardened-borg-server:latest
+podman pull "ghcr.io/raykhoefemann/hardened-borg-server:${RELEASE#v}"
 ```
+
+Same `$RELEASE` as in step 1, with the leading `v` stripped — the git tag and
+the image tag are the two halves of one release, so pulling them from a single
+variable makes them match by construction rather than by remembering to. During
+the beta phase there is no `:latest` to fall back on; it does not exist until a
+stable release ships.
+
+Before trusting this image anywhere that matters, verify that it was built from
+this repository — it carries a build provenance attestation for exactly that
+purpose. See [Verification](VERIFICATION.md), Test 0, which also shows how to
+pin the resulting digest instead of a mutable tag.
 
 ---
 
