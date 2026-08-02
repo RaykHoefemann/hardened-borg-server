@@ -68,7 +68,7 @@ directly from the internet. See [`BEST_PRACTICES.md`](docs/BEST_PRACTICES.md).
 
 > **Beta:** the `:latest` tag does not exist on GHCR yet. Replace it with a
 > current pre-release tag, e.g.
-> `ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.15`
+> `ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.16`
 > ([version list](https://github.com/RaykHoefemann/hardened-borg-server/pkgs/container/hardened-borg-server/versions)).
 
 ```bash
@@ -97,6 +97,8 @@ automatic restart. For production, run it as a rootless systemd **user** service
 
 | Document | What it covers |
 |---|---|
+| [Server Installation](docs/SERVERINSTALL.md) | Step by step from a bare host to a running server with its first client |
+| [Client Usage](docs/CLIENTUSE.md) | The client side: repo init, key custody, backups, restores, and what append-only changes for you |
 | [Design & Threat Model](docs/DESIGN.md) | The *why*: security, privacy, and data-integrity models — plus scope and residual risk (Chapter 4) |
 | [Deployment](docs/DEPLOYMENT.md) | Architecture, `podman run`, and the systemd user-service setup |
 | [Operations](docs/OPERATIONS.md) | `clients.conf`, SSH keys, `server_info.conf`, the info channel, host-management scripts |
@@ -107,8 +109,11 @@ automatic restart. For production, run it as a rootless systemd **user** service
 | [Security Policy](SECURITY.md) | Reporting a vulnerability — including a documented guarantee that turns out not to hold |
 
 New here and evaluating? Read this page, then
-[Design & Threat Model](docs/DESIGN.md). Ready to run it? Go straight to
-[Deployment](docs/DEPLOYMENT.md).
+[Design & Threat Model](docs/DESIGN.md) — start with its Chapter 4, which
+states in one place what this project does, what it leaves to you, and what it
+cannot do at all. Ready to run it? Follow
+[Server Installation](docs/SERVERINSTALL.md) end to end, then hand
+[Client Usage](docs/CLIENTUSE.md) to whoever is being backed up.
 
 ---
 

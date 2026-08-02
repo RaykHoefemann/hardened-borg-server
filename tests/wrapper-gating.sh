@@ -162,6 +162,23 @@ assert_serves_exactly "D1 uninitialized repo allowed (borg init path)" "$WORK/do
 run "$WORK/nocfg" "borg serve"
 assert_deny "D2 non-empty repo without config denied" "DENY: repo non-empty but config missing"
 
+# The server writes info.txt into the repository directory when it regenerates
+# authorized_keys, so a freshly provisioned client always finds that file
+# already present the very first time it connects. Treating the directory as
+# non-empty would reject every new client before it could run "borg init" —
+# there is no moment at which the directory is both empty and reachable.
+mkdir -p "$WORK/onlyinfo"
+printf '[server]\nname: test\n' > "$WORK/onlyinfo/info.txt"
+run "$WORK/onlyinfo" "borg serve"
+assert_serves_exactly "D3 repo containing only info.txt counts as uninitialized" "$WORK/onlyinfo"
+
+# ... but info.txt alongside anything else is still the Case 2 anomaly.
+mkdir -p "$WORK/infoplus"
+printf '[server]\nname: test\n' > "$WORK/infoplus/info.txt"
+: > "$WORK/infoplus/stray-file"
+run "$WORK/infoplus" "borg serve"
+assert_deny "D4 info.txt plus foreign content still denied" "DENY: repo non-empty but config missing"
+
 # --- E. encryption policy: client-held keyfile only -------------------------
 
 run "$WORK/keyfile_blake2" "borg serve"

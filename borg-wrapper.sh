@@ -82,9 +82,27 @@ case "${SSH_ORIGINAL_COMMAND:-}" in
         ;;
 esac
 
-# Case 1: directory does not exist or is completely empty
+# Case 1: directory does not exist, or holds nothing the client put there
 # -> never initialized yet, client is allowed to run "borg init"
-if [ ! -e "$REPO" ] || [ -z "$(ls -A "$REPO" 2>/dev/null)" ]; then
+#
+# info.txt is excluded deliberately: the SERVER writes it into the client's
+# repository directory when authorized_keys is regenerated (see the 'info'
+# channel above and build_authorized_keys.sh). By the time a newly provisioned
+# client can connect at all, its key and that file have been created by the
+# same container start — so a strict emptiness test rejects every first-time
+# client with the Case 2 message below, and there is no point in the sequence
+# at which it could ever have run "borg init". Only files the server itself
+# placed are ignored here; anything else still falls through to Case 2.
+shopt -s nullglob dotglob
+repo_entries=("$REPO"/*)
+shopt -u nullglob dotglob
+
+client_content=0
+for entry in "${repo_entries[@]}"; do
+    [ "${entry##*/}" = "info.txt" ] || { client_content=1; break; }
+done
+
+if [ "$client_content" -eq 0 ]; then
     mkdir -p "$REPO"
     exec borg serve --restrict-to-path "$REPO" --append-only
 fi
