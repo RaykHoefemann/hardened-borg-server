@@ -1,4 +1,4 @@
-> **Docs:** [Overview](README.md) · [Design & Threat Model](docs/DESIGN.md) · [Deployment](docs/DEPLOYMENT.md) · [Operations](docs/OPERATIONS.md) · [Best Practices](docs/BEST_PRACTICES.md) · [Roadmap](ROADMAP.md)
+> **Docs:** [Overview](README.md) · [Design & Threat Model](docs/DESIGN.md) · [Deployment](docs/DEPLOYMENT.md) · [Operations](docs/OPERATIONS.md) · [Recovery](docs/RECOVERY.md) · [Best Practices](docs/BEST_PRACTICES.md) · [Roadmap](ROADMAP.md)
 >
 > Chapter numbers are kept from the original single-file README. Where they live now: **1–3** → Design · **5–6** → Deployment · **7–9** → Operations · **11** → Roadmap.
 
@@ -176,4 +176,4 @@ This fits the privacy model exactly as 11.3 does (Chapter 2.1): it inspects repo
 
 ### Retention
 
-Retention should follow how long each failure class takes to notice — accidental deletion is found within hours, a slow compromise possibly only after weeks — so a short dense window is not sufficient on its own; comparison needs enough history to answer *when* a change first appeared. Mutating operator-side operations (11.1, 11.3) should additionally take a named snapshot immediately beforehand and retain it until the result has been verified.
+Retention should follow how long each failure class takes to notice — accidental deletion is found within hours, a slow compromise possibly only after weeks — so a short dense window is not sufficient on its own; comparison needs enough history to answer *when* a change first appeared. Mutating operator-side operations should additionally take a named snapshot immediately beforehand and retain it until the result has been verified. This covers automated pruning (11.1) and `borg check --repair` (11.3), and equally the append-only transaction rollback used to undo a client's accidental archive deletion (Recovery, Section 1) — an operation that removes segment files by hand, on a repository whose contents the operator cannot read, and that is today made reversible only by moving those files to a quarantine directory instead of deleting them. A snapshot replaces that improvisation with a proper one.

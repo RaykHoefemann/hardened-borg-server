@@ -86,6 +86,7 @@ automatic restart. For production, run it as a rootless systemd **user** service
 | [Design & Threat Model](docs/DESIGN.md) | The *why*: security, privacy, and data-integrity models (the deep dive) |
 | [Deployment](docs/DEPLOYMENT.md) | Architecture, `podman run`, and the systemd user-service setup |
 | [Operations](docs/OPERATIONS.md) | `clients.conf`, SSH keys, `server_info.conf`, the info channel, host-management scripts |
+| [Recovery](docs/RECOVERY.md) | Incident handling: accidental deletion, operator error, data loss, restoring data |
 | [Best Practices](docs/BEST_PRACTICES.md) | Required operational baseline and defense-in-depth hardening |
 | [Roadmap](ROADMAP.md) | Pruning, mirroring, `borg check`, Quadlet migration, storage snapshots |
 

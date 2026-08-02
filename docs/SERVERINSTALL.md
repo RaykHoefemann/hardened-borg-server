@@ -1,4 +1,4 @@
-> **Docs:** [Overview](../README.md) · [Design & Threat Model](../docs/DESIGN.md) · [Deployment](../docs/DEPLOYMENT.md) · [Operations](../docs/OPERATIONS.md) · [Best Practices](../BEST_PRACTICES.md) · [Roadmap](../ROADMAP.md)
+> **Docs:** [Overview](../README.md) · [Design & Threat Model](../docs/DESIGN.md) · [Deployment](../docs/DEPLOYMENT.md) · [Operations](../docs/OPERATIONS.md) · [Recovery](../docs/RECOVERY.md) · [Best Practices](../docs/BEST_PRACTICES.md) · [Roadmap](../ROADMAP.md)
 >
 > This guide walks through a complete server installation, start to finish, on
 > a fresh host. It stitches together material that otherwise lives spread
@@ -28,7 +28,7 @@ are operators), so it isn't prescribed here. What follows is the checklist of
 what the host must already provide for the rest of this guide to produce a
 correct, secure setup. If your host can't tick every box, stop here — see
 [Design & Threat Model](DESIGN.md) Chapter 1.1 and
-[Best Practices](../BEST_PRACTICES.md) Chapter 1 for why each item is
+[Best Practices](BEST_PRACTICES.md) Chapter 1 for why each item is
 non-negotiable rather than a nice-to-have.
 
 | Requirement | Quick check |
@@ -56,9 +56,9 @@ host actually needs: `config`, `scripts`, `systemd`.
 INSTALL_PATH=~/containers/borg-server
 mkdir -p "$INSTALL_PATH"
 
-git clone https://github.com/RaykHoefemann/hardened-borg-server.git /tmp/hardened-borg-server
-cp -r /tmp/hardened-borg-server/config /tmp/hardened-borg-server/scripts /tmp/hardened-borg-server/systemd "$INSTALL_PATH"/
-rm -rf /tmp/hardened-borg-server
+git clone https://github.com/RaykHoefemann/hardened-borg-server.git ~/tmp/hardened-borg-server
+cp -r ~/tmp/hardened-borg-server/config ~/tmp/hardened-borg-server/scripts ~/tmp/hardened-borg-server/systemd "$INSTALL_PATH"/
+rm -rf ~/tmp/hardened-borg-server
 
 cd "$INSTALL_PATH"
 ```
@@ -215,7 +215,7 @@ is verified reachable with correct quota enforcement.
 - **Add more clients:** repeat steps 8–9 for each additional client.
 - **Client-side setup** (repo init, encryption key handling, running actual
   backups): [CLIENTUSE.md](CLIENTUSE.md).
-- **Harden further / confirm compliance:** [Best Practices](../BEST_PRACTICES.md)
+- **Harden further / confirm compliance:** [Best Practices](BEST_PRACTICES.md)
   — Chapters 1–3 are mandatory, the rest is optional defense-in-depth.
 - **Day-to-day administration** (quota changes, status checks, more scripts):
   [Operations](OPERATIONS.md) Chapter 9.
