@@ -32,12 +32,14 @@ jobs:
         run: tests/wrapper-gating.sh
 
   shellcheck:
-    name: shellcheck (advisory)
+    name: shellcheck
     runs-on: ubuntu-latest
-    # Advisory for now: the findings in the shipped scripts have not been
-    # triaged yet, and a red build on day one teaches nobody anything. Drop
-    # this line once they are addressed, so that regressions actually fail.
-    continue-on-error: true
+    # Blocking. Its first run earned that: SC2178/SC2128 caught an assignment
+    # to GROUPS in 09-show-all-users.sh — a built-in bash array whose
+    # assignment bash silently ignores. Harmless under dash (/bin/sh on
+    # Debian), broken under bash (/bin/sh on Fedora CoreOS, the platform this
+    # project requires), where the script would have listed no clients at all.
+    # A linter that finds a platform-specific bug on day one is not advisory.
     steps:
       - name: Checkout
         uses: actions/checkout@v4

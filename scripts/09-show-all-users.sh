@@ -70,9 +70,16 @@ usage_for() {
 }
 
 # Distinct groups, in the order they first appear in clients.conf.
-GROUPS=$(awk -F: '{print $2}' "$CONF" | awk '!seen[$0]++')
+#
+# NOT named GROUPS: in bash that is a built-in array holding the current
+# user's group IDs, and assignments to it are silently ignored. This script
+# runs under /bin/sh, which is dash on Debian/Ubuntu (where the assignment
+# would work) but bash on Fedora CoreOS — the platform this project requires.
+# There, the loop would have iterated over the operator's numeric group IDs
+# and listed no clients at all.
+CLIENT_GROUPS=$(awk -F: '{print $2}' "$CONF" | awk '!seen[$0]++')
 
-for GROUP in $GROUPS; do
+for GROUP in $CLIENT_GROUPS; do
     echo "=== ${GROUP} ==="
     printf '%-24s %-10s %s\n' "USERNAME" "QUOTA" "USED"
     awk -F: -v g="$GROUP" '$2==g {print $1, $4}' "$CONF" | sort | \

@@ -11,6 +11,13 @@
 #
 #   . "$(dirname "$0")/config.sh"
 #
+# shellcheck disable=SC2034
+#
+# Every variable below is consumed by the scripts that SOURCE this file (and
+# by the generated systemd EnvironmentFile), never within the file itself.
+# Static analysis cannot see across that boundary and reports each one as
+# unused, which is why the file-scoped suppression above exists. Real findings
+# in this file are still reported.
 
 # Resolve the repository root relative to whichever script sourced this
 # file (dirname "$0" is that script's own directory, e.g. ".../scripts"),
