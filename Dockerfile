@@ -10,14 +10,21 @@
 # secure Borg server that works identically to your Debian test setup.
 # -----------------------------------------------------------------------------
 
-# Pinned to a named Debian release rather than the "stable" alias. "stable"
-# moves whenever Debian promotes a new release, and doing so silently changed
-# the bundled BorgBackup from 1.2.x to 1.4.0 — across a major version, under a
-# wrapper whose encryption check reads the repository's on-disk manifest.
-# Nothing broke, but nobody decided it either. Bumping this line is now a
-# deliberate act, to be made together with a run of the test suite against the
-# built image.
-FROM debian:trixie-slim
+# Pinned by digest, not by tag.
+#
+# "stable" moved once already: Debian promoted trixie, silently changing the
+# bundled BorgBackup from 1.2.x to 1.4.0 across a major version, under a wrapper
+# whose encryption check reads the repository's on-disk manifest. Nothing broke,
+# but nobody decided it. A named tag fixes that half; it does not fix the other
+# half, because "trixie-slim" is itself rebuilt whenever Debian ships security
+# updates, so two builds of the same commit can differ.
+#
+# A digest makes the image fully determined by the commit. The cost is that base
+# security updates now require a deliberate bump — which is the honest state
+# regardless, since users receive nothing except through a release.
+# tests/base-image-freshness.sh runs weekly and reports when this pin has fallen
+# behind, so "deliberate" does not decay into "forgotten".
+FROM debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
 
 ENV DEBIAN_FRONTEND=noninteractive
 

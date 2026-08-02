@@ -12,7 +12,7 @@ Architecture overview and how to run the server — from an ad-hoc test containe
 
 # 5. Architecture Overview
 
-- Base image: `debian:trixie-slim` with BorgBackup installed — pinned to a named Debian release rather than the moving `stable` alias, so a Debian promotion cannot silently change the bundled Borg version underneath the wrapper's encryption check (see the note in the `Dockerfile`)
+- Base image: `debian:trixie-slim`, **pinned by digest**, with BorgBackup installed. A named release rather than the moving `stable` alias — which once carried the bundled Borg from 1.2.x to 1.4.0 unannounced — and a digest rather than the tag, because Debian rebuilds that tag for security updates, so two builds of one commit could otherwise differ. The cost is that base updates need a deliberate bump; `tests/base-image-freshness.sh` runs weekly and reports when the pin has fallen behind, so that stays deliberate rather than becoming forgotten. See the note in the `Dockerfile`.
 - Containerized runtime: **Podman** — required, not just recommended; on the assumed Fedora CoreOS host (Chapter 1.1), Podman is the only runtime that supports rootless operation, and rootless execution is mandatory (see Chapter 1.1). Docker is not supported in this setup.
 - Systemd-compatible deployment supported
 

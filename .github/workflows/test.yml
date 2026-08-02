@@ -91,6 +91,22 @@ jobs:
       - name: Check documented tags against GHCR
         run: tests/doc-image-tags.sh
 
+  base-image-freshness:
+    name: base image pin is current
+    runs-on: ubuntu-latest
+    # Schedule and manual dispatch only. A rebuilt base is a maintenance signal
+    # about the world, not a defect in the commit under test — failing pull
+    # requests for it would teach people to ignore red builds. The weekly run
+    # is where it belongs, alongside the documented-tag check: both watch
+    # something that changes without a commit.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compare the pinned digest against the upstream tag
+        run: tests/base-image-freshness.sh
+
   shellcheck:
     name: shellcheck
     runs-on: ubuntu-latest
