@@ -12,7 +12,7 @@ Architecture overview and how to run the server — from an ad-hoc test containe
 
 # 5. Architecture Overview
 
-- Base image: `debian:stable-slim` with BorgBackup installed
+- Base image: `debian:trixie-slim` with BorgBackup installed — pinned to a named Debian release rather than the moving `stable` alias, so a Debian promotion cannot silently change the bundled Borg version underneath the wrapper's encryption check (see the note in the `Dockerfile`)
 - Containerized runtime: **Podman** — required, not just recommended; on the assumed Fedora CoreOS host (Chapter 1.1), Podman is the only runtime that supports rootless operation, and rootless execution is mandatory (see Chapter 1.1). Docker is not supported in this setup.
 - Systemd-compatible deployment supported
 
@@ -117,7 +117,7 @@ This unit is designed to be installed under `~/.config/systemd/user/`, not `/etc
 
 ### 6.2.2. Setup
 
-Before installing, review `scripts/config.sh` — in particular `HOST_REPO_BASE` (must point at your enforcing-prjquota XFS volume, see Chapter 1.1.3) and `IMAGE` (during the beta phase, `:latest` does not exist yet — set this to the exact pre-release tag you want to run, e.g. `ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.19`).
+Before installing, review `scripts/config.sh` — in particular `HOST_REPO_BASE`, which must point at your enforcing-`prjquota` XFS volume (see Chapter 1.1.3). `IMAGE` needs no editing: it is derived from the `VERSION` file, so a checkout of a release tag already points at the image built from that same commit. Change it only to pin a digest instead of a mutable tag, which is worth doing once you have verified the image ([Verification](VERIFICATION.md), Test 0).
 
 ```bash
 ./scripts/50-service-install.sh
