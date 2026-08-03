@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/RaykHoefemann/hardened-borg-server/blob/main/SECURITY.md
+    about: >
+      Security problems — including a documented guarantee that does not hold —
+      go through private vulnerability reporting, never into a public issue.
+      See SECURITY.md.

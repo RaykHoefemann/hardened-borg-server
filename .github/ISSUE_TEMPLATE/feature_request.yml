@@ -1,0 +1,56 @@
+name: Feature request
+description: Propose a change in behaviour or a new capability
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please read the non-goals in
+        [CONTRIBUTING.md](https://github.com/RaykHoefemann/hardened-borg-server/blob/main/CONTRIBUTING.md)
+        first: no new services or open ports, no server-side key handling, no
+        weakening of the default-deny command gate, and enforcing `prjquota`
+        stays mandatory. Proposals that require one of those will be declined
+        regardless of how they are implemented.
+
+        [ROADMAP.md](https://github.com/RaykHoefemann/hardened-borg-server/blob/main/ROADMAP.md)
+        lists what is already planned.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: >
+        What are you actually trying to do, and what makes it hard or
+        impossible today? Describe the situation, not the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: >
+        What should happen instead. Name which files or components it would
+        touch if you know.
+    validations:
+      required: true
+
+  - type: textarea
+    id: attack-surface
+    attributes:
+      label: Effect on the attack surface
+      description: >
+        What does this add or expose — new processes, listening ports, files
+        written by the server, additional commands accepted through SSH, new
+        data reachable across client boundaries? If your answer is "none",
+        say why. This field decides most proposals.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional — including doing it on the client or on the host instead.
+    validations:
+      required: false

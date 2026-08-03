@@ -108,6 +108,7 @@ automatic restart. For production, run it as a rootless systemd **user** service
 | [Best Practices](docs/BEST_PRACTICES.md) | Required operational baseline and defense-in-depth hardening |
 | [Roadmap](ROADMAP.md) | Mirroring, `borg check`, Quadlet migration, storage snapshots — and why pruning was dropped |
 | [Security Policy](SECURITY.md) | Reporting a vulnerability — including a documented guarantee that turns out not to hold |
+| [Contributing](CONTRIBUTING.md) | Issues, pull requests, and the non-goals a change has to stay clear of |
 
 New here and evaluating? Read this page, then
 [Design & Threat Model](docs/DESIGN.md) — start with its Chapter 4, which

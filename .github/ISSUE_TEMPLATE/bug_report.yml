@@ -1,0 +1,133 @@
+name: Bug report
+description: Something does not behave as documented (non-security)
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not report security problems here.** A vulnerability — including a
+        documented guarantee that turns out not to hold — goes through the
+        private channel in
+        [SECURITY.md](https://github.com/RaykHoefemann/hardened-borg-server/blob/main/SECURITY.md),
+        not into a public issue.
+
+        This project's behaviour depends on the host stack as much as on its
+        own code, which is why the environment fields below are required. An
+        issue without them usually cannot be reproduced.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened
+      description: A short description of the problem.
+    validations:
+      required: true
+
+  - type: input
+    id: host-os
+    attributes:
+      label: Host OS and version
+      description: e.g. Fedora CoreOS 41.20250101.3.0. Name it even if it is not CoreOS.
+      placeholder: Fedora CoreOS 41.20250101.3.0
+    validations:
+      required: true
+
+  - type: input
+    id: podman
+    attributes:
+      label: Podman version
+      description: Output of `podman --version`, and whether it runs rootless.
+      placeholder: podman version 5.3.1 (rootless)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: selinux
+    attributes:
+      label: SELinux status (`getenforce`)
+      options:
+        - Enforcing
+        - Permissive
+        - Disabled
+    validations:
+      required: true
+
+  - type: input
+    id: filesystem
+    attributes:
+      label: Filesystem of the repository volume, and is prjquota enforcing?
+      description: >
+        Filesystem type plus whether project quotas are enforcing (`prjquota`),
+        accounting-only (`pqnoenforce`), or absent.
+      placeholder: XFS, prjquota enforcing (yes)
+    validations:
+      required: true
+
+  - type: input
+    id: borg-client
+    attributes:
+      label: Client Borg version
+      description: Output of `borg --version` on the client.
+      placeholder: borg 1.4.0
+    validations:
+      required: true
+
+  - type: input
+    id: image-tag
+    attributes:
+      label: Server image tag
+      description: The tag you are running, e.g. 0.1.0-beta.20.
+      placeholder: "0.1.0-beta.20"
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Exact command
+      description: >
+        The exact command that triggers the problem, on the side you ran it.
+        Redact hostnames and key material, keep the rest verbatim.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What you expected, and where it is documented if it is.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: What happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log excerpt
+      description: >
+        Relevant lines from the container log (`journalctl --user -u
+        container-borg-server` for the systemd user service, or `podman logs`),
+        which is also where `borg-wrapper.sh` DENY messages appear, plus
+        `entrypoint.log` / `build_authorized_keys.log` from the log volume if
+        the problem is about startup or client provisioning. Include the
+        surrounding lines, not only the error, and any DENY message the client
+        saw.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Optional — when it started, what changed before it, what you already ruled out.
+    validations:
+      required: false
