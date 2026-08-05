@@ -277,15 +277,22 @@ findmnt -no OPTIONS /var/mnt/extern1 | tr ',' '\n' | grep -E 'prjquota|pqnoenfor
 sudo xfs_quota -x -c 'state' /var/mnt/extern1 | grep -i enforce
 ```
 
-Then, from the client:
+Then, for every client at once (on the host):
+
+```bash
+./scripts/09-show-all-users.sh
+```
+
+And from the client:
 
 ```bash
 ssh -p 2222 borg@<server> info
 ```
 
 **Pass** — the mount reports `prjquota` and **not** `pqnoenforce`;
-`xfs_quota` reports project quota enforcement as ON; and the info channel
-reports *your own* limit:
+`xfs_quota` reports project quota enforcement as ON; every client's
+`ENFORCED` column reads `ok`, with no `(!)` and no drift hint under the
+listing; and the info channel reports *your own* limit:
 
 ```
 Used: 2.4 GiB of 50.0 GiB (5%)
@@ -294,7 +301,10 @@ Used: 2.4 GiB of 50.0 GiB (5%)
 **Fail** — if the second figure is the size of the whole underlying disk
 rather than your configured quota, project quota enforcement is not active
 for that repository. This is the single most common misconfiguration, and it
-is invisible until a client fills the volume.
+is invisible until a client fills the volume. On the host side the same
+condition appears as `none (!)` in the `ENFORCED` column; a `<size> (!)`
+there means a limit *is* enforced, but not the one `clients.conf` records —
+re-apply it with `02-change-user-quota.sh` (OPERATIONS Chapter 9.4).
 
 ---
 

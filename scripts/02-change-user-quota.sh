@@ -4,7 +4,11 @@
 # -----------------------
 # Change the quota of an existing Borg client:
 #  - Looks up the client's HOST repository directory and its XFS project id
+#  - Shows the limit currently enforced on that directory (which is not
+#    necessarily what clients.conf claims)
 #  - Applies the new hard limit to that project id immediately (xfs_quota)
+#  - Reads the limit back from the directory and shows it; aborts without
+#    touching clients.conf if the new limit is not actually in effect
 #  - Updates the quota field in config/clients.conf
 #
 # The enforced limit takes effect immediately (xfs_quota applies live). The
@@ -104,11 +108,6 @@ fi
 
 HOST_REPO="${HOST_REPO_BASE}/${GROUP}/${USERNAME}"
 
-if [ "$OLD_QUOTA" = "$QUOTA" ]; then
-    echo "[quota] Quota for '$USERNAME' is already $QUOTA. Nothing to change."
-    exit 0
-fi
-
 if [ ! -d "$HOST_REPO" ]; then
     echo "ERROR: repository directory '$HOST_REPO' not found on host."
     echo "clients.conf and the filesystem are out of sync — needs manual review."
@@ -137,8 +136,42 @@ case "$PROJID" in
         ;;
 esac
 
+# Show what is in effect BEFORE the change, so the operator sees the actual
+# starting point rather than only the clients.conf value — the two drift apart
+# whenever a limit was changed outside this script, and that drift is exactly
+# what an operator needs to see before deciding anything.
+BEFORE_KIB=$(quota_enforced_kib "$HOST_REPO")
+case "$BEFORE_KIB" in
+    ''|*[!0-9]*) echo "[quota] Currently enforced: could not be read" ;;
+    *) echo "[quota] Currently enforced: $(quota_human "$BEFORE_KIB") (clients.conf says $OLD_QUOTA)" ;;
+esac
+
+# "Nothing to change" is decided on what the filesystem enforces, not on what
+# clients.conf claims. If the recorded value already equals the requested one
+# but the kernel enforces something else, fall through and re-apply — that
+# repairs the drift instead of reporting a quota that isn't real.
+if [ "$OLD_QUOTA" = "$QUOTA" ]; then
+    WANT_KIB=$(quota_kib "$QUOTA")
+    if [ "$BEFORE_KIB" = "$WANT_KIB" ]; then
+        echo "[quota] Quota for '$USERNAME' is already $QUOTA and enforced. Nothing to change."
+        exit 0
+    fi
+    echo "[quota] clients.conf already says $QUOTA, but that is not what is enforced."
+    echo "[quota] Re-applying the limit to bring the filesystem back in line."
+fi
+
 echo "[quota] Applying new hard limit on host: project id $PROJID -> $QUOTA"
 sudo xfs_quota -x -c "limit -p bhard=${QUOTA} ${PROJID}" "$XFS_MOUNT"
+
+# Read the new limit back from the directory itself instead of trusting the
+# exit status above: xfs_quota also reports success for a limit set on a
+# project id that does not actually govern this directory. Verify BEFORE
+# clients.conf is rewritten, so a failed change never leaves the recorded
+# quota claiming something the filesystem does not enforce.
+if ! quota_verify "$HOST_REPO" "$QUOTA"; then
+    echo "ERROR: aborting — clients.conf was not modified, it still says $OLD_QUOTA."
+    exit 1
+fi
 
 # rewrite clients.conf, changing only the quota field (4) of the matching user.
 # awk with -F:/OFS=: preserves all other fields verbatim, including the repo
@@ -151,5 +184,9 @@ awk -F: -v OFS=: -v u="$USERNAME" -v q="$QUOTA" '
 ' "$CONF" > "$TMP"
 mv "$TMP" "$CONF"
 
-echo "[quota] Quota for '$USERNAME' changed: ${OLD_QUOTA} → ${QUOTA} (enforced immediately)"
+if [ "$OLD_QUOTA" = "$QUOTA" ]; then
+    echo "[quota] Quota for '$USERNAME' re-applied: ${QUOTA} (enforced immediately)"
+else
+    echo "[quota] Quota for '$USERNAME' changed: ${OLD_QUOTA} → ${QUOTA} (enforced immediately)"
+fi
 echo "→ Restart the container to refresh the 'quota:' value in the client's info.txt."

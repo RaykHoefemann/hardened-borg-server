@@ -156,6 +156,7 @@ It is a defense-in-depth option for operators with the means and requirement for
 - Audit backup execution behavior
 - Ensure backups are actually being created and not silently failing
 - Verify quota enforcement is active: `ssh -p 2222 borg@<server-host> info` must report the client's own limit (e.g. `of 50.0 GiB`), not the size of the whole underlying disk. A whole-disk figure indicates the repository mount is missing enforcing `prjquota` (see README, Chapter 7) — meaning per-client hard limits are not in effect
+- The operator-side counterpart, for every client at once: `./scripts/09-show-all-users.sh`. Its `ENFORCED` column compares each client's configured quota against the limit the filesystem actually applies, and flags any client where the two disagree or where no quota is in effect at all (see OPERATIONS Chapter 9.5). `00-ssh-create-user.sh` and `02-change-user-quota.sh` perform the same check on the limit they just set and refuse to record one that did not take effect
 
 ---
 

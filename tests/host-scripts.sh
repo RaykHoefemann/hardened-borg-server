@@ -5,12 +5,15 @@
 # Behavioural tests for the host-side scripts that need no privileges:
 #
 #   01-ssh-set-user-key.sh   input validation and key handling
-#   09-show-all-users.sh     clients.conf parsing and grouping
+#   09-show-all-users.sh     clients.conf parsing, grouping, quota reporting
+#   config.sh                the quota helpers shared by 00/02/09
 #
-# 00-ssh-create-user.sh and 02-change-user-quota.sh are not covered: both
-# require sudo and a real XFS mount with enforcing project quotas, which a CI
-# runner does not have. Only their input validation would be testable without
-# one, and that is not where their risk lies.
+# 00-ssh-create-user.sh and 02-change-user-quota.sh are not covered end to
+# end: both require sudo and a real XFS mount with enforcing project quotas,
+# which a CI runner does not have. What both of them rely on to decide whether
+# a quota really took effect — quota_verify and friends in config.sh — is
+# covered here, because every one of those reads the limit through df, and df
+# can be substituted (section 2).
 #
 # The scripts derive every path from the location of the config.sh they source,
 # so each case runs against a throwaway installation tree rather than the
@@ -63,7 +66,44 @@ new_tree() { # fresh installation tree with scripts/ and config/
 run() { OUT="$("$@" 2>&1)"; RC=$?; }
 run_in() { local sh="$1"; shift; OUT="$("$sh" "$@" 2>&1)"; RC=$?; }
 
-echo "# host scripts — 01-ssh-set-user-key.sh, 09-show-all-users.sh"
+# --- df substitution -------------------------------------------------------
+#
+# Every quota figure the host scripts print or verify is read through df: for
+# a directory under an XFS project quota, statvfs() reports the project's hard
+# limit as the filesystem size. That is the whole mechanism, so replacing df
+# with a stub earlier in PATH exercises it exactly — no XFS, no root, no
+# xfs_quota. The stub answers from "<path>:<size_kib>:<used_kib>" lines in
+# $DF_STUB_DATA and reports 0/0 for anything not listed.
+DF_BIN="$WORK/dfstub"
+mkdir -p "$DF_BIN"
+cat > "$DF_BIN/df" <<'STUB'
+#!/bin/sh
+for a in "$@"; do case "$a" in -*) ;; *) p="$a" ;; esac; done
+size=0; used=0
+while IFS=: read -r path s u; do
+    [ "$path" = "$p" ] && { size="$s"; used="$u"; }
+done < "$DF_STUB_DATA"
+echo "Filesystem 1024-blocks Used Available Capacity Mounted on"
+echo "/dev/stub $size $used $((size-used)) 1% /stub"
+STUB
+chmod +x "$DF_BIN/df"
+
+df_stub() { printf '%s\n' "$@" > "$WORK/df.data"; export DF_STUB_DATA="$WORK/df.data"; }
+run_stubbed() { OUT="$(PATH="$DF_BIN:$PATH" "$@" 2>&1)"; RC=$?; }
+
+# Sources config.sh the way the real scripts do and calls one of its helpers,
+# so the helpers are tested as the scripts actually reach them.
+add_driver() {
+    cat > "$T/scripts/helper-driver.sh" <<'DRV'
+#!/bin/sh
+. "$(dirname "$0")/config.sh"
+"$@"
+DRV
+    chmod +x "$T/scripts/helper-driver.sh"
+}
+GIB=1048576  # KiB per GiB
+
+echo "# host scripts — 01-ssh-set-user-key.sh, config.sh quota helpers, 09-show-all-users.sh"
 echo
 
 # =========================================================================
@@ -122,6 +162,51 @@ OUT="$(printf 'y\n' | sh "$T/scripts/01-ssh-set-user-key.sh" user1 "not a key" 2
 assert "1.8 a rejected overwrite leaves the previous key intact" $?
 
 # =========================================================================
+# 2. config.sh — quota helpers (used by 00 to set, 02 to change, 09 to show)
+# =========================================================================
+echo
+
+new_tree
+add_driver
+DRV="$T/scripts/helper-driver.sh"
+
+run sh "$DRV" quota_kib 50G
+{ [ "$RC" -eq 0 ] && [ "$OUT" = "$((50 * GIB))" ]; }
+assert "2.1 quota_kib converts <n>G to KiB" $?
+
+for bad_q in 50 50M 0G "" abc 5.5G; do
+    run sh "$DRV" quota_kib "$bad_q"
+    [ "$RC" -ne 0 ] || { OUT="accepted '$bad_q' -> $OUT"; break; }
+done
+[ "$RC" -ne 0 ]; assert "2.2 quota_kib rejects anything that is not <n>G, n>0" $?
+
+# The point of quota_verify: a limit that xfs_quota accepted still has to be
+# the limit the kernel enforces on that directory. Only the read-back proves
+# it, so the two directions below are what 00 and 02 stake their exit codes on.
+df_stub "$T/repo/OWN/user1:$((50 * GIB)):$((5 * GIB))"
+run_stubbed sh "$DRV" quota_verify "$T/repo/OWN/user1" 50G
+{ [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q '50.0 GiB is in effect'; }
+assert "2.3 quota_verify accepts a limit that is really enforced" $?
+
+printf '%s' "$OUT" | grep -q '5.0 GiB of 50.0 GiB (10%)'
+assert "2.4 quota_verify shows current usage against the limit" $?
+
+# The dangerous case: the command succeeded but the directory is governed by
+# something else (wrong project id, quotas not enforcing) — here it still
+# reports the whole volume.
+df_stub "$T/repo/OWN/user1:$((4000 * GIB)):$((5 * GIB))"
+run_stubbed sh "$DRV" quota_verify "$T/repo/OWN/user1" 50G
+{ [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'NOT enforced'; }
+assert "2.5 quota_verify rejects a limit that is not in effect" $?
+
+printf '%s' "$OUT" | grep -q '4000.0 GiB'
+assert "2.6 quota_verify names the limit that is actually enforced" $?
+
+# An unreadable directory must fail closed, never pass for lack of an answer.
+run_stubbed sh "$DRV" quota_verify "$T/repo/OWN/nonexistent-and-unstubbed" 50G
+[ "$RC" -ne 0 ]; assert "2.7 quota_verify fails when nothing can be read back" $?
+
+# =========================================================================
 # 09-show-all-users.sh
 # =========================================================================
 echo
@@ -167,6 +252,51 @@ rm -rf "$T/repo/OWN/user2"
 run_in "$WORK/sh" "$T/scripts/09-show-all-users.sh"
 printf '%s' "$OUT" | grep -q 'MISSING on host'
 assert "9.6 a missing repository directory is flagged" $?
+
+# --- the ENFORCED column -------------------------------------------------
+#
+# clients.conf records what was requested; only the filesystem knows what is
+# applied. The listing has to make a disagreement visible, otherwise an
+# operator planning against the quota sum (OPERATIONS Chapter 10.2) is
+# planning against numbers nothing enforces.
+setup_09
+df_stub \
+    "$T/repo:$((4000 * GIB)):$((100 * GIB))" \
+    "$T/repo/OWN/user1:$((50 * GIB)):$((5 * GIB))" \
+    "$T/repo/OWN/user2:$((20 * GIB)):0" \
+    "$T/repo/MIRROR/friend1:$((200 * GIB)):$((10 * GIB))"
+run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
+printf '%s' "$OUT" | grep -qE '^user1 +50G +ok +5\.0 GiB of 50\.0 GiB \(10%\)'
+assert "9.7 a limit matching clients.conf is reported as ok" $?
+
+printf '%s' "$OUT" | grep -q '(!)'
+[ $? -ne 0 ]; assert "9.8 no drift is flagged when every limit matches" $?
+
+# user2 is enforced at 10G while clients.conf claims 20G.
+setup_09
+df_stub \
+    "$T/repo:$((4000 * GIB)):$((100 * GIB))" \
+    "$T/repo/OWN/user1:$((50 * GIB)):$((5 * GIB))" \
+    "$T/repo/OWN/user2:$((10 * GIB)):0" \
+    "$T/repo/MIRROR/friend1:$((200 * GIB)):$((10 * GIB))"
+run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
+printf '%s' "$OUT" | grep -qE '^user2 +20G +10\.0 GiB \(!\)'
+assert "9.9 a limit differing from clients.conf is flagged with its real value" $?
+
+printf '%s' "$OUT" | grep -q 'does not match clients.conf'
+assert "9.10 the drift hint is printed once a mismatch was seen" $?
+
+# A directory under no project quota at all: df reports the whole volume,
+# which must not be presented as a very generous quota.
+setup_09
+df_stub \
+    "$T/repo:$((4000 * GIB)):$((100 * GIB))" \
+    "$T/repo/OWN/user1:$((4000 * GIB)):$((5 * GIB))" \
+    "$T/repo/OWN/user2:$((20 * GIB)):0" \
+    "$T/repo/MIRROR/friend1:$((200 * GIB)):$((10 * GIB))"
+run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
+printf '%s' "$OUT" | grep -qE '^user1 +50G +none \(!\) +5\.0 GiB \(unlimited\)'
+assert "9.11 a directory with no quota in effect is reported as unlimited" $?
 
 # --- summary -------------------------------------------------------------
 

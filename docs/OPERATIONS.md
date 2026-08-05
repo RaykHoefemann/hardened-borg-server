@@ -161,9 +161,20 @@ Helper scripts under `scripts/` manage the server's clients, quotas, the systemd
 - `PROJID_BASE` — the floor for auto-allocated XFS project IDs (Chapter 9.2 scans existing repos and starts above this).
 - `BORG_UID`, `BORG_GID` — the `borg` user's UID/GID **inside the container image**, fixed at build time in the Dockerfile. These must match the image you are actually running; only change them if you rebuilt the image with different values yourself. Used by `00-ssh-create-user.sh` to set correct host-side ownership via `podman unshare`.
 
+The file ends with a small set of **quota helper functions** (`quota_kib`, `quota_human`, `quota_enforced_kib`, `quota_used_kib`, `quota_verify`) rather than values. They are shared by `00`, `02` and `09` so that "the enforced quota" is defined once for all of them: the limit the kernel reports for a client's repository directory, which is the same figure the client sees through the `info` channel (Chapter 8). All are read-only and need no privileges; nothing there is meant to be edited.
+
 ## 9.2. 00-ssh-create-user.sh
 
 Creates a new Borg client end-to-end: the host-side repository directory, an XFS project quota assigned and set to the given hard limit (requires enforcing `prjquota`, see Chapter 1.1.3), the `clients.conf` entry, and an empty public-key placeholder. Also sets correct host ownership on the new directory via `podman unshare` so the container's `borg` user can write to it.
+
+After setting the limit, the script **reads it back from the new directory** and prints what is in effect:
+
+```
+[quota] Verified on host: hard limit 50.0 GiB is in effect
+[quota] Used now: 0 KiB of 50.0 GiB (0%)
+```
+
+If the read-back does not match what was requested, the script aborts and creates no client — no `clients.conf` entry, no key file. A successful `xfs_quota` exit status alone does not prove the limit reaches the directory (a project id that did not stick, inheritance that was not applied), and the failure mode of believing otherwise is a client with no effective limit at all, discovered only when the volume runs full.
 
 Run as the normal operator user, not as root — only the individual
 `xfs_quota` calls inside the script elevate via `sudo` (you'll be prompted
@@ -199,7 +210,20 @@ Sets (or overwrites, with confirmation) the public SSH key for an existing clien
 
 ## 9.4. 02-change-user-quota.sh
 
-Changes the quota of an existing client. Looks up its host repository directory and existing XFS project id, applies the new hard limit immediately via `xfs_quota` (takes effect right away — no container restart needed for enforcement), and updates the `quota:` field in `clients.conf`.
+Changes the quota of an existing client. Looks up its host repository directory and existing XFS project id, shows the limit currently enforced there, applies the new hard limit immediately via `xfs_quota` (takes effect right away — no container restart needed for enforcement), verifies it, and only then updates the `quota:` field in `clients.conf`.
+
+```
+[quota] Currently enforced: 50.0 GiB (clients.conf says 50G)
+[quota] Applying new hard limit on host: project id 1003 -> 100G
+[quota] Verified on host: hard limit 100.0 GiB is in effect
+[quota] Used now: 31.4 GiB of 100.0 GiB (31%)
+[quota] Quota for 'user1-os1-pc1' changed: 50G → 100G (enforced immediately)
+```
+
+Two things follow from doing it in that order:
+
+- **A failed change never gets recorded.** If the new limit is not what the filesystem reports back, the script aborts and leaves `clients.conf` at its old value, so the file never claims a quota that nothing enforces.
+- **Re-running with the current value repairs drift.** Asking for the quota a client already has is normally a no-op — but if the enforced limit disagrees with `clients.conf` (someone ran `xfs_quota` by hand, a limit was lost), the script says so and re-applies it instead of reporting "nothing to change". This is the command `09-show-all-users.sh` points at when it flags a mismatch.
 
 > The container still needs a restart to refresh the *displayed* `quota:` value in the client's `info.txt` (see Chapter 8) — the actual enforced limit and the live `Used: X of Y` figure update immediately regardless, since both are read straight from the filesystem quota.
 
@@ -219,11 +243,28 @@ there) for the operations that need `CAP_SYS_ADMIN`.
 
 ## 9.5. 09-show-all-users.sh
 
-Prints an overview of every configured client, grouped by `OWN`/`MIRROR`, with each client's configured quota and its **live** storage usage — read the same way the client `info` channel reads it (directly from the enforcing XFS project quota via `df`, see Chapter 8), not just the static `clients.conf` value. Also reports total physical disk usage of the underlying storage volume. Read-only, does not require root.
+Prints an overview of every configured client, grouped by `OWN`/`MIRROR`, with each client's configured quota, the quota **actually enforced** for it, and its **live** storage usage — the latter two read the same way the client `info` channel reads them (directly from the enforcing XFS project quota via `df`, see Chapter 8), not from the static `clients.conf` value. Also reports total physical disk usage of the underlying storage volume. Read-only, does not require root.
 
 ```bash
 ./scripts/09-show-all-users.sh
 ```
+
+```
+=== OWN ===
+USERNAME                 QUOTA      ENFORCED       USED
+user1-os1-pc1            50G        ok             31.4 GiB of 50.0 GiB (62%)
+user2-os1-pc1            20G        10.0 GiB (!)   8.1 GiB of 10.0 GiB (81%)
+user3-os1-pc1            30G        n/a            MISSING on host
+```
+
+The `ENFORCED` column is the check: `QUOTA` is what `clients.conf` records, `ENFORCED` is what the kernel applies.
+
+- `ok` — the two agree; nothing to do.
+- `<size> (!)` — they disagree, and the filesystem is what the client will actually hit. Re-apply the intended value with Chapter 9.4.
+- `none (!)` — no project quota governs that directory at all (`df` reports the whole volume), so the client is effectively unlimited. Typically a directory that predates quota enforcement or lost its project id.
+- `n/a` — nothing could be read, e.g. the repository directory is missing (`clients.conf` and the filesystem have drifted apart).
+
+Any `(!)` also prints a hint under the listing. This matters for the sizing invariant in Chapter 10.2: the sum that has to stay under the volume capacity is the sum of the **enforced** limits, not of the configured ones.
 
 ## 9.6. 50-service-install.sh
 
@@ -313,9 +354,11 @@ That is a deliberate trade, not a missing feature. Deletion is the one operation
 
 Enforcing project quotas cap each *client*. They do not cap the *volume*. The property that actually prevents the disk from filling is:
 
-> **sum of all configured quotas + any non-repository data on the volume ≤ volume capacity**
+> **sum of all enforced quotas + any non-repository data on the volume ≤ volume capacity**
 
 Hold that, and no combination of client behaviour can fill the disk — a client that reaches its limit is stopped by the filesystem, and every other client is unaffected. Break it by overcommitting, and the quotas stop protecting anything: several clients growing toward limits that jointly exceed the disk will exhaust it.
+
+*Enforced*, not configured: a client whose `ENFORCED` column shows `none (!)` (Chapter 9.5) contributes not its `clients.conf` figure but the whole remaining volume, because nothing stops it. Check that column before trusting the sum.
 
 This matters because the natural response to a client hitting its quota is to raise it (Chapter 9.4), and raising quotas one request at a time is exactly how a correctly sized volume drifts into overcommitment without anyone deciding to overcommit. Before raising a quota, check the sum against the volume — not just whether the volume currently has room.
 
@@ -329,7 +372,7 @@ Quota exhaustion should be caught **before** a backup fails, not diagnosed after
 ./scripts/09-show-all-users.sh
 ```
 
-Live per-client usage for every client at once, plus total physical usage of the underlying storage volume — the two numbers needed to check both an individual client's headroom and the invariant in 10.2.
+Live per-client usage for every client at once, plus total physical usage of the underlying storage volume — the two numbers needed to check both an individual client's headroom and the invariant in 10.2. The `ENFORCED` column is part of the same check: a quota that is not actually applied protects nothing, and this is where that shows up.
 
 **The client**, over its normal SSH connection:
 

@@ -18,6 +18,12 @@
 # Static analysis cannot see across that boundary and reports each one as
 # unused, which is why the file-scoped suppression above exists. Real findings
 # in this file are still reported.
+#
+# The last section adds shell FUNCTIONS rather than values: the quota helpers
+# shared by 00/02/09. They live here for the same reason the values do — the
+# definition of "the enforced quota" must exist exactly once, not once per
+# script. They are pure, read-only, and never invoked while sourcing, so the
+# generated EnvironmentFile is unaffected.
 
 # Resolve the repository root relative to whichever script sourced this
 # file (dirname "$0" is that script's own directory, e.g. ".../scripts"),
@@ -92,3 +98,86 @@ SSH_PORT=2222
 # `podman unshare` (rootless Podman UID mapping).
 BORG_UID=1111
 BORG_GID=1111
+
+# --- Quota helpers ---------------------------------------------------------
+#
+# Shared by 00 (set a quota), 02 (change a quota) and 09 (report quotas), so
+# that "the enforced quota" has exactly one definition everywhere: the value
+# the kernel reports through statvfs() on the client's repository directory.
+# For a directory covered by an XFS project quota, statvfs() reports the
+# project's hard limit as the filesystem size and the project's usage as the
+# used blocks — which is also precisely what the client sees in the info
+# channel (README Chapter 7). Reading it back this way therefore verifies the
+# thing that actually matters (the limit the client will hit), not merely that
+# the xfs_quota command exited 0.
+#
+# All of these are read-only and need no privileges.
+
+# "<n>G" -> KiB. Prints nothing and fails for any other input.
+quota_kib() {
+    case "$1" in
+        *G) ;;
+        *) return 1 ;;
+    esac
+    _q_num="${1%G}"
+    case "$_q_num" in
+        ''|*[!0-9]*|0) return 1 ;;
+    esac
+    echo $((_q_num * 1048576))
+}
+
+# KiB -> human readable. Mirrors the wrapper's info-channel formatting, so
+# host and client never present the same number in two different shapes.
+quota_human() {
+    awk -v k="$1" 'BEGIN{
+        if (k>=1048576) printf "%.1f GiB", k/1048576;
+        else if (k>=1024) printf "%.1f MiB", k/1024;
+        else printf "%d KiB", k; }'
+}
+
+# Hard limit currently enforced on directory $1, in KiB (empty if unreadable).
+quota_enforced_kib() { df -kP "$1" 2>/dev/null | awk 'NR==2{print $2}'; }
+
+# Blocks currently used by directory $1's project, in KiB (empty if unreadable).
+quota_used_kib() { df -kP "$1" 2>/dev/null | awk 'NR==2{print $3}'; }
+
+# quota_verify <repo-dir> <quota>
+#
+# Confirm that <quota> is really the hard limit the kernel now enforces on
+# <repo-dir>, and print what is in effect. Returns non-zero with an
+# explanation if it is not — a limit that was accepted by xfs_quota but does
+# not reach the directory (wrong project id, missing inheritance, quotas not
+# enforcing) would otherwise look like success while the client stays
+# effectively unlimited until the volume itself runs full.
+quota_verify() {
+    _qv_dir="$1"
+    _qv_want_kib=$(quota_kib "$2") || {
+        echo "ERROR: internal: quota_verify called with invalid quota '$2'."
+        return 1
+    }
+
+    _qv_have_kib=$(quota_enforced_kib "$_qv_dir")
+    case "$_qv_have_kib" in
+        ''|*[!0-9]*)
+            echo "ERROR: could not read back the enforced quota for '$_qv_dir'."
+            return 1
+            ;;
+    esac
+
+    if [ "$_qv_have_kib" -ne "$_qv_want_kib" ]; then
+        echo "ERROR: the quota is NOT enforced as requested on '$_qv_dir'."
+        echo "       requested: $2 ($(quota_human "$_qv_want_kib"))"
+        echo "       enforced:  $(quota_human "$_qv_have_kib")"
+        echo "       If the enforced value matches the size of the whole volume,"
+        echo "       no project quota applies to this directory at all."
+        return 1
+    fi
+
+    _qv_used_kib=$(quota_used_kib "$_qv_dir")
+    case "$_qv_used_kib" in
+        ''|*[!0-9]*) _qv_used_kib=0 ;;
+    esac
+
+    echo "[quota] Verified on host: hard limit $(quota_human "$_qv_have_kib") is in effect"
+    echo "[quota] Used now: $(quota_human "$_qv_used_kib") of $(quota_human "$_qv_have_kib") ($((_qv_used_kib * 100 / _qv_have_kib))%)"
+}

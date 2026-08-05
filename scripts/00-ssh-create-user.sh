@@ -7,7 +7,9 @@
 #    CONTAINER_REPO, e.g. /repo/OWN/<user> -> $HOST_REPO_BASE/OWN/<user>)
 #  - XFS project quota assigned to that directory and set to the given quota
 #    (see README Chapter 1.1.3 / BEST_PRACTICES.md Chapter 1 — enforcing
-#    prjquota is a mandatory host requirement; this script requires it)
+#    prjquota is a mandatory host requirement; this script requires it).
+#    The limit is then read back from the directory and shown; the client is
+#    only recorded in clients.conf once it is confirmed to be in effect.
 #  - Entry in config/clients.conf
 #  - Empty public key file in config/keys/
 #
@@ -185,6 +187,17 @@ sudo xfs_quota -x -c "project -s -p $HOST_REPO $PROJID" "$XFS_MOUNT" >/dev/null
 echo "[create] Setting hard quota: $QUOTA"
 sudo xfs_quota -x -c "limit -p bhard=${QUOTA} ${PROJID}" "$XFS_MOUNT"
 
+# Read the limit back from the directory itself instead of trusting the exit
+# status above: xfs_quota reports success for a limit set on a project id that
+# never reaches this directory (e.g. the project assignment above did not
+# stick), and the client would then be effectively unlimited until the whole
+# volume runs full. Verify before the client exists in clients.conf at all.
+if ! quota_verify "$HOST_REPO" "$QUOTA"; then
+    echo "ERROR: aborting — no client was created."
+    rmdir "$HOST_REPO" 2>/dev/null
+    exit 1
+fi
+
 echo "[create] Create entry in clients.conf"
 echo "${USERNAME}:${GROUP}:${CONTAINER_REPO}:${QUOTA}" >> "$CONF"
 
@@ -192,7 +205,7 @@ echo "[create] Create empty public key file"
 mkdir -p "$KEYDIR"
 touch "${KEYDIR}/${USERNAME}.pub"
 
-echo "[create] User '$USERNAME' created with quota $QUOTA (project id $PROJID)."
+echo "[create] User '$USERNAME' created with quota $QUOTA (project id $PROJID, limit verified)."
 echo "→ Set now the public key!"
 echo "NOTE: verify '$HOST_REPO' is writable by the container's 'borg' user"
 echo "      (rootless Podman UID mapping) before the client's first connection."
