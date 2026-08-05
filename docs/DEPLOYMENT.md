@@ -37,7 +37,7 @@ Architecture overview and how to run the server — from an ad-hoc test containe
 
 > **Beta phase note:** no stable release has been tagged yet, so the `:latest`
 > tag below does not exist on GHCR yet. Replace it with the exact pre-release
-> tag you want to test, e.g. `ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.20`
+> tag you want to test, e.g. `ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.21`
 > (see the [package's version list](https://github.com/RaykHoefemann/hardened-borg-server/pkgs/container/hardened-borg-server/versions)
 > for the current tags). This note will be removed once a stable release ships.
 
@@ -173,7 +173,7 @@ Run it outside a backup window: the restart interrupts any transfer in progress,
 
 ```bash
 cd "$INSTALL_PATH"
-NEW=v0.1.0-beta.20
+NEW=v0.1.0-beta.21
 
 # 1. Record where you are, so you can tell afterwards that something changed
 ./scripts/99-container-status.sh | head -8
@@ -219,9 +219,9 @@ The `diff` in step 6 is the point of the backup: it shows both your own settings
 All three figures must agree:
 
 ```
-Host scripts:     0.1.0-beta.20
-Configured image: ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.20
-Running image:    0.1.0-beta.20
+Host scripts:     0.1.0-beta.21
+Configured image: ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.21
+Running image:    0.1.0-beta.21
 ```
 
 A `MISMATCH` line here is the normal outcome of forgetting step 7 — the files on disk are new while the container still runs the old image. From a client, `ssh -p 2222 borg@<server> info` should now report the new version in its `[software]` section, since `info.txt` is regenerated at container start.

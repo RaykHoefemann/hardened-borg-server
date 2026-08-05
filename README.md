@@ -68,7 +68,7 @@ directly from the internet. See [`BEST_PRACTICES.md`](docs/BEST_PRACTICES.md).
 
 > **Beta:** the `:latest` tag does not exist on GHCR yet. Replace it with a
 > current pre-release tag, e.g.
-> `ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.20`
+> `ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.21`
 > ([version list](https://github.com/RaykHoefemann/hardened-borg-server/pkgs/container/hardened-borg-server/versions)).
 
 ```bash
