@@ -250,10 +250,15 @@ add_key user1 "this is not an ssh key"
 generate
 [ "$RC" -ne 0 ] || [ "$(key_lines)" -eq 0 ]; assert "4.3 malformed key rejected" $?
 
-# --- 5. fail-closed on an empty result --------------------------------------
+# --- 5. an empty result must not destroy a working authorized_keys ----------
 #
-# If nothing valid remains, the previous authorized_keys must survive: writing
-# an empty file would lock every client out at once.
+# If nothing valid remains, a previous authorized_keys must survive: writing an
+# empty file over it would lock every client out at once, and a truncated
+# clients.conf must never be able to cause that.
+#
+# Note what the condition is: an existing file, not an empty client list. The
+# two used to be conflated, which is why a server could not start before its
+# first client existed (section 8).
 
 new_fixture
 echo 'bad name:OWN:/repo/OWN/x:50G' > "$CFG/clients.conf"
@@ -264,6 +269,16 @@ generate
 keys_file | grep -q 'old'
 assert "5.2 the existing authorized_keys is preserved, not truncated" $?
 [ ! -f "$SSHD/authorized_keys.tmp" ]; assert "5.3 no temporary file left behind" $?
+
+# The same protection has to hold when the client list went empty entirely,
+# which is what a truncated clients.conf looks like.
+new_fixture
+: > "$CFG/clients.conf"
+printf '# previous file\ncommand="/borg-wrapper.sh /repo/OWN/old",restrict ssh-ed25519 AAAA old\n' \
+    > "$SSHD/authorized_keys"
+generate
+{ [ "$RC" -ne 0 ] && keys_file | grep -q 'old'; }
+assert "5.4 an emptied clients.conf does not truncate an existing file" $?
 
 # --- 6. server_info.conf is mandatory ---------------------------------------
 
@@ -281,6 +296,65 @@ printf '# a comment\n\nuser1:OWN:/repo/OWN/user1:50G\n' > "$CFG/clients.conf"
 add_key user1
 generate
 [ "$(key_lines)" -eq 1 ]; assert "7.1 comments and blank lines are skipped" $?
+
+# --- 8. cold start: a server with no clients yet ----------------------------
+#
+# The state every installation passes through: config/ holds server_info.conf
+# and nothing else, because clients.conf and keys/ are written by
+# 00-ssh-create-user.sh, which has not run yet. This used to abort startup, so
+# the container could not run until a client existed — SERVERINSTALL verifies
+# the service in step 6 but provisions the first client in step 8.
+#
+# Starting with no keys is not a weaker position than refusing to start: sshd
+# rejects everyone either way (no key in the file can authenticate, and no
+# other method is enabled). Refusing merely also prevented the operator from
+# checking the container, the mounts and the quota enforcement first.
+
+new_fixture
+rm -f "$CFG/clients.conf"
+rm -rf "$CFG/keys"
+generate
+[ "$RC" -eq 0 ]; assert "8.1 a fresh config directory does not abort startup" $?
+[ -f "$CFG/clients.conf" ]; assert "8.2 the missing clients.conf is created" $?
+[ -d "$CFG/keys" ]; assert "8.3 the missing key directory is created" $?
+[ -f "$SSHD/authorized_keys" ]; assert "8.4 an authorized_keys is written" $?
+[ "$(key_lines)" -eq 0 ]; assert "8.5 it authorizes nobody" $?
+
+# The created file has to be one 00-ssh-create-user.sh can append to and this
+# script can read back, i.e. it must parse as an empty roster rather than as a
+# client named "#".
+generate
+{ [ "$RC" -eq 0 ] && [ "$(key_lines)" -eq 0 ]; }
+assert "8.6 the created clients.conf parses as an empty roster on the next run" $?
+
+# An empty (rather than absent) clients.conf is the same state — that is what
+# an operator gets after removing the last client.
+new_fixture
+: > "$CFG/clients.conf"
+generate
+{ [ "$RC" -eq 0 ] && [ -f "$SSHD/authorized_keys" ] && [ "$(key_lines)" -eq 0 ]; }
+assert "8.7 an empty clients.conf starts the server with no keys" $?
+
+# The gap between 00-ssh-create-user.sh and 01-ssh-set-user-key.sh: the client
+# is in clients.conf, but its key file is still the empty placeholder that 00
+# creates. A restart in that window must not put the container into a loop.
+new_fixture
+echo 'user1:OWN:/repo/OWN/user1:50G' > "$CFG/clients.conf"
+: > "$CFG/keys/user1.pub"
+generate
+{ [ "$RC" -eq 0 ] && [ "$(key_lines)" -eq 0 ]; }
+assert "8.8 a client whose key is not set yet does not abort startup" $?
+
+# server_info.conf stays mandatory, and is checked before anything is created:
+# it ships with the release and is never generated, so its absence means the
+# /config volume is not the operator's config directory. Creating a clients.conf
+# there would dress a mount failure up as a valid state.
+new_fixture
+rm -f "$CFG/server_info.conf" "$CFG/clients.conf"
+generate
+[ "$RC" -ne 0 ]; assert "8.9 a missing server_info.conf still aborts" $?
+[ ! -f "$CFG/clients.conf" ]
+assert "8.10 nothing is created in a /config that failed the canary check" $?
 
 # --- summary ----------------------------------------------------------------
 

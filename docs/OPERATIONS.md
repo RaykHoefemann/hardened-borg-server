@@ -32,6 +32,13 @@ user-pc2:OWN:/repo/OWN/user-pc2:20G
 friend1:MIRROR:/repo/MIRROR/friend1:200G
 ```
 
+> A missing or empty `clients.conf` is a valid state, not an error — it is what
+> a server looks like before its first client is provisioned. The container
+> creates the file with a format reminder if it is absent, starts normally, and
+> authorizes nobody until a client is added. `server_info.conf` remains
+> mandatory: it ships with the release, so its absence means `/config` is not
+> the config directory it was meant to be.
+
 > Quota enforcement happens at the host filesystem level via enforcing XFS project quotas (see Chapter 1.1.3) — when the host is set up as required, exceeding the configured quota is a hard limit, not merely advisory. The value in `clients.conf` is read and validated by the application and used to provision the per-repository project limit; the actual hard enforcement is provided by the underlying XFS project-quota mechanism, not by the application itself. Live usage against this limit is reported to the client through the `info` command (see Chapter 8), read directly from the enforcing quota via `statvfs()`.
 
 ## 7.2. SSH Keys

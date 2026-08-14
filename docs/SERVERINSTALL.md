@@ -165,6 +165,23 @@ This shows the systemd unit state, `podman ps`/`inspect` output, and the tail
 of the service's journal log — confirm the container is active before moving
 on.
 
+No clients exist yet at this point, and that is the expected state: the
+container starts, generates its SSH host key, and authorizes nobody.
+`log/build_authorized_keys.log` says so explicitly:
+
+```
+[WARN] No client keys configured – writing an empty authorized_keys.
+```
+
+The server is reachable and rejects every connection with
+`Permission denied (publickey)` until step 8 provisions the first client. That
+is deliberate: it lets you verify the container, the volume mounts and quota
+enforcement before handing out any access, and it lets you confirm over the
+network — with `ssh-keyscan -p 2222 <server-host>` — that the host key clients
+will be asked to trust is the one this server actually holds (clients are told
+to verify that fingerprint on first connection, see
+[CLIENTUSE.md](CLIENTUSE.md)).
+
 ---
 
 ## 7. Set the server's identity
