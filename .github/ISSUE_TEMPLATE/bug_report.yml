@@ -76,8 +76,8 @@ body:
     id: image-tag
     attributes:
       label: Server image tag
-      description: The tag you are running, e.g. 0.1.0-beta.21.
-      placeholder: "0.1.0-beta.21"
+      description: The tag you are running, e.g. 0.1.0-beta.22.
+      placeholder: "0.1.0-beta.22"
     validations:
       required: true
 
