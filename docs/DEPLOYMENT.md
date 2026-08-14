@@ -98,8 +98,16 @@ ExecStop=/usr/bin/podman stop ${CONTAINER}
 Restart=on-failure
 RestartSec=5
 
-User=%u
-Group=%u
+# No User=/Group= here, and that is not an oversight. This is a *user* unit
+# (DEPLOYMENT.md 6.2.1): the manager running it is already the target user and
+# is unprivileged. systemd.exec(5) does permit User= in that case — "the only
+# valid setting is the same user the user's service manager is running as" —
+# but setting it at all makes systemd re-initialize the supplementary group
+# list, which needs CAP_SETGID that an unprivileged manager does not have. The
+# kernel refuses even when the resulting list would be identical, so the unit
+# fails at the GROUP step with status=216/GROUP before podman is ever executed,
+# and Restart=on-failure turns that into a loop. The identity these lines would
+# set is the one the unit already runs under.
 Environment=PODMAN_SYSTEMD_UNIT=%n
 
 [Install]
@@ -114,6 +122,16 @@ This unit is designed to be installed under `~/.config/systemd/user/`, not `/etc
 
 - Run as a **systemd user service** (`systemctl --user ...`), the unit executes inside your own user session, with the normal rootless Podman environment (`XDG_RUNTIME_DIR`, the user's own `containers/storage.conf`, subuid/subgid mappings, etc.) already in place. This is the supported way to run this project.
 - A `User=`/`Group=` directive in a **system-wide** unit (`/etc/systemd/system/`) does not reliably reproduce that environment — Podman can fail to locate the expected runtime directory or rootless storage configuration for that user, since system services don't inherit a full user login session by default. Use the user-service path described here rather than adapting this file into a system unit.
+
+**Do not add `User=`/`Group=` to this unit.** They belong to the system-unit shape above, and carrying them over is the natural mistake when adapting such a template — they read as a correct restatement of who the service runs as. In a user unit they are fatal. `systemd.exec(5)` permits `User=` there in principle (*"the only valid setting is the same user the user's service manager is running as"*), but using it makes systemd re-initialize the supplementary group list, which requires `CAP_SETGID`. An unprivileged user manager does not have it, and the kernel refuses even when the resulting group list would be byte-for-byte identical. The unit then fails at the `GROUP` step:
+
+```
+container-borg-server.service: Failed to determine supplementary groups: Operation not permitted
+container-borg-server.service: Failed at step GROUP spawning /usr/bin/podman: Operation not permitted
+container-borg-server.service: Main process exited, code=exited, status=216/GROUP
+```
+
+Note that `podman` is never executed — the failure happens while systemd prepares the process, so nothing on the Podman side is worth investigating. With `Restart=on-failure` the service loops instead of starting. Nothing needs to replace these directives: the user manager already runs as the target user, and every child process inherits that identity.
 
 ### 6.2.2. Setup
 

@@ -8,10 +8,11 @@
 #   09-show-all-users.sh     clients.conf parsing, grouping, quota reporting
 #   config.sh                the quota helpers shared by 00/02/09
 #
-# Plus one packaging check that is not behavioural at all (section 0): the file
-# mode git records for every tracked script. It lives here because it guards
-# the same scripts, and because the defect it prevents made all of them
-# unusable from a release checkout without any of them being wrong.
+# Plus two packaging checks that are not behavioural at all (section 0): the
+# file mode git records for every tracked script, and the absence of
+# User=/Group= from the systemd unit template. Neither is about what a script
+# computes; both are about defects that made a correct release unusable on the
+# host without a single line of logic being wrong.
 #
 # 00-ssh-create-user.sh and 02-change-user-quota.sh are not covered end to
 # end: both require sudo and a real XFS mount with enforcing project quotas,
@@ -108,11 +109,11 @@ DRV
 }
 GIB=1048576  # KiB per GiB
 
-echo "# host scripts — file modes, 01-ssh-set-user-key.sh, config.sh quota helpers, 09-show-all-users.sh"
+echo "# host scripts — packaging, 01-ssh-set-user-key.sh, config.sh quota helpers, 09-show-all-users.sh"
 echo
 
 # =========================================================================
-# 0. file modes — every tracked script is executable in git
+# 0. packaging — what a release checkout hands the operator
 # =========================================================================
 #
 # The mode that matters is the one git records, not the one the file happens
@@ -141,6 +142,49 @@ if [ "$in_git" -eq 0 ]; then
     OUT="$(git -C "$ROOT" ls-files --stage '*.sh' | grep -v '^100755 ')"
     [ -z "$OUT" ]; assert "0.2 every tracked *.sh is mode 100755 in the index" $?
 fi
+
+# --- the systemd unit template -------------------------------------------
+#
+# User=/Group= must not appear in this unit. It is installed into
+# ~/.config/systemd/user/ and started with systemctl --user, where the manager
+# is already the target user and unprivileged. systemd.exec(5) permits User=
+# there in principle — "the only valid setting is the same user the user's
+# service manager is running as" — but setting it makes systemd re-initialize
+# the supplementary group list, which needs CAP_SETGID. The kernel refuses even
+# when the resulting list would be identical, so the service dies at the GROUP
+# step with status=216/GROUP before podman runs at all, and Restart=on-failure
+# loops it. The unit shipped that way through v0.1.0-beta.21 and could never
+# start once.
+#
+# The directives read as a correct restatement of who the service runs as,
+# which is exactly why they survive a copy from a system-unit template. The
+# copy embedded in DEPLOYMENT.md 6.2 is checked too: it is presented to the
+# reader as the file's contents, so it can reintroduce them by being followed.
+#
+# A plain grep is the right tool here, blunt as it looks. Static validation
+# does not catch this: `systemd-analyze --user verify` run against the unit as
+# it shipped in v0.1.0-beta.21 reports nothing at all, because the directives
+# are syntactically valid and the value is the permitted one. The failure only
+# exists at process-spawn time, which no offline check reaches.
+
+UNIT="$ROOT/systemd/container-borg-server.service"
+RC=0; OUT="not found: $UNIT"
+[ -f "$UNIT" ]; assert "0.3 the systemd unit template exists" $?
+
+n=4
+for f in "$UNIT" "$ROOT/docs/DEPLOYMENT.md"; do
+    # basename is resolved into a variable first, deliberately. Calling it
+    # inside the assert's description would run it during argument expansion,
+    # i.e. after the [ ... ] below but before $? is read — so the assertion
+    # would record basename's exit status instead of the test's and pass
+    # unconditionally.
+    base="$(basename "$f")"
+    RC=0
+    OUT="$(grep -nE '^(User|Group)=' "$f" 2>/dev/null)"
+    [ -z "$OUT" ]
+    assert "0.$n no User=/Group= directive in $base" $?
+    n=$((n + 1))
+done
 
 # =========================================================================
 # 01-ssh-set-user-key.sh
