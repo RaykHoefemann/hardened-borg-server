@@ -81,15 +81,33 @@ jobs:
       - name: Host scripts (01, 09)
         run: tests/host-scripts.sh
 
-  doc-image-tags:
-    name: documented image tags are pullable
+  release-consistency:
+    name: release identifiers agree
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: VERSION, git tag, image tag and SOURCE_URL
+        run: tests/doc-image-tags.sh consistency
+
+  doc-image-tags:
+    name: documented image tags are pullable
+    runs-on: ubuntu-latest
+    # Not on pushes to main. A release commit and its git tag are pushed
+    # together, so this workflow starts while Docker Build & Publish is still
+    # building the image for that very tag — and the check fails on a tag that
+    # is minutes away from existing. Pull requests and the weekly schedule
+    # still run it, so a deleted tag is still caught; only the build that could
+    # never mean anything but "wait" is gone. The commit-local half of the same
+    # script runs unconditionally in release-consistency above.
+    if: github.event_name != 'push'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Check documented tags against GHCR
-        run: tests/doc-image-tags.sh
+        run: tests/doc-image-tags.sh registry
 
   base-image-freshness:
     name: base image pin is current
