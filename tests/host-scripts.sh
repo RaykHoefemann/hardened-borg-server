@@ -8,6 +8,11 @@
 #   09-show-all-users.sh     clients.conf parsing, grouping, quota reporting
 #   config.sh                the quota helpers shared by 00/02/09
 #
+# Plus one packaging check that is not behavioural at all (section 0): the file
+# mode git records for every tracked script. It lives here because it guards
+# the same scripts, and because the defect it prevents made all of them
+# unusable from a release checkout without any of them being wrong.
+#
 # 00-ssh-create-user.sh and 02-change-user-quota.sh are not covered end to
 # end: both require sudo and a real XFS mount with enforcing project quotas,
 # which a CI runner does not have. What both of them rely on to decide whether
@@ -103,8 +108,39 @@ DRV
 }
 GIB=1048576  # KiB per GiB
 
-echo "# host scripts — 01-ssh-set-user-key.sh, config.sh quota helpers, 09-show-all-users.sh"
+echo "# host scripts — file modes, 01-ssh-set-user-key.sh, config.sh quota helpers, 09-show-all-users.sh"
 echo
+
+# =========================================================================
+# 0. file modes — every tracked script is executable in git
+# =========================================================================
+#
+# The mode that matters is the one git records, not the one the file happens
+# to carry in this working tree: those two disagree silently, and a script can
+# be executable here while a fresh clone gets 100644. That is exactly how
+# v0.1.0-beta.21 shipped every script under scripts/ non-executable — an
+# operator following SERVERINSTALL step 4 got "Permission denied" from
+# 50-service-install.sh on a clean checkout of the tag, with nothing wrong in
+# any script's content.
+#
+# So the assertion reads the index. Nothing is skipped when git is missing: a
+# check that quietly stops checking is how the mode drifted unnoticed in the
+# first place.
+
+in_git=1
+if command -v git >/dev/null 2>&1 && git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+    in_git=0
+fi
+RC=0; OUT="git, or a git checkout, is not available — index modes cannot be read"
+[ "$in_git" -eq 0 ]; assert "0.1 running inside a git checkout, so index modes are readable" $?
+
+if [ "$in_git" -eq 0 ]; then
+    # ls-files --stage prints "<mode> <sha> <stage>\t<path>"; anything not
+    # 100755 is a script a fresh clone would refuse to run.
+    RC=0
+    OUT="$(git -C "$ROOT" ls-files --stage '*.sh' | grep -v '^100755 ')"
+    [ -z "$OUT" ]; assert "0.2 every tracked *.sh is mode 100755 in the index" $?
+fi
 
 # =========================================================================
 # 01-ssh-set-user-key.sh
