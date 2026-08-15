@@ -508,6 +508,14 @@ printf '%s' "$OUT" | grep -q '1 of them has no limit in effect' \
     && printf '%s' "$OUT" | grep -q '3780.0 GiB the others have not claimed'
 assert "9.19 ... and the total says which part of it that is" $?
 
+# What is promised and what is left are different questions: 3.9 TiB can be
+# committed on a volume that is almost empty, and that is not a contradiction.
+# Free space is df's own Available figure, not size minus used — a filesystem
+# may reserve blocks that are counted as neither.
+printf '%s' "$OUT" | grep -q 'Disk usage:    100.0 GiB of 4000.0 GiB (1%)' \
+    && printf '%s' "$OUT" | grep -q 'Disk free:     3900.0 GiB'
+assert "9.20 physical usage and free space are reported alongside the promises" $?
+
 # =========================================================================
 # 10. 00-ssh-create-user.sh — creating a client
 # =========================================================================

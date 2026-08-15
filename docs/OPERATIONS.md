@@ -290,7 +290,7 @@ there) for the operations that need `CAP_SYS_ADMIN`.
 
 ## 9.5. 09-show-all-users.sh
 
-Prints an overview of every configured client, grouped by `OWN`/`MIRROR`, with each client's configured quota, the quota **actually enforced** for it, and its **live** storage usage — the latter two read the same way the client `info` channel reads them (directly from the enforcing XFS project quota via `df`, see Chapter 8), not from the static `clients.conf` value. Also reports total physical disk usage of the underlying storage volume. Read-only, does not require root.
+Prints an overview of every configured client, grouped by `OWN`/`MIRROR`, with each client's configured quota, the quota **actually enforced** for it, and its **live** storage usage — the latter two read the same way the client `info` channel reads them (directly from the enforcing XFS project quota via `df`, see Chapter 8), not from the static `clients.conf` value. Also reports the physical usage and free space of the underlying storage volume. Read-only, does not require root.
 
 ```bash
 ./scripts/09-show-all-users.sh
@@ -306,6 +306,7 @@ user3-os1-pc1            30G        0%        n/a            MISSING on host
 Total clients: 3
 Committed:     60.0 GiB of 3.6 TiB volume (1%) across 2 client(s)
 Disk usage:    39.5 GiB of 3.6 TiB (1%)
+Disk free:     3.5 TiB
 ```
 
 `% OF VOL` is that client's configured quota as a share of the volume — what the promise is worth against the disk it is made on, rather than only against the promises next to it.

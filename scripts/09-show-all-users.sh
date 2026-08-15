@@ -187,15 +187,22 @@ fi
 # itself, not a client subdirectory) — this is the actual disk fill level,
 # independent of any individual client's quota.
 if [ -n "${HOST_REPO_BASE:-}" ] && [ -d "$HOST_REPO_BASE" ]; then
-    DISKLINE=$(df -kP "$HOST_REPO_BASE" 2>/dev/null | awk 'NR==2{print $2, $3, $5}')
+    DISKLINE=$(df -kP "$HOST_REPO_BASE" 2>/dev/null | awk 'NR==2{print $2, $3, $4, $5}')
     if [ -n "$DISKLINE" ]; then
         d_size=$(echo "$DISKLINE" | cut -d' ' -f1)
         d_used=$(echo "$DISKLINE" | cut -d' ' -f2)
-        d_pct=$(echo "$DISKLINE" | cut -d' ' -f3)
+        d_avail=$(echo "$DISKLINE" | cut -d' ' -f3)
+        d_pct=$(echo "$DISKLINE" | cut -d' ' -f4)
         echo "Disk usage:    $(quota_human "$d_used") of $(quota_human "$d_size") (${d_pct})"
+        # df's own Available figure, not size minus used: a filesystem can
+        # reserve blocks that are counted as neither, and what a client can
+        # still write is what df says is available.
+        echo "Disk free:     $(quota_human "$d_avail")"
     else
         echo "Disk usage:    unreadable"
+        echo "Disk free:     unreadable"
     fi
 else
     echo "Disk usage:    n/a (HOST_REPO_BASE not set or not accessible)"
+    echo "Disk free:     n/a (HOST_REPO_BASE not set or not accessible)"
 fi
