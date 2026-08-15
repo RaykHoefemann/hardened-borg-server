@@ -374,8 +374,8 @@ ssh -p 2222 borg@<server> info
 
 **Pass** — the mount reports `prjquota` and **not** `pqnoenforce`;
 `xfs_quota` reports project quota enforcement as ON; every client's
-`ENFORCED` column reads `ok`, with no `(!)` and no drift hint under the
-listing; and the info channel reports *your own* limit:
+`CONFIGURED` column repeats each client's `clients.conf` value unmarked,
+with no `(!)` anywhere and no drift hint under the listing; and the info channel reports *your own* limit:
 
 ```
 Used: 2.4 GiB of 50.0 GiB (5%)
@@ -385,9 +385,10 @@ Used: 2.4 GiB of 50.0 GiB (5%)
 rather than your configured quota, project quota enforcement is not active
 for that repository. This is the single most common misconfiguration, and it
 is invisible until a client fills the volume. On the host side the same
-condition appears as `none (!)` in the `ENFORCED` column; a `<size> (!)`
-there means a limit *is* enforced, but not the one `clients.conf` records —
-re-apply it with `02-change-user-quota.sh` (OPERATIONS Chapter 9.4).
+condition appears as `none (!)` in the `QUOTA` column; a marked value in
+`CONFIGURED` means a limit *is* enforced, but not the one `clients.conf`
+records — the `QUOTA` column is the one in force. Re-apply the intended value
+with `02-change-user-quota.sh` (OPERATIONS Chapter 9.4).
 
 One route into this state is closed by the tooling itself: `00-` and `02-`
 refuse a quota above 99% of the volume, because a limit at or above the volume

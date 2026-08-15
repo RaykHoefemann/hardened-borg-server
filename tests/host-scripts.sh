@@ -415,8 +415,8 @@ df_stub \
     "$T/repo/OWN/user2:$((20 * GIB)):0" \
     "$T/repo/MIRROR/friend1:$((200 * GIB)):$((10 * GIB))"
 run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
-printf '%s' "$OUT" | grep -qE '^user1 +50G +1% +ok +5\.0 GiB of 50\.0 GiB \(10%\)'
-assert "9.7 a limit matching clients.conf is reported as ok" $?
+printf '%s' "$OUT" | grep -qE '^user1 +50\.0 GiB +1% +50G +5\.0 GiB of 50\.0 GiB \(10%\)'
+assert "9.7 the enforced limit is the quota shown, with clients.conf beside it" $?
 
 printf '%s' "$OUT" | grep -q '(!)'
 [ $? -ne 0 ]; assert "9.8 no drift is flagged when every limit matches" $?
@@ -429,8 +429,8 @@ df_stub \
     "$T/repo/OWN/user2:$((10 * GIB)):0" \
     "$T/repo/MIRROR/friend1:$((200 * GIB)):$((10 * GIB))"
 run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
-printf '%s' "$OUT" | grep -qE '^user2 +20G +0% +10\.0 GiB \(!\)'
-assert "9.9 a limit differing from clients.conf is flagged with its real value" $?
+printf '%s' "$OUT" | grep -qE '^user2 +10\.0 GiB +0% +20G \(!\)'
+assert "9.9 a limit differing from clients.conf shows the real one, config flagged" $?
 
 printf '%s' "$OUT" | grep -q 'does not match clients.conf'
 assert "9.10 the drift hint is printed once a mismatch was seen" $?
@@ -444,7 +444,7 @@ df_stub \
     "$T/repo/OWN/user2:$((20 * GIB)):0" \
     "$T/repo/MIRROR/friend1:$((200 * GIB)):$((10 * GIB))"
 run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
-printf '%s' "$OUT" | grep -qE '^user1 +50G +1% +none \(!\) +5\.0 GiB \(unlimited\)'
+printf '%s' "$OUT" | grep -qE '^user1 +none \(!\) +n/a +50G \(!\) +5\.0 GiB \(unlimited\)'
 assert "9.11 a directory with no quota in effect is reported as unlimited" $?
 
 # --- comment lines are not clients ---------------------------------------
@@ -488,8 +488,8 @@ run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
 printf '%s' "$OUT" | grep -q 'Committed:     270.0 GiB of 4000.0 GiB volume (6%) across 3 client(s)'
 assert "9.16 the enforced limits are summed against the volume" $?
 
-printf '%s' "$OUT" | grep -qE '^user1 +50G +1% +ok'
-assert "9.17 each client's own quota is shown as a share of the volume too" $?
+printf '%s' "$OUT" | grep -qE '^user1 +50\.0 GiB +1% +50G'
+assert "9.17 the enforced limit is shown as a share of the volume too" $?
 
 # A client nothing limits is not left out of the total. It counts as
 # everything the limited ones have not claimed, so a single one commits the
@@ -741,7 +741,7 @@ setup_create
 df_stub "$T/repo:$((100 * GIB)):0" "$T/repo/OWN/user1:$((60 * GIB)):0"
 run_create user1 OWN 60G
 printf '%s' "$OUT" | grep -q -- '--- after this change ---' \
-    && printf '%s' "$OUT" | grep -qE '^ +user1 +60G +60% +ok +0 KiB of 60\.0 GiB'
+    && printf '%s' "$OUT" | grep -qE '^ +user1 +60\.0 GiB +60% +60G +0 KiB of 60\.0 GiB'
 assert "10.20 the new quota is stated as a share of the volume" $?
 
 # 200G on a 100 GiB volume: xfs_quota would accept it and clamp it, and the
@@ -914,8 +914,8 @@ run_quota user1 60G
 CONFIRM_INPUT="y"
 # One && chain, deliberately: written as separate statements the assert would
 # record only the last one's status and the rest would be decoration.
-printf '%s' "$OUT" | grep -qE '^ +user1 +10G +10% +ok +1\.0 GiB of 10\.0 GiB \(10%\)' \
-    && printf '%s' "$OUT" | grep -qE '^ +user1 +60G +60% +ok +1\.0 GiB of 60\.0 GiB \(1%\)' \
+printf '%s' "$OUT" | grep -qE '^ +user1 +10\.0 GiB +10% +10G +1\.0 GiB of 10\.0 GiB \(10%\)' \
+    && printf '%s' "$OUT" | grep -qE '^ +user1 +60\.0 GiB +60% +60G +1\.0 GiB of 60\.0 GiB \(1%\)' \
     && [ "$(printf '%s\n' "$OUT" | grep -c -- '--- ')" -eq 2 ]
 assert "12.1 the client's line is shown for both states, usage included" $?
 
@@ -945,8 +945,8 @@ df_stub "$T/repo:$((100 * GIB)):0" \
 CONFIRM_INPUT="n"
 run_quota user1 60G
 CONFIRM_INPUT="y"
-printf '%s' "$OUT" | grep -qE '^ +user1 +10G +10% +5\.0 GiB \(!\)' \
-    && printf '%s' "$OUT" | grep -qE '^ +user1 +60G +60% +ok '
+printf '%s' "$OUT" | grep -qE '^ +user1 +5\.0 GiB +5% +10G \(!\)' \
+    && printf '%s' "$OUT" | grep -qE '^ +user1 +60\.0 GiB +60% +60G '
 assert "12.5 drift is named in the current block and resolved in the other" $?
 
 # Overcommitment is not refused — thin provisioning is a legitimate choice —

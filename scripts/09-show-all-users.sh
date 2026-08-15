@@ -70,33 +70,35 @@ DRIFT_DIR=$(mktemp -d) || exit 1
 trap 'rm -rf "$DRIFT_DIR"' EXIT INT TERM
 DRIFT_MARKER="${DRIFT_DIR}/drift"
 
-# Enforced limit and usage for one client, as "<enforced>|<used>". Both are
-# short markers when they cannot be determined.
+# The four cells describing one client, pipe-separated:
+# "<quota>|<% of volume>|<configured>|<used>". Short markers stand in for any
+# of them that cannot be determined.
 report_for() {
     grp="$1"; user="$2"; want="$3"
     if [ -z "${HOST_REPO_BASE:-}" ]; then
-        echo "n/a|n/a (HOST_REPO_BASE not set)"
+        echo "n/a|n/a|${want}|n/a (HOST_REPO_BASE not set)"
         return
     fi
     d="${HOST_REPO_BASE}/${grp}/${user}"
     if [ ! -d "$d" ]; then
-        echo "n/a|MISSING on host"
+        echo "n/a|n/a|${want}|MISSING on host"
         return
     fi
-    line=$(df -kP "$d" 2>/dev/null | awk 'NR==2{print $2, $3}') || { echo "n/a|unreadable"; return; }
+    line=$(df -kP "$d" 2>/dev/null | awk 'NR==2{print $2, $3}') || { echo "n/a|n/a|${want}|unreadable"; return; }
     size_kib=$(echo "$line" | cut -d' ' -f1)
     used_kib=$(echo "$line" | cut -d' ' -f2)
-    case "$size_kib" in ''|*[!0-9]*) echo "n/a|unreadable"; return ;; esac
+    case "$size_kib" in ''|*[!0-9]*) echo "n/a|n/a|${want}|unreadable"; return ;; esac
     case "$used_kib" in ''|*[!0-9]*) used_kib=0 ;; esac
 
-    # Both columns come from config.sh, which the quota preview in 00/02 uses
-    # too, so a client's state reads identically wherever it is reported. Any
-    # verdict other than "ok" is drift: what the kernel enforces is not what
-    # clients.conf records, and the kernel is the one that decides.
-    enforced=$(quota_enforced_text "$size_kib" "$want" "$VOLUME_KIB")
-    [ "$enforced" = "ok" ] || : > "$DRIFT_MARKER"
-
-    printf '%s|%s' "$enforced" "$(quota_usage_text "$used_kib" "$size_kib" "$VOLUME_KIB")"
+    # From config.sh, which the quota preview in 00/02 uses too, so a client's
+    # state reads identically wherever it is reported. A (!) in the CONFIGURED
+    # cell is drift: clients.conf records one limit and the kernel applies
+    # another, and the kernel is the one the client will hit.
+    row=$(quota_row_fields "$size_kib" "$want" "$VOLUME_KIB" "$used_kib")
+    case "$row" in
+        *"(!)"*) : > "$DRIFT_MARKER" ;;
+    esac
+    echo "$row"
 }
 
 # Distinct groups, in the order they first appear in clients.conf.
@@ -111,23 +113,16 @@ CLIENT_GROUPS=$(printf '%s\n' "$ROSTER" | awk -F: '{print $2}' | awk '!seen[$0]+
 
 for GROUP in $CLIENT_GROUPS; do
     echo "=== ${GROUP} ==="
-    printf '%-24s %-10s %-9s %-14s %s\n' "USERNAME" "QUOTA" "% OF VOL" "ENFORCED" "USED"
+    printf '%-24s %-12s %-9s %-12s %s\n' \
+        "USERNAME" "QUOTA" "% OF VOL" "CONFIGURED" "USED"
     printf '%s\n' "$ROSTER" | awk -F: -v g="$GROUP" '$2==g {print $1, $4}' | sort | \
     while read -r USERNAME QUOTA; do
         [ -n "$USERNAME" ] || continue
-
-        # What this client's configured quota is as a share of the volume, so
-        # the promise can be read against the disk it is made on rather than
-        # against the other promises next to it.
-        QUOTA_PCT="n/a"
-        QUOTA_KIB=$(quota_kib "$QUOTA" 2>/dev/null) || QUOTA_KIB=""
-        if [ -n "$QUOTA_KIB" ] && [ -n "$VOLUME_KIB" ]; then
-            QUOTA_PCT="$(quota_pct "$QUOTA_KIB" "$VOLUME_KIB")%"
-        fi
-
-        REPORT=$(report_for "$GROUP" "$USERNAME" "$QUOTA")
-        printf '%-24s %-10s %-9s %-14s %s\n' \
-            "$USERNAME" "$QUOTA" "$QUOTA_PCT" "${REPORT%%|*}" "${REPORT#*|}"
+        IFS='|' read -r C_QUOTA C_PCT C_CONF C_USED <<EOF
+$(report_for "$GROUP" "$USERNAME" "$QUOTA")
+EOF
+        printf '%-24s %-12s %-9s %-12s %s\n' \
+            "$USERNAME" "$C_QUOTA" "$C_PCT" "$C_CONF" "$C_USED"
     done
     echo ""
 done

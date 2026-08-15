@@ -189,8 +189,8 @@ Before anything is created, the script states what the requested quota means for
   Disk free:     3.5 TiB
 
   --- after this change ---
-  USERNAME                 QUOTA      % OF VOL  ENFORCED       USED
-  user1-os1-pc1            50G        1%        ok             0 KiB of 50.0 GiB (0%)
+  USERNAME                 QUOTA        % OF VOL  CONFIGURED   USED
+  user1-os1-pc1            50.0 GiB     1%        50G          0 KiB of 50.0 GiB (0%)
   Committed:     320.0 GiB of 3.6 TiB volume (8%) across 4 client(s)
   Disk usage:    39.5 GiB of 3.6 TiB (1%)
   Disk free:     3.5 TiB
@@ -253,15 +253,15 @@ Changes the quota of an existing client. Looks up its host repository directory 
 [quota] Volume /var/mnt/extern1/borg-server — 3.6 TiB
 
   --- current state ---
-  USERNAME                 QUOTA      % OF VOL  ENFORCED       USED
-  user1-os1-pc1            50G        1%        ok             31.4 GiB of 50.0 GiB (62%)
+  USERNAME                 QUOTA        % OF VOL  CONFIGURED   USED
+  user1-os1-pc1            50.0 GiB     1%        50G          31.4 GiB of 50.0 GiB (62%)
   Committed:     320.0 GiB of 3.6 TiB volume (8%) across 4 client(s)
   Disk usage:    39.5 GiB of 3.6 TiB (1%)
   Disk free:     3.5 TiB
 
   --- after this change ---
-  USERNAME                 QUOTA      % OF VOL  ENFORCED       USED
-  user1-os1-pc1            100G       2%        ok             31.4 GiB of 100.0 GiB (31%)
+  USERNAME                 QUOTA        % OF VOL  CONFIGURED   USED
+  user1-os1-pc1            100.0 GiB    2%        100G         31.4 GiB of 100.0 GiB (31%)
   Committed:     370.0 GiB of 3.6 TiB volume (10%) across 4 client(s)
   Disk usage:    39.5 GiB of 3.6 TiB (1%)
   Disk free:     3.5 TiB
@@ -273,7 +273,7 @@ Apply this change? [y/N] y
 [quota] Quota for 'user1-os1-pc1' changed: 50G → 100G (enforced immediately)
 ```
 
-The two blocks carry the same columns and the same summary lines as `09-show-all-users.sh` (Chapter 9.5), so they can be read against each other and the figures that move are obvious. `USED` is the same number of bytes in both — the change moves no data — against a different limit: `62%` of the old quota is `31%` of the new one, which is the headroom the change actually buys. `ENFORCED` is the same verdict the listing gives (Chapter 9.5), so a client whose limit has drifted reads `<size> (!)` in the current block and `ok` in the one that would repair it; under *after this change* every figure is a prediction, that one included. `Disk usage` and `Disk free` appear in both and are identical in both — a quota is a promise, and changing one moves no data. That is worth seeing rather than assuming.
+The two blocks carry the same columns and the same summary lines as `09-show-all-users.sh` (Chapter 9.5), so they can be read against each other and the figures that move are obvious. `USED` is the same number of bytes in both — the change moves no data — against a different limit: `62%` of the old quota is `31%` of the new one, which is the headroom the change actually buys. `QUOTA` is the limit the filesystem really applies and `CONFIGURED` the `clients.conf` value beside it, exactly as in the listing (Chapter 9.5) — so a client whose limit has drifted shows the real figure with `10G (!)` next to it in the current block, and agreement in the block that would repair it. Under *after this change* every figure is a prediction. `Disk usage` and `Disk free` appear in both and are identical in both — a quota is a promise, and changing one moves no data. That is worth seeing rather than assuming.
 
 The preview exists because a bare `100G` does not say whether it is generous or reckless, and because raising quotas one request at a time is exactly how a correctly sized volume drifts into overcommitment (Chapter 10.2). `Committed` is marked `(!)` in the block where it reaches the volume, with the consequence spelled out underneath. Overcommitment is not refused — thin provisioning is a legitimate choice — but it does not happen quietly. As in Chapter 9.2, a quota above 99% of the volume is refused before `sudo` is reached, and the confirmation is read from stdin.
 
@@ -315,10 +315,10 @@ Prints an overview of every configured client, grouped by `OWN`/`MIRROR`, with e
 
 ```
 === OWN ===
-USERNAME                 QUOTA      % OF VOL  ENFORCED       USED
-user1-os1-pc1            50G        1%        ok             31.4 GiB of 50.0 GiB (62%)
-user2-os1-pc1            20G        0%        10.0 GiB (!)   8.1 GiB of 10.0 GiB (81%)
-user3-os1-pc1            30G        0%        n/a            MISSING on host
+USERNAME                 QUOTA        % OF VOL  CONFIGURED   USED
+user1-os1-pc1            50.0 GiB     1%        50G          31.4 GiB of 50.0 GiB (62%)
+user2-os1-pc1            10.0 GiB     0%        20G (!)      8.1 GiB of 10.0 GiB (81%)
+user3-os1-pc1            n/a          n/a       30G          MISSING on host
 
 Total clients: 3
 Committed:     60.0 GiB of 3.6 TiB volume (1%) across 2 client(s)
@@ -326,7 +326,7 @@ Disk usage:    39.5 GiB of 3.6 TiB (1%)
 Disk free:     3.5 TiB
 ```
 
-`% OF VOL` is that client's configured quota as a share of the volume — what the promise is worth against the disk it is made on, rather than only against the promises next to it.
+`% OF VOL` is that limit as a share of the volume — what the client may take from the disk, rather than only how it compares to the clients next to it.
 
 `Committed` is the sum from Chapter 10.2, computed rather than left to the operator: the limits **actually enforced**, against the size of the volume, marked `(!)` once they reach it. A client whose limit is **not** in effect counts for what the chapter says it costs — everything the limited clients have not claimed, not its configured quota — so a single one of them commits the volume in full:
 
@@ -339,14 +339,16 @@ Committed:     3.6 TiB of 3.6 TiB volume (100%) (!) across 3 client(s)
 
 Counting it any other way would make the figure look *better* the more dangerous the installation gets, which is the opposite of what it is for.
 
-The `ENFORCED` column is the check: `QUOTA` is what `clients.conf` records, `ENFORCED` is what the kernel applies.
+`QUOTA` is the limit the kernel actually applies, read from the filesystem — not the value `clients.conf` records. Every figure here is derived from it: the share of the volume, the usage percentage, and the `Committed` sum below. Only one of the two numbers ever stops a client from writing, and it is not the file.
 
-- `ok` — the two agree; nothing to do.
-- `<size> (!)` — they disagree, and the filesystem is what the client will actually hit. Re-apply the intended value with Chapter 9.4.
-- `none (!)` — no project quota governs that directory at all (`df` reports the whole volume), so the client is effectively unlimited. Typically a directory that predates quota enforcement or lost its project id.
+`CONFIGURED` is the `clients.conf` value beside it, and carries the check:
+
+- plain (e.g. `50G`) — the filesystem enforces what was configured; nothing to do.
+- `20G (!)` — it does not. The client is bound by the `QUOTA` column, whatever the file says. Re-apply the intended value with Chapter 9.4.
+- `none (!)` in `QUOTA` — no project quota governs that directory at all (`df` reports the whole volume), so the client is bounded by nothing. Typically a directory that predates quota enforcement or lost its project id.
 - `n/a` — nothing could be read, e.g. the repository directory is missing (`clients.conf` and the filesystem have drifted apart).
 
-Any `(!)` also prints a hint under the listing. This matters for the sizing invariant in Chapter 10.2: the sum that has to stay under the volume capacity is the sum of the **enforced** limits, not of the configured ones.
+Any `(!)` also prints a hint under the listing. This matters for the sizing invariant in Chapter 10.2, which is about **enforced** limits: reading the configured ones would report a volume that is safe on paper while the disk fills.
 
 ## 9.6. 50-service-install.sh
 
@@ -453,7 +455,7 @@ Enforcing project quotas cap each *client*. They do not cap the *volume*. The pr
 
 Hold that, and no combination of client behaviour can fill the disk — a client that reaches its limit is stopped by the filesystem, and every other client is unaffected. Break it by overcommitting, and the quotas stop protecting anything: several clients growing toward limits that jointly exceed the disk will exhaust it.
 
-*Enforced*, not configured: a client whose `ENFORCED` column shows `none (!)` (Chapter 9.5) contributes not its `clients.conf` figure but the whole remaining volume, because nothing stops it. This is how `09-show-all-users.sh` and the quota preview count it, which is why a single such client takes the reported total to 100%.
+*Enforced*, not configured: a client whose `QUOTA` column shows `none (!)` (Chapter 9.5) contributes not its `clients.conf` figure but the whole remaining volume, because nothing stops it. This is how `09-show-all-users.sh` and the quota preview count it, which is why a single such client takes the reported total to 100%.
 
 This matters because the natural response to a client hitting its quota is to raise it (Chapter 9.4), and raising quotas one request at a time is exactly how a correctly sized volume drifts into overcommitment without anyone deciding to overcommit.
 
@@ -469,7 +471,7 @@ Quota exhaustion should be caught **before** a backup fails, not diagnosed after
 ./scripts/09-show-all-users.sh
 ```
 
-Live per-client usage for every client at once, plus total physical usage of the underlying storage volume — the two numbers needed to check both an individual client's headroom and the invariant in 10.2. The `ENFORCED` column is part of the same check: a quota that is not actually applied protects nothing, and this is where that shows up.
+Live per-client usage for every client at once, plus total physical usage of the underlying storage volume — the two numbers needed to check both an individual client's headroom and the invariant in 10.2. The `CONFIGURED` column is part of the same check: a quota that is not actually applied protects nothing, and this is where that shows up.
 
 **The client**, over its normal SSH connection:
 
