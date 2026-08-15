@@ -176,6 +176,8 @@ The file ends with a small set of **quota helper functions** (`quota_kib`, `quot
 
 Creates a new Borg client end-to-end: the host-side repository directory, an XFS project quota assigned and set to the given hard limit (requires enforcing `prjquota`, see Chapter 1.1.3), the `clients.conf` entry, and an empty public-key placeholder. Also sets correct host ownership on the new directory via `podman unshare` so the container's `borg` user can write to it.
 
+Run it as **the same user that runs the container**: from the first container start onwards the repository base belongs to the container's `borg` user (the entrypoint takes ownership of it), which under rootless Podman is a mapped host UID nobody on the host is. `podman unshare` is what resolves that mapping, and it resolves *that user's* — so the directory is created and owned correctly, with nothing left to fix up afterwards. Running it as a different user, or without Podman available, is refused before anything is created.
+
 After setting the limit, the script **reads it back from the new directory** and prints what is in effect:
 
 ```

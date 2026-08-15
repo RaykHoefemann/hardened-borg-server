@@ -207,8 +207,11 @@ contact=admin@example.com
 
 This is where the client's repository directory, XFS project quota,
 `clients.conf` entry, and key placeholder all get created together. Run it as
-the normal operator user — only the individual `xfs_quota` calls inside the
-script elevate via `sudo` (you'll be prompted there):
+the normal operator user, and specifically as **the same user that runs the
+container** — only the individual `xfs_quota` calls inside the script elevate
+via `sudo` (you'll be prompted there), while the repository directory is
+created and handed to the container's `borg` user through `podman unshare`,
+which resolves that user's rootless UID mapping:
 
 ```bash
 ./scripts/00-ssh-create-user.sh user1-os1-pc1 OWN 50G
@@ -216,6 +219,10 @@ script elevate via `sudo` (you'll be prompted there):
 
 - Group is `OWN` (your own devices) or `MIRROR` (external/offsite partners)
 - Quota is mandatory — there is no unlimited option
+- The repository base belongs to the container's `borg` user from the first
+  container start onwards (the entrypoint takes ownership of it), which is why
+  this step goes through `podman unshare` rather than a plain `mkdir`. Nothing
+  is left for you to fix up afterwards
 
 See [Operations](OPERATIONS.md) Chapter 7.1 for the `clients.conf` format
 this writes to.

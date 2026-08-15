@@ -4,6 +4,8 @@
 # ---------------------
 # Behavioural tests for the host-side scripts that need no privileges:
 #
+#   00-ssh-create-user.sh    creating a client: the repository directory, its
+#                            ownership, project-id allocation, the abort paths
 #   01-ssh-set-user-key.sh   input validation and key handling
 #   09-show-all-users.sh     clients.conf parsing, grouping, quota reporting
 #   config.sh                the quota helpers shared by 00/02/09
@@ -14,12 +16,14 @@
 # computes; both are about defects that made a correct release unusable on the
 # host without a single line of logic being wrong.
 #
-# 00-ssh-create-user.sh and 02-change-user-quota.sh are not covered end to
-# end: both require sudo and a real XFS mount with enforcing project quotas,
-# which a CI runner does not have. What both of them rely on to decide whether
-# a quota really took effect — quota_verify and friends in config.sh — is
-# covered here, because every one of those reads the limit through df, and df
-# can be substituted (section 2).
+# 02-change-user-quota.sh is not covered end to end: it requires sudo and a
+# real XFS mount with enforcing project quotas, which a CI runner does not
+# have. What it relies on to decide whether a quota really took effect —
+# quota_verify and friends in config.sh — is covered here, because every one of
+# those reads the limit through df, and df can be substituted (section 2).
+# 00-ssh-create-user.sh is covered (section 10) by substituting all four of the
+# commands it reaches outside itself; see the note there for why that is enough
+# to test what actually broke.
 #
 # The scripts derive every path from the location of the config.sh they source,
 # so each case runs against a throwaway installation tree rather than the
@@ -109,7 +113,7 @@ DRV
 }
 GIB=1048576  # KiB per GiB
 
-echo "# host scripts — packaging, 01-ssh-set-user-key.sh, config.sh quota helpers, 09-show-all-users.sh"
+echo "# host scripts — packaging, 00/01 client creation, config.sh quota helpers, 09-show-all-users.sh"
 echo
 
 # =========================================================================
@@ -377,6 +381,197 @@ df_stub \
 run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
 printf '%s' "$OUT" | grep -qE '^user1 +50G +none \(!\) +5\.0 GiB \(unlimited\)'
 assert "9.11 a directory with no quota in effect is reported as unlimited" $?
+
+# =========================================================================
+# 10. 00-ssh-create-user.sh — creating a client
+# =========================================================================
+#
+# This script had no coverage at all, which is why it reached operators unable
+# to create the first client on any installation whose server had ever been
+# started: entrypoint.sh chowns the bind-mounted repository base to the
+# container's 'borg' user, which under rootless podman is a host uid the
+# operator is not, so a plain `mkdir` there fails with Permission denied.
+#
+# What kept it untested is real — the script needs sudo, an XFS mount with
+# enforcing project quotas, and a rootless podman — but none of that is needed
+# to check the part that was wrong. Each of the four external commands is
+# replaced by a stub that records how it was called:
+#
+#   podman     records argv and executes `unshare <cmd>` for real, which is
+#              what a working user namespace would do to a writable path
+#   sudo       runs the rest of the command line, so xfs_quota is reached
+#   xfs_quota  reports enforcement ON, accepts project/limit assignments
+#   lsattr     answers project ids from a data file, like a real XFS mount
+#   df         the existing stub, so quota_verify reads back what was "set"
+#
+# The stubs make the environment; the script's own logic is untouched.
+
+STUB="$WORK/createstubs"
+mkdir -p "$STUB"
+
+cat > "$STUB/podman" <<'PSTUB'
+#!/bin/sh
+# Records every invocation, then performs the namespaced command on the host —
+# the path is operator-owned in this fixture, so the effect is the same as a
+# real user namespace would have. chown is recorded only: mapping a container
+# uid onto the host is exactly what an unprivileged test cannot do.
+echo "podman $*" >> "$PODMAN_LOG"
+[ "$1" = "unshare" ] || exit 0
+shift
+case "$1" in
+    chown) exit 0 ;;
+    # Inside a real namespace the operator's own files show as uid 0, and the
+    # container's as BORG_UID. $PODMAN_STAT_UID is what this mapping reports.
+    stat)  echo "${PODMAN_STAT_UID:-0}"; exit 0 ;;
+    *) exec "$@" ;;
+esac
+PSTUB
+
+cat > "$STUB/sudo" <<'SSTUB'
+#!/bin/sh
+exec "$@"
+SSTUB
+
+cat > "$STUB/xfs_quota" <<'XSTUB'
+#!/bin/sh
+for a in "$@"; do
+    case "$a" in
+        "state -p") echo "Enforcement: ON" ;;
+    esac
+done
+exit 0
+XSTUB
+
+cat > "$STUB/lsattr" <<'LSTUB'
+#!/bin/sh
+# "<path>:<projid>" lines in $LSATTR_STUB_DATA; unknown paths report nothing,
+# which is how an unreadable directory behaves.
+for a in "$@"; do case "$a" in -*) ;; *) p="$a" ;; esac; done
+while IFS=: read -r path pid; do
+    [ "$path" = "$p" ] && { echo "$pid --------------- $p"; exit 0; }
+done < "$LSATTR_STUB_DATA"
+exit 1
+LSTUB
+
+chmod +x "$STUB/podman" "$STUB/sudo" "$STUB/xfs_quota" "$STUB/lsattr"
+
+lsattr_stub() { printf '%s\n' "$@" > "$WORK/lsattr.data"; export LSATTR_STUB_DATA="$WORK/lsattr.data"; }
+
+run_create() { # run_create <args...> — 00-ssh-create-user.sh under all stubs
+    export PODMAN_LOG="$WORK/podman.log"
+    : > "$PODMAN_LOG"
+    OUT="$(PATH="$STUB:$DF_BIN:$PATH" "$T/scripts/00-ssh-create-user.sh" "$@" 2>&1)"
+    RC=$?
+}
+
+setup_create() { # a tree whose repo base exists, with no clients yet
+    new_tree
+    printf 'name=testserver\nlocation=Testville\ncontact=admin@example.com\n' \
+        > "$T/config/server_info.conf"
+    lsattr_stub ""
+    df_stub "$T/repo:$((4000 * GIB)):0"
+}
+
+# The bug itself: the directory has to be created through `podman unshare`,
+# because on a running installation the base belongs to the container's mapped
+# uid and the operator cannot write into it.
+setup_create
+df_stub "$T/repo:$((4000 * GIB)):0" "$T/repo/OWN/user1:$((50 * GIB)):0"
+run_create user1 OWN 50G
+[ "$RC" -eq 0 ]; assert "10.1 a client is created" $?
+
+grep -q "^podman unshare mkdir -p $T/repo/OWN/user1$" "$WORK/podman.log"
+assert "10.2 the repository directory is created inside the user namespace" $?
+
+grep -q "^podman unshare chown 1111:1111 $T/repo/OWN/user1$" "$WORK/podman.log"
+assert "10.3 ownership is handed to the container's borg user from BORG_UID/BORG_GID" $?
+
+[ -d "$T/repo/OWN/user1" ]; assert "10.4 the directory exists afterwards" $?
+
+grep -q '^user1:OWN:/repo/OWN/user1:50G$' "$T/config/clients.conf"
+assert "10.5 the clients.conf entry carries the container-side path" $?
+
+[ -f "$T/config/keys/user1.pub" ]; assert "10.6 an empty key placeholder is created" $?
+
+# The NOTE that used to end this script told the operator to sort the
+# ownership out by hand. It is now done, and said so.
+printf '%s' "$OUT" | grep -q 'no further action needed'
+assert "10.7 the operator is told ownership is already correct" $?
+
+# Project ids: max+1 over what the existing directories report.
+setup_create
+mkdir -p "$T/repo/OWN/existing1" "$T/repo/MIRROR/existing2"
+lsattr_stub "$T/repo/OWN/existing1:1000" "$T/repo/MIRROR/existing2:1007"
+df_stub "$T/repo:$((4000 * GIB)):0" "$T/repo/OWN/user1:$((50 * GIB)):0"
+run_create user1 OWN 50G
+printf '%s' "$OUT" | grep -q 'project id 1008'
+assert "10.8 the next project id is one above the highest in use" $?
+
+# ... and a directory whose id cannot be read aborts, rather than being
+# skipped: skipping hands out an id that is already in use, and two clients
+# then share one quota without either of them being told.
+setup_create
+mkdir -p "$T/repo/OWN/unreadable"
+lsattr_stub ""
+df_stub "$T/repo:$((4000 * GIB)):0" "$T/repo/OWN/user1:$((50 * GIB)):0"
+run_create user1 OWN 50G
+[ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'cannot read the XFS project id'
+assert "10.9 an unreadable project id aborts instead of risking a shared quota" $?
+
+grep -q "^podman unshare rmdir $T/repo/OWN/user1$" "$WORK/podman.log"
+assert "10.10 the half-created directory is removed through the namespace too" $?
+
+[ ! -f "$T/config/clients.conf" ] || ! grep -q '^user1:' "$T/config/clients.conf"
+assert "10.11 no clients.conf entry is left behind by the abort" $?
+
+# A quota that does not read back is the other abort path, and the one the
+# script exists to protect: an unlimited client is worse than no client.
+setup_create
+df_stub "$T/repo:$((4000 * GIB)):0" "$T/repo/OWN/user1:$((4000 * GIB)):0"
+run_create user1 OWN 50G
+[ "$RC" -ne 0 ]; assert "10.12 a quota that does not take effect aborts the creation" $?
+
+grep -q "^podman unshare rmdir $T/repo/OWN/user1$" "$WORK/podman.log"
+assert "10.13 ... and the directory is cleaned up" $?
+
+# The base has to belong to a mapping this user shares with the container. A
+# uid that is neither means somebody else runs the container, and creating the
+# directory anyway would produce a client whose backups cannot be written.
+setup_create
+PODMAN_STAT_UID=65534 run_create user1 OWN 50G
+[ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'same user that runs the container'
+assert "10.14 a repository base under a foreign uid mapping is refused" $?
+
+[ ! -d "$T/repo/OWN/user1" ]; assert "10.15 ... before anything is created" $?
+
+# The base already owned by the container's borg user is the normal state of
+# every installation whose server has started once.
+setup_create
+df_stub "$T/repo:$((4000 * GIB)):0" "$T/repo/OWN/user1:$((50 * GIB)):0"
+PODMAN_STAT_UID=1111 run_create user1 OWN 50G
+[ "$RC" -eq 0 ]; assert "10.16 a base already owned by the container is the normal case" $?
+
+# Under bash-invoked-as-sh as well: this script's shebang is /bin/sh, which is
+# dash where these tests usually run but bash on Fedora CoreOS — the platform
+# the project requires. Section 9 exists because of a bug that appeared only
+# under bash; the same exposure applies here.
+setup_create
+df_stub "$T/repo:$((4000 * GIB)):0" "$T/repo/OWN/user1:$((50 * GIB)):0"
+export PODMAN_LOG="$WORK/podman.log"; : > "$PODMAN_LOG"
+OUT="$(PATH="$STUB:$DF_BIN:$PATH" "$WORK/sh" "$T/scripts/00-ssh-create-user.sh" user1 OWN 50G 2>&1)"; RC=$?
+[ "$RC" -eq 0 ] && grep -q "^podman unshare chown 1111:1111 $T/repo/OWN/user1$" "$WORK/podman.log"
+assert "10.17 the same run under bash-as-sh behaves identically" $?
+
+# podman missing is checked before anything is created, not halfway through.
+setup_create
+NOPODMAN="$WORK/nopodman"; mkdir -p "$NOPODMAN"
+cp "$STUB/sudo" "$STUB/xfs_quota" "$STUB/lsattr" "$NOPODMAN/"
+df_stub "$T/repo:$((4000 * GIB)):0"
+OUT="$(PATH="$NOPODMAN:$DF_BIN:/usr/bin:/bin" "$T/scripts/00-ssh-create-user.sh" user1 OWN 50G 2>&1)"; RC=$?
+[ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'podman not found'
+assert "10.18 a missing podman is reported before anything is created" $?
+
+[ ! -d "$T/repo/OWN/user1" ]; assert "10.19 ... and nothing was created" $?
 
 # --- summary -------------------------------------------------------------
 
