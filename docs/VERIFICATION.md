@@ -112,7 +112,7 @@ this test is about — do not read their presence as this test having passed by
 another route.
 
 **Then pin what you verified.** Tags are mutable: verifying
-`:0.1.0-beta.24` today says nothing about what that tag points to next month.
+`:0.1.0-beta.25` today says nothing about what that tag points to next month.
 Resolve it once and pin the digest in `scripts/config.sh`:
 
 ```bash
