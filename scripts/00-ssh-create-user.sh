@@ -228,7 +228,7 @@ quota_reject_oversized "$QUOTA" "$WANT_KIB" "$VOLUME_KIB" || {
 }
 
 echo ""
-quota_preview "$VOLUME_KIB" "$USERNAME" "" "" "$WANT_KIB" "$QUOTA"
+quota_preview "$VOLUME_KIB" "$USERNAME" "" "" "$WANT_KIB" "$QUOTA" 0
 
 if ! quota_confirm "Create client '$USERNAME' with this quota?"; then
     echo "Aborted — nothing was created."

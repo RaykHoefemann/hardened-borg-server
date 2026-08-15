@@ -93,7 +93,7 @@ report_for() {
     # reporting the whole volume because the directory has no project limit.
     if [ "$size_kib" -eq 0 ] || { [ -n "$VOLUME_KIB" ] && [ "$size_kib" = "$VOLUME_KIB" ]; }; then
         : > "$DRIFT_MARKER"
-        printf 'none (!)|%s (unlimited)' "$(quota_human "$used_kib")"
+        printf 'none (!)|%s' "$(quota_usage_text "$used_kib" "$size_kib" "$VOLUME_KIB")"
         return
     fi
 
@@ -105,9 +105,9 @@ report_for() {
         enforced="$(quota_human "$size_kib") (!)"
     fi
 
-    pct=$(( used_kib * 100 / size_kib ))
-    printf '%s|%s of %s (%s%%)' \
-        "$enforced" "$(quota_human "$used_kib")" "$(quota_human "$size_kib")" "$pct"
+    # Same wording as the quota preview in 00/02 (config.sh: quota_usage_text),
+    # so a client's usage reads identically wherever it is reported.
+    printf '%s|%s' "$enforced" "$(quota_usage_text "$used_kib" "$size_kib" "$VOLUME_KIB")"
 }
 
 # Distinct groups, in the order they first appear in clients.conf.

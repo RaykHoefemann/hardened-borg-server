@@ -263,8 +263,24 @@ quota_committed_total() {
     fi
 }
 
+# quota_usage_text <used-kib> <limit-kib> <volume-kib>
+#
+# What a client has stored, against the limit that applies to it — the USED
+# column of 09-show-all-users.sh and of the quota preview, so both say it the
+# same way. A limit of 0, or one equal to the volume, is no limit at all: there
+# is no share to express the usage as, and reporting one would be a fiction.
+quota_usage_text() {
+    case "$1" in ''|*[!0-9]*) set -- 0 "$2" "$3" ;; esac
+    if [ -z "$2" ] || [ "$2" -eq 0 ] || [ "$2" = "$3" ]; then
+        printf '%s (unlimited)' "$(quota_human "$1")"
+    else
+        printf '%s of %s (%s%%)' "$(quota_human "$1")" "$(quota_human "$2")" \
+            "$(( $1 * 100 / $2 ))"
+    fi
+}
+
 # quota_state_block <label> <volume-kib> <user> <quota-label> <limit-kib>
-#                   <bounded-kib> <bounded-n> <unbounded-n>
+#                   <used-kib> <bounded-kib> <bounded-n> <unbounded-n>
 #
 # One state of the installation, in the shape 09-show-all-users.sh reports it:
 # the client's own line, then the same Committed/Disk usage/Disk free summary.
@@ -276,22 +292,27 @@ quota_committed_total() {
 # client exists). A limit of 0, or one equal to the volume, is no limit at all.
 quota_state_block() {
     _qs_label="$1"; _qs_vol="$2"; _qs_user="$3"; _qs_quota="$4"; _qs_kib="$5"
-    _qs_bounded="$6"; _qs_n="$7"; _qs_unbounded="$8"
+    _qs_client_used="$6"; _qs_bounded="$7"; _qs_n="$8"; _qs_unbounded="$9"
 
     echo "  --- ${_qs_label} ---"
 
     case "$_qs_kib" in
         ''|*[!0-9]*) ;;
         *)
-            printf '  %-24s %-10s %-9s %s\n' "USERNAME" "QUOTA" "% OF VOL" "ENFORCED"
+            printf '  %-24s %-10s %-9s %-14s %s\n' \
+                "USERNAME" "QUOTA" "% OF VOL" "ENFORCED" "USED"
             if [ "$_qs_kib" -eq 0 ] || [ "$_qs_kib" = "$_qs_vol" ]; then
-                printf '  %-24s %-10s %-9s %s\n' \
-                    "$_qs_user" "$_qs_quota" "$(quota_pct "$_qs_kib" "$_qs_vol")%" "none (!)"
+                _qs_enforced="none (!)"
             else
-                printf '  %-24s %-10s %-9s %s\n' \
-                    "$_qs_user" "$_qs_quota" "$(quota_pct "$_qs_kib" "$_qs_vol")%" \
-                    "$(quota_human "$_qs_kib")"
+                _qs_enforced="$(quota_human "$_qs_kib")"
             fi
+            # Usage does not change with the limit, but what it is a share of
+            # does: the same bytes are a different fraction of the quota after
+            # this change, which is the headroom the change actually buys.
+            printf '  %-24s %-10s %-9s %-14s %s\n' \
+                "$_qs_user" "$_qs_quota" "$(quota_pct "$_qs_kib" "$_qs_vol")%" \
+                "$_qs_enforced" \
+                "$(quota_usage_text "$_qs_client_used" "$_qs_kib" "$_qs_vol")"
             ;;
     esac
 
@@ -324,14 +345,15 @@ quota_state_block() {
 }
 
 # quota_preview <volume-kib> <username> <before-kib> <before-quota>
-#               <after-kib> <after-quota>
+#               <after-kib> <after-quota> <used-kib>
 #
 # What 00 and 02 print before touching anything: the installation as it stands,
 # then the installation as this change would leave it, both in the same shape.
-# <before-kib>/<before-quota> are empty for a client that does not exist yet.
+# <before-kib>/<before-quota> are empty for a client that does not exist yet,
+# and so is <used-kib>, which is then nothing.
 quota_preview() {
     _qp_vol="$1"; _qp_user="$2"; _qp_before="$3"; _qp_before_q="$4"
-    _qp_after="$5"; _qp_after_q="$6"
+    _qp_after="$5"; _qp_after_q="$6"; _qp_used="${7:-0}"
 
     echo "[quota] Volume ${HOST_REPO_BASE%/} — $(quota_human "$_qp_vol")"
     echo ""
@@ -363,11 +385,12 @@ EOF
     esac
 
     quota_state_block "current state" "$_qp_vol" "$_qp_user" "$_qp_before_q" \
-        "$_qp_before" "$_qp_now_bounded" "$_qp_now_n" "$_qp_now_unb"
+        "$_qp_before" "$_qp_used" "$_qp_now_bounded" "$_qp_now_n" "$_qp_now_unb"
 
     _qp_after_bounded=$(( _qp_other_kib + _qp_after ))
     quota_state_block "after this change" "$_qp_vol" "$_qp_user" "$_qp_after_q" \
-        "$_qp_after" "$_qp_after_bounded" "$(( _qp_other_n + 1 ))" "$_qp_other_unb"
+        "$_qp_after" "$_qp_used" "$_qp_after_bounded" "$(( _qp_other_n + 1 ))" \
+        "$_qp_other_unb"
 
     # Said once, under the block it applies to, rather than in both.
     if quota_exceeds_pct \

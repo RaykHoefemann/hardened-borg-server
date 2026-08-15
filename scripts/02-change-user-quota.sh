@@ -194,7 +194,8 @@ fi
 # into overcommitment without anyone deciding to overcommit (OPERATIONS.md
 # Chapter 10.2). Both figures are shown while stopping still costs nothing.
 echo ""
-quota_preview "$VOLUME_KIB" "$USERNAME" "$BEFORE_KIB" "$OLD_QUOTA" "$WANT_KIB" "$QUOTA"
+quota_preview "$VOLUME_KIB" "$USERNAME" "$BEFORE_KIB" "$OLD_QUOTA" "$WANT_KIB" "$QUOTA" \
+    "$(quota_used_kib "$HOST_REPO")"
 
 if ! quota_confirm "Apply this change?"; then
     echo "Aborted — nothing was changed."

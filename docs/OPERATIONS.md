@@ -189,8 +189,8 @@ Before anything is created, the script states what the requested quota means for
   Disk free:     3.5 TiB
 
   --- after this change ---
-  USERNAME                 QUOTA      % OF VOL  ENFORCED
-  user1-os1-pc1            50G        1%        50.0 GiB
+  USERNAME                 QUOTA      % OF VOL  ENFORCED       USED
+  user1-os1-pc1            50G        1%        50.0 GiB       0 KiB of 50.0 GiB (0%)
   Committed:     320.0 GiB of 3.6 TiB volume (8%) across 4 client(s)
   Disk usage:    39.5 GiB of 3.6 TiB (1%)
   Disk free:     3.5 TiB
@@ -253,15 +253,15 @@ Changes the quota of an existing client. Looks up its host repository directory 
 [quota] Volume /var/mnt/extern1/borg-server — 3.6 TiB
 
   --- current state ---
-  USERNAME                 QUOTA      % OF VOL  ENFORCED
-  user1-os1-pc1            50G        1%        50.0 GiB
+  USERNAME                 QUOTA      % OF VOL  ENFORCED       USED
+  user1-os1-pc1            50G        1%        50.0 GiB       31.4 GiB of 50.0 GiB (62%)
   Committed:     320.0 GiB of 3.6 TiB volume (8%) across 4 client(s)
   Disk usage:    39.5 GiB of 3.6 TiB (1%)
   Disk free:     3.5 TiB
 
   --- after this change ---
-  USERNAME                 QUOTA      % OF VOL  ENFORCED
-  user1-os1-pc1            100G       2%        100.0 GiB
+  USERNAME                 QUOTA      % OF VOL  ENFORCED       USED
+  user1-os1-pc1            100G       2%        100.0 GiB      31.4 GiB of 100.0 GiB (31%)
   Committed:     370.0 GiB of 3.6 TiB volume (10%) across 4 client(s)
   Disk usage:    39.5 GiB of 3.6 TiB (1%)
   Disk free:     3.5 TiB
@@ -273,7 +273,7 @@ Apply this change? [y/N] y
 [quota] Quota for 'user1-os1-pc1' changed: 50G → 100G (enforced immediately)
 ```
 
-The two blocks carry the same lines as the summary of `09-show-all-users.sh` (Chapter 9.5), so they can be read against each other and the one figure that moves is obvious. `Disk usage` and `Disk free` appear in both and are identical in both — a quota is a promise, and changing one moves no data. That is worth seeing rather than assuming.
+The two blocks carry the same columns and the same summary lines as `09-show-all-users.sh` (Chapter 9.5), so they can be read against each other and the figures that move are obvious. `USED` is the same number of bytes in both — the change moves no data — against a different limit: `62%` of the old quota is `31%` of the new one, which is the headroom the change actually buys. `Disk usage` and `Disk free` appear in both and are identical in both — a quota is a promise, and changing one moves no data. That is worth seeing rather than assuming.
 
 The preview exists because a bare `100G` does not say whether it is generous or reckless, and because raising quotas one request at a time is exactly how a correctly sized volume drifts into overcommitment (Chapter 10.2). `Committed` is marked `(!)` in the block where it reaches the volume, with the consequence spelled out underneath. Overcommitment is not refused — thin provisioning is a legitimate choice — but it does not happen quietly. As in Chapter 9.2, a quota above 99% of the volume is refused before `sudo` is reached, and the confirmation is read from stdin.
 

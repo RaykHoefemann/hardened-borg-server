@@ -912,19 +912,27 @@ df_stub "$T/repo:$((100 * GIB)):$((2 * GIB))" \
 CONFIRM_INPUT="n"
 run_quota user1 60G
 CONFIRM_INPUT="y"
-printf '%s' "$OUT" | grep -qE '^ +user1 +10G +10% +10\.0 GiB' \
-    && printf '%s' "$OUT" | grep -qE '^ +user1 +60G +60% +60\.0 GiB'
-[ "$(printf '%s\n' "$OUT" | grep -c -- '---')" -eq 2 ]
-assert "12.1 both the current and the intended limit are shown against the volume" $?
+# One && chain, deliberately: written as separate statements the assert would
+# record only the last one's status and the rest would be decoration.
+printf '%s' "$OUT" | grep -qE '^ +user1 +10G +10% +10\.0 GiB +1\.0 GiB of 10\.0 GiB \(10%\)' \
+    && printf '%s' "$OUT" | grep -qE '^ +user1 +60G +60% +60\.0 GiB +1\.0 GiB of 60\.0 GiB \(1%\)' \
+    && [ "$(printf '%s\n' "$OUT" | grep -c -- '--- ')" -eq 2 ]
+assert "12.1 the client's line is shown for both states, usage included" $?
+
+# The same bytes against a different limit: what the change actually buys is
+# headroom, and that is the figure the two USED cells differ in.
+printf '%s' "$OUT" | grep -q 'of 10.0 GiB (10%)' \
+    && printf '%s' "$OUT" | grep -q 'of 60.0 GiB (1%)'
+assert "12.2 usage is unchanged but its share of the quota is not" $?
 
 # Chapter 10.2's invariant, at the moment it is being changed: user2's 20 GiB
 # plus the 60 GiB about to be granted, against a 100 GiB volume.
 printf '%s' "$OUT" | grep -q 'Committed:     30.0 GiB of 100.0 GiB volume (30%) across 2 client(s)' \
     && printf '%s' "$OUT" | grep -q 'Committed:     80.0 GiB of 100.0 GiB volume (80%) across 2 client(s)'
-assert "12.2 the resulting sum across all clients is stated" $?
+assert "12.3 the resulting sum across all clients is stated" $?
 
 [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'Aborted' && [ ! -s "$XFS_LOG" ]
-assert "12.3 declining applies nothing at all" $?
+assert "12.4 declining applies nothing at all" $?
 
 # Overcommitment is not refused — thin provisioning is a legitimate choice —
 # but it is not allowed to happen quietly either.
@@ -938,7 +946,7 @@ CONFIRM_INPUT="y"
 printf '%s' "$OUT" | grep -q 'Committed:     30.0 GiB of 100.0 GiB volume (30%) across 2 client(s)' \
     && printf '%s' "$OUT" | grep -q 'Committed:     110.0 GiB of 100.0 GiB volume (110%) (!)' \
     && printf '%s' "$OUT" | grep -q 'stop protecting it'
-assert "12.4 a change that overcommits the volume is marked as such" $?
+assert "12.5 a change that overcommits the volume is marked as such" $?
 
 # --- the limit that cannot be enforced -----------------------------------
 #
@@ -951,10 +959,10 @@ setup_02
 df_stub "$T/repo:$((100 * GIB)):0" "$T/repo/OWN/user1:$((10 * GIB)):0"
 run_quota user1 200G
 [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q '200% of the volume'
-assert "12.5 a quota larger than the volume is refused" $?
+assert "12.6 a quota larger than the volume is refused" $?
 
 [ ! -s "$XFS_LOG" ] && grep -q '^user1:OWN:/repo/OWN/user1:10G$' "$T/config/clients.conf"
-assert "12.6 ... without reaching xfs_quota, and clients.conf is untouched" $?
+assert "12.7 ... without reaching xfs_quota, and clients.conf is untouched" $?
 
 # --- applying a limit that does take effect ------------------------------
 
@@ -964,10 +972,10 @@ df_stub "$T/repo:$((100 * GIB)):0" \
         "$T/repo/OWN/user2:$((20 * GIB)):0"
 run_quota user1 60G
 [ "$RC" -eq 0 ] && grep -q 'limit -p bhard=60G 1000' "$XFS_LOG"
-assert "12.7 a confirmed change is applied to the client's project id" $?
+assert "12.8 a confirmed change is applied to the client's project id" $?
 
 grep -q '^user1:OWN:/repo/OWN/user1:60G$' "$T/config/clients.conf"
-assert "12.8 ... and recorded in clients.conf once it verified" $?
+assert "12.9 ... and recorded in clients.conf once it verified" $?
 
 # --- the abort that has to mean nothing changed --------------------------
 #
@@ -981,11 +989,11 @@ df_stub "$T/repo:$((100 * GIB)):0" \
         "$T/repo/OWN/user2:$((20 * GIB)):0"
 run_quota user1 60G
 [ "$RC" -ne 0 ] && grep -q "limit -p bhard=$((10 * GIB))k 1000" "$XFS_LOG"
-assert "12.9 a limit that does not verify is rolled back to the previous one" $?
+assert "12.10 a limit that does not verify is rolled back to the previous one" $?
 
 printf '%s' "$OUT" | grep -q 'Restored' \
     && grep -q '^user1:OWN:/repo/OWN/user1:10G$' "$T/config/clients.conf"
-assert "12.10 ... and the abort reports that state truthfully" $?
+assert "12.11 ... and the abort reports that state truthfully" $?
 
 # The previous limit is read from xfs_quota, not from df: df reports the volume
 # size when nothing is enforced, so a rollback taking its figure would write a
@@ -998,7 +1006,7 @@ df_stub "$T/repo:$((100 * GIB)):0" \
 run_quota user1 60G
 [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'could not be read, so it was not' \
     && ! grep -q "bhard=$((100 * GIB))k" "$XFS_LOG"
-assert "12.11 an unreadable previous limit is reported, never guessed" $?
+assert "12.12 an unreadable previous limit is reported, never guessed" $?
 
 # user2 is bounded by nothing (df reports the whole volume for it), so the
 # preview cannot promise the change leaves room: whatever user1 is granted,
@@ -1012,7 +1020,7 @@ run_quota user1 20G
 CONFIRM_INPUT="y"
 printf '%s' "$OUT" | grep -q 'Committed:     100.0 GiB of 100.0 GiB volume (100%) (!)' \
     && printf '%s' "$OUT" | grep -q 'no limit in effect'
-assert "12.12 a change made alongside an unlimited client commits the volume" $?
+assert "12.13 a change made alongside an unlimited client commits the volume" $?
 
 # --- summary -------------------------------------------------------------
 
