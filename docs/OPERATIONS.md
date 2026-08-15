@@ -184,6 +184,8 @@ Before anything is created, the script states what the requested quota means for
 [quota] Volume /var/mnt/extern1/borg-server — 3.6 TiB
 
   --- current state ---
+  USERNAME                 QUOTA        % OF VOL  CONFIGURED   USED
+  user1-os1-pc1            n/a          n/a       n/a          does not exist yet
   Committed:     270.0 GiB of 3.6 TiB volume (7%) across 3 client(s)
   Disk usage:    39.5 GiB of 3.6 TiB (1%)
   Disk free:     3.5 TiB
@@ -198,7 +200,7 @@ Before anything is created, the script states what the requested quota means for
 Create client 'user1-os1-pc1' with this quota? [y/N]
 ```
 
-This is where a client's quota is chosen for the first time, with nothing to compare the number against — so both figures the decision needs are on screen while stopping still costs nothing: the limit as a share of the volume, and the sum from Chapter 10.2 as it would stand afterwards. Anything other than `y` creates nothing.
+This is the same two-block preview and the same confirmation `02-change-user-quota.sh` prints (Chapter 9.4), for the same reason: a client's quota is chosen here for the first time, with nothing to compare the number against, so both figures the decision needs are on screen while stopping still costs nothing. The client has a row in both blocks — `does not exist yet` in the first — so the two states line up and the change is read off rather than searched for. Anything other than `y` creates nothing.
 
 A quota **above 99% of the volume is refused outright**, before `sudo` is even reached. Such a limit cannot be enforced: XFS accepts it, but `statvfs()` then reports the whole volume to the client, which is indistinguishable from having no quota at all. The confirmation is read from stdin, so a scripted run answers it with `printf 'y\n' | ./scripts/00-ssh-create-user.sh …`.
 

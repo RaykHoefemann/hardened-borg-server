@@ -329,33 +329,42 @@ quota_usage_text() {
 # the change would make of it — so the two blocks can be read against each
 # other line by line, and the one line that moves is obvious.
 #
-# <limit-kib> empty means this client has no row in this state (00, before the
-# client exists). A limit of 0, or one equal to the volume, is no limit at all.
+# <limit-kib> empty means no limit could be read for this client: either it
+# does not exist yet (00, where <configured-quota> is empty too) or the read
+# failed. Both still get a row, so the two blocks stay structurally identical
+# and the change is a line-by-line comparison rather than a search.
+#
+# A limit of 0, or one equal to the volume, is no limit at all.
 quota_state_block() {
     _qs_label="$1"; _qs_vol="$2"; _qs_user="$3"; _qs_quota="$4"; _qs_kib="$5"
     _qs_client_used="$6"; _qs_bounded="$7"; _qs_n="$8"; _qs_unbounded="$9"
 
     echo "  --- ${_qs_label} ---"
 
+    # The same four columns as 09-show-all-users.sh, from the same helper.
+    # Under "after this change" they are what the change would make true —
+    # usage included: the same bytes are a different fraction of a different
+    # limit, which is the headroom being bought.
+    printf '  %-24s %-12s %-9s %-12s %s\n' \
+        "USERNAME" "QUOTA" "% OF VOL" "CONFIGURED" "USED"
     case "$_qs_kib" in
-        ''|*[!0-9]*) ;;
+        ''|*[!0-9]*)
+            if [ -z "$_qs_quota" ]; then
+                _qs_row="n/a|n/a|n/a|does not exist yet"
+            else
+                _qs_row="n/a|n/a|${_qs_quota}|unreadable"
+            fi
+            ;;
         *)
-            # The same four columns as 09-show-all-users.sh, from the same
-            # helper. Under "after this change" they are what the change would
-            # make true — usage included: the same bytes are a different
-            # fraction of a different limit, which is the headroom being
-            # bought.
-            printf '  %-24s %-12s %-9s %-12s %s\n' \
-                "USERNAME" "QUOTA" "% OF VOL" "CONFIGURED" "USED"
             _qs_row=$(quota_row_fields "$_qs_kib" "$_qs_quota" "$_qs_vol" \
                 "$_qs_client_used")
-            IFS='|' read -r _qs_c1 _qs_c2 _qs_c3 _qs_c4 <<EOF
-$_qs_row
-EOF
-            printf '  %-24s %-12s %-9s %-12s %s\n' \
-                "$_qs_user" "$_qs_c1" "$_qs_c2" "$_qs_c3" "$_qs_c4"
             ;;
     esac
+    IFS='|' read -r _qs_c1 _qs_c2 _qs_c3 _qs_c4 <<EOF
+$_qs_row
+EOF
+    printf '  %-24s %-12s %-9s %-12s %s\n' \
+        "$_qs_user" "$_qs_c1" "$_qs_c2" "$_qs_c3" "$_qs_c4"
 
     _qs_total=$(quota_committed_total "$_qs_bounded" "$_qs_unbounded" "$_qs_vol")
     _qs_mark=""

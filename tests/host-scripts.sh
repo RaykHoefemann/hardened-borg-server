@@ -744,16 +744,23 @@ printf '%s' "$OUT" | grep -q -- '--- after this change ---' \
     && printf '%s' "$OUT" | grep -qE '^ +user1 +60\.0 GiB +60% +60G +0 KiB of 60\.0 GiB'
 assert "10.20 the new quota is stated as a share of the volume" $?
 
+# Both blocks carry a row for the client, including the one where it does not
+# exist yet: the two states are meant to be compared line by line, and a block
+# missing a line makes that a search instead.
+printf '%s' "$OUT" | grep -qE '^ +user1 +n/a +n/a +n/a +does not exist yet' \
+    && [ "$(printf '%s\n' "$OUT" | grep -c 'USERNAME')" -eq 2 ]
+assert "10.21 the current state shows the client as not existing yet" $?
+
 # 200G on a 100 GiB volume: xfs_quota would accept it and clamp it, and the
 # client would then be told it may use the whole volume.
 setup_create
 df_stub "$T/repo:$((100 * GIB)):0"
 run_create user1 OWN 200G
 [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q '200% of the volume'
-assert "10.21 a quota larger than the volume is refused" $?
+assert "10.22 a quota larger than the volume is refused" $?
 
 [ ! -d "$T/repo/OWN/user1" ] && ! grep -q '^user1:' "$T/config/clients.conf"
-assert "10.22 ... before anything is created" $?
+assert "10.23 ... before anything is created" $?
 
 # A limit equal to the volume is refused for the same reason: through
 # statvfs() it is indistinguishable from having no limit at all.
@@ -761,7 +768,7 @@ setup_create
 df_stub "$T/repo:$((100 * GIB)):0"
 run_create user1 OWN 100G
 [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'above 99% of the volume are refused'
-assert "10.23 a quota equal to the volume is refused too" $?
+assert "10.24 a quota equal to the volume is refused too" $?
 
 setup_create
 df_stub "$T/repo:$((100 * GIB)):0" "$T/repo/OWN/user1:$((60 * GIB)):0"
@@ -772,10 +779,10 @@ CONFIRM_INPUT="n"
 run_create user1 OWN 60G
 CONFIRM_INPUT="y"
 [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'Aborted'
-assert "10.24 declining the prompt exits cleanly" $?
+assert "10.25 declining the prompt exits cleanly" $?
 
 [ ! -d "$T/repo/OWN/user1" ] && ! grep -q '^user1:' "$T/config/clients.conf"
-assert "10.25 ... and creates nothing" $?
+assert "10.26 ... and creates nothing" $?
 
 # =========================================================================
 # 11. 99-container-status.sh — the service-status section
