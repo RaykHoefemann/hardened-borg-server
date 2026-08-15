@@ -415,7 +415,7 @@ df_stub \
     "$T/repo/OWN/user2:$((20 * GIB)):0" \
     "$T/repo/MIRROR/friend1:$((200 * GIB)):$((10 * GIB))"
 run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
-printf '%s' "$OUT" | grep -qE '^user1 +50G +ok +5\.0 GiB of 50\.0 GiB \(10%\)'
+printf '%s' "$OUT" | grep -qE '^user1 +50G +1% +ok +5\.0 GiB of 50\.0 GiB \(10%\)'
 assert "9.7 a limit matching clients.conf is reported as ok" $?
 
 printf '%s' "$OUT" | grep -q '(!)'
@@ -429,7 +429,7 @@ df_stub \
     "$T/repo/OWN/user2:$((10 * GIB)):0" \
     "$T/repo/MIRROR/friend1:$((200 * GIB)):$((10 * GIB))"
 run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
-printf '%s' "$OUT" | grep -qE '^user2 +20G +10\.0 GiB \(!\)'
+printf '%s' "$OUT" | grep -qE '^user2 +20G +0% +10\.0 GiB \(!\)'
 assert "9.9 a limit differing from clients.conf is flagged with its real value" $?
 
 printf '%s' "$OUT" | grep -q 'does not match clients.conf'
@@ -444,7 +444,7 @@ df_stub \
     "$T/repo/OWN/user2:$((20 * GIB)):0" \
     "$T/repo/MIRROR/friend1:$((200 * GIB)):$((10 * GIB))"
 run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
-printf '%s' "$OUT" | grep -qE '^user1 +50G +none \(!\) +5\.0 GiB \(unlimited\)'
+printf '%s' "$OUT" | grep -qE '^user1 +50G +1% +none \(!\) +5\.0 GiB \(unlimited\)'
 assert "9.11 a directory with no quota in effect is reported as unlimited" $?
 
 # --- comment lines are not clients ---------------------------------------
@@ -474,6 +474,39 @@ clients_conf_header > "$T/config/clients.conf"
 run_in "$WORK/sh" "$T/scripts/09-show-all-users.sh"
 [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'no users configured yet'
 assert "9.15 a header-only clients.conf reports no clients, not a listing" $?
+
+# --- the committed total -------------------------------------------------
+#
+# Chapter 10.2's invariant, computed rather than left to the operator.
+
+setup_09
+df_stub "$T/repo:$((4000 * GIB)):$((100 * GIB))" \
+    "$T/repo/OWN/user1:$((50 * GIB)):$((5 * GIB))" \
+    "$T/repo/OWN/user2:$((20 * GIB)):0" \
+    "$T/repo/MIRROR/friend1:$((200 * GIB)):$((10 * GIB))"
+run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
+printf '%s' "$OUT" | grep -q 'Committed:     270.0 GiB of 4000.0 GiB volume (6%) across 3 client(s)'
+assert "9.16 the enforced limits are summed against the volume" $?
+
+printf '%s' "$OUT" | grep -qE '^user1 +50G +1% +ok'
+assert "9.17 each client's own quota is shown as a share of the volume too" $?
+
+# A client nothing limits is not left out of the total. It counts as
+# everything the limited ones have not claimed, so a single one commits the
+# volume in full — otherwise the figure would look better the more dangerous
+# the installation gets, which is the opposite of what it is for.
+setup_09
+df_stub "$T/repo:$((4000 * GIB)):$((100 * GIB))" \
+    "$T/repo/OWN/user1:$((4000 * GIB)):$((5 * GIB))" \
+    "$T/repo/OWN/user2:$((20 * GIB)):0" \
+    "$T/repo/MIRROR/friend1:$((200 * GIB)):$((10 * GIB))"
+run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
+printf '%s' "$OUT" | grep -q 'Committed:     4000.0 GiB of 4000.0 GiB volume (100%) (!)'
+assert "9.18 one client without a limit commits the whole volume" $?
+
+printf '%s' "$OUT" | grep -q '1 of them has no limit in effect' \
+    && printf '%s' "$OUT" | grep -q '3780.0 GiB the others have not claimed'
+assert "9.19 ... and the total says which part of it that is" $?
 
 # =========================================================================
 # 10. 00-ssh-create-user.sh — creating a client
@@ -876,7 +909,7 @@ assert "12.1 both the current and the intended limit are shown against the volum
 
 # Chapter 10.2's invariant, at the moment it is being changed: user2's 20 GiB
 # plus the 60 GiB about to be granted, against a 100 GiB volume.
-printf '%s' "$OUT" | grep -q 'Enforced total across 2 clients: 80.0 GiB — 80% of the volume'
+printf '%s' "$OUT" | grep -q 'Committed after this change: 80.0 GiB of 100.0 GiB — 80% of the volume, across 2 client(s)'
 assert "12.2 the resulting sum across all clients is stated" $?
 
 [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'Aborted' && [ ! -s "$XFS_LOG" ]
@@ -954,6 +987,20 @@ run_quota user1 60G
 [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'could not be read, so it was not' \
     && ! grep -q "bhard=$((100 * GIB))k" "$XFS_LOG"
 assert "12.11 an unreadable previous limit is reported, never guessed" $?
+
+# user2 is bounded by nothing (df reports the whole volume for it), so the
+# preview cannot promise the change leaves room: whatever user1 is granted,
+# user2 can still take the rest.
+setup_02
+df_stub "$T/repo:$((100 * GIB)):0" \
+        "$T/repo/OWN/user1:$((10 * GIB)):0" \
+        "$T/repo/OWN/user2:$((100 * GIB)):0"
+CONFIRM_INPUT="n"
+run_quota user1 20G
+CONFIRM_INPUT="y"
+printf '%s' "$OUT" | grep -q '100% of the volume (!)' \
+    && printf '%s' "$OUT" | grep -q 'no limit in effect'
+assert "12.12 a change made alongside an unlimited client commits the volume" $?
 
 # --- summary -------------------------------------------------------------
 

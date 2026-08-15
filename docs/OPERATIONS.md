@@ -186,7 +186,7 @@ Before anything is created, the script states what the requested quota means for
   USERNAME                 QUOTA          % OF VOLUME
   user1-os1-pc1            50.0 GiB       1%           after this change
 
-  Enforced total across 4 clients: 320.0 GiB — 8% of the volume
+  Committed after this change: 320.0 GiB of 3.6 TiB — 8% of the volume, across 4 client(s)
 
 Create client 'user1-os1-pc1' with this quota? [y/N]
 ```
@@ -249,7 +249,7 @@ Changes the quota of an existing client. Looks up its host repository directory 
   user1-os1-pc1            50.0 GiB       1%           current (enforced)
   user1-os1-pc1            100.0 GiB      2%           after this change
 
-  Enforced total across 4 clients: 370.0 GiB — 10% of the volume
+  Committed after this change: 370.0 GiB of 3.6 TiB — 10% of the volume, across 4 client(s)
 
 Apply this change? [y/N] y
 [quota] Applying new hard limit on host: project id 1003 -> 100G
@@ -298,17 +298,28 @@ Prints an overview of every configured client, grouped by `OWN`/`MIRROR`, with e
 
 ```
 === OWN ===
-USERNAME                 QUOTA      ENFORCED       USED
-user1-os1-pc1            50G        ok             31.4 GiB of 50.0 GiB (62%)
-user2-os1-pc1            20G        10.0 GiB (!)   8.1 GiB of 10.0 GiB (81%)
-user3-os1-pc1            30G        n/a            MISSING on host
+USERNAME                 QUOTA      % OF VOL  ENFORCED       USED
+user1-os1-pc1            50G        1%        ok             31.4 GiB of 50.0 GiB (62%)
+user2-os1-pc1            20G        0%        10.0 GiB (!)   8.1 GiB of 10.0 GiB (81%)
+user3-os1-pc1            30G        0%        n/a            MISSING on host
 
 Total clients: 3
 Committed:     60.0 GiB of 3.6 TiB volume (1%) across 2 client(s)
 Disk usage:    39.5 GiB of 3.6 TiB (1%)
 ```
 
-`Committed` is the sum from Chapter 10.2, computed rather than left to the operator: the limits **actually enforced**, against the size of the volume, marked `(!)` once they exceed it. A client whose limit is not in effect is not in that sum and is reported separately — while one exists, the sum does not hold, because nothing stops that client from taking the rest of the volume.
+`% OF VOL` is that client's configured quota as a share of the volume — what the promise is worth against the disk it is made on, rather than only against the promises next to it.
+
+`Committed` is the sum from Chapter 10.2, computed rather than left to the operator: the limits **actually enforced**, against the size of the volume, marked `(!)` once they reach it. A client whose limit is **not** in effect counts for what the chapter says it costs — everything the limited clients have not claimed, not its configured quota — so a single one of them commits the volume in full:
+
+```
+Committed:     3.6 TiB of 3.6 TiB volume (100%) (!) across 3 client(s)
+               1 of them has no limit in effect, counted as the
+               3.5 TiB the others have not claimed rather than as a
+               configured quota — nothing stops them taking it (Chapter 10.2).
+```
+
+Counting it any other way would make the figure look *better* the more dangerous the installation gets, which is the opposite of what it is for.
 
 The `ENFORCED` column is the check: `QUOTA` is what `clients.conf` records, `ENFORCED` is what the kernel applies.
 
@@ -424,7 +435,7 @@ Enforcing project quotas cap each *client*. They do not cap the *volume*. The pr
 
 Hold that, and no combination of client behaviour can fill the disk — a client that reaches its limit is stopped by the filesystem, and every other client is unaffected. Break it by overcommitting, and the quotas stop protecting anything: several clients growing toward limits that jointly exceed the disk will exhaust it.
 
-*Enforced*, not configured: a client whose `ENFORCED` column shows `none (!)` (Chapter 9.5) contributes not its `clients.conf` figure but the whole remaining volume, because nothing stops it. Check that column before trusting the sum.
+*Enforced*, not configured: a client whose `ENFORCED` column shows `none (!)` (Chapter 9.5) contributes not its `clients.conf` figure but the whole remaining volume, because nothing stops it. This is how `09-show-all-users.sh` and the quota preview count it, which is why a single such client takes the reported total to 100%.
 
 This matters because the natural response to a client hitting its quota is to raise it (Chapter 9.4), and raising quotas one request at a time is exactly how a correctly sized volume drifts into overcommitment without anyone deciding to overcommit.
 

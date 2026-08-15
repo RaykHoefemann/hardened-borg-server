@@ -122,13 +122,23 @@ CLIENT_GROUPS=$(printf '%s\n' "$ROSTER" | awk -F: '{print $2}' | awk '!seen[$0]+
 
 for GROUP in $CLIENT_GROUPS; do
     echo "=== ${GROUP} ==="
-    printf '%-24s %-10s %-14s %s\n' "USERNAME" "QUOTA" "ENFORCED" "USED"
+    printf '%-24s %-10s %-9s %-14s %s\n' "USERNAME" "QUOTA" "% OF VOL" "ENFORCED" "USED"
     printf '%s\n' "$ROSTER" | awk -F: -v g="$GROUP" '$2==g {print $1, $4}' | sort | \
     while read -r USERNAME QUOTA; do
         [ -n "$USERNAME" ] || continue
+
+        # What this client's configured quota is as a share of the volume, so
+        # the promise can be read against the disk it is made on rather than
+        # against the other promises next to it.
+        QUOTA_PCT="n/a"
+        QUOTA_KIB=$(quota_kib "$QUOTA" 2>/dev/null) || QUOTA_KIB=""
+        if [ -n "$QUOTA_KIB" ] && [ -n "$VOLUME_KIB" ]; then
+            QUOTA_PCT="$(quota_pct "$QUOTA_KIB" "$VOLUME_KIB")%"
+        fi
+
         REPORT=$(report_for "$GROUP" "$USERNAME" "$QUOTA")
-        printf '%-24s %-10s %-14s %s\n' \
-            "$USERNAME" "$QUOTA" "${REPORT%%|*}" "${REPORT#*|}"
+        printf '%-24s %-10s %-9s %-14s %s\n' \
+            "$USERNAME" "$QUOTA" "$QUOTA_PCT" "${REPORT%%|*}" "${REPORT#*|}"
     done
     echo ""
 done
@@ -151,12 +161,25 @@ if [ -n "$VOLUME_KIB" ]; then
     read -r COMMITTED_KIB COMMITTED_N COMMITTED_UNBOUNDED <<EOF
 $(quota_committed "$VOLUME_KIB")
 EOF
+    COMMITTED_TOTAL=$(quota_committed_total "$COMMITTED_KIB" "$COMMITTED_UNBOUNDED" "$VOLUME_KIB")
     COMMITTED_MARK=""
-    quota_exceeds_pct "$COMMITTED_KIB" "$VOLUME_KIB" 100 && COMMITTED_MARK=" (!)"
-    echo "Committed:     $(quota_human "$COMMITTED_KIB") of $(quota_human "$VOLUME_KIB") volume ($(quota_pct "$COMMITTED_KIB" "$VOLUME_KIB")%)${COMMITTED_MARK} across ${COMMITTED_N} client(s)"
+    quota_exceeds_pct "$COMMITTED_TOTAL" "$VOLUME_KIB" 99 && COMMITTED_MARK=" (!)"
+    echo "Committed:     $(quota_human "$COMMITTED_TOTAL") of $(quota_human "$VOLUME_KIB") volume ($(quota_pct "$COMMITTED_TOTAL" "$VOLUME_KIB")%)${COMMITTED_MARK} across $((COMMITTED_N + COMMITTED_UNBOUNDED)) client(s)"
     if [ "$COMMITTED_UNBOUNDED" -gt 0 ]; then
-        echo "               ${COMMITTED_UNBOUNDED} client(s) with no limit in effect are not in that"
-        echo "               sum — while they exist it does not hold (Chapter 10.2)."
+        if [ "$COMMITTED_UNBOUNDED" -eq 1 ]; then
+            UNBOUNDED_PHRASE="1 of them has no limit in effect"
+        else
+            UNBOUNDED_PHRASE="${COMMITTED_UNBOUNDED} of them have no limit in effect"
+        fi
+        if [ "$COMMITTED_KIB" -lt "$VOLUME_KIB" ]; then
+            REMAINING_KIB=$((VOLUME_KIB - COMMITTED_KIB))
+            echo "               ${UNBOUNDED_PHRASE}, counted as the"
+            echo "               $(quota_human "$REMAINING_KIB") the others have not claimed rather than as a"
+            echo "               configured quota — nothing stops them taking it (Chapter 10.2)."
+        else
+            echo "               ${UNBOUNDED_PHRASE}, on a volume the limited"
+            echo "               clients already claim in full (Chapter 10.2)."
+        fi
     fi
 fi
 

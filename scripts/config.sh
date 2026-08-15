@@ -234,6 +234,26 @@ EOF
     echo "$_qc_sum $_qc_n $_qc_unbounded"
 }
 
+# quota_committed_total <bounded-kib> <unbounded-count> <volume-kib>
+#
+# What is actually committed, given that some clients may have no limit at all.
+#
+# Leaving an unbounded client out of the figure would make the number look
+# *better* the more dangerous the installation gets — the opposite of what it
+# is for. Chapter 10.2 says what such a client contributes: not its configured
+# quota, but the whole remaining volume, because nothing stops it from taking
+# it. So one unbounded client commits everything the bounded ones have not
+# already claimed, and the total reaches the volume itself. A quota it was
+# configured with is not part of this: no number in clients.conf constrains a
+# client the filesystem does not constrain.
+quota_committed_total() {
+    if [ "$2" -gt 0 ] && [ "$1" -lt "$3" ]; then
+        echo "$3"
+    else
+        echo "$1"
+    fi
+}
+
 # quota_preview <volume-kib> <username> <before-kib> <after-kib> <after-label>
 #
 # The table 00 and 02 print before touching anything: what is enforced now,
@@ -272,20 +292,21 @@ quota_preview() {
     read -r _qp_other_kib _qp_other_n _qp_unbounded <<EOF
 $(quota_committed "$_qp_vol" "$_qp_user")
 EOF
-    _qp_sum=$(( _qp_other_kib + _qp_after ))
-    _qp_n=$(( _qp_other_n + 1 ))
+    _qp_bounded=$(( _qp_other_kib + _qp_after ))
+    _qp_n=$(( _qp_other_n + _qp_unbounded + 1 ))
+    _qp_sum=$(quota_committed_total "$_qp_bounded" "$_qp_unbounded" "$_qp_vol")
     _qp_sum_pct=$(quota_pct "$_qp_sum" "$_qp_vol")
 
-    if quota_exceeds_pct "$_qp_sum" "$_qp_vol" 100; then
-        echo "  Enforced total across ${_qp_n} clients: $(quota_human "$_qp_sum") — ${_qp_sum_pct}% of the volume (!)"
-        echo "  Quotas that jointly exceed the volume stop protecting it"
+    if quota_exceeds_pct "$_qp_sum" "$_qp_vol" 99; then
+        echo "  Committed after this change: $(quota_human "$_qp_sum") of $(quota_human "$_qp_vol") — ${_qp_sum_pct}% of the volume (!)"
+        echo "  Quotas that jointly reach the volume stop protecting it"
         echo "  (OPERATIONS.md Chapter 10.2)."
     else
-        echo "  Enforced total across ${_qp_n} clients: $(quota_human "$_qp_sum") — ${_qp_sum_pct}% of the volume"
+        echo "  Committed after this change: $(quota_human "$_qp_sum") of $(quota_human "$_qp_vol") — ${_qp_sum_pct}% of the volume, across ${_qp_n} client(s)"
     fi
     if [ "$_qp_unbounded" -gt 0 ]; then
-        echo "  ${_qp_unbounded} further client(s) have no limit in effect — the sum above"
-        echo "  does not hold while that is true (see ./scripts/09-show-all-users.sh)."
+        echo "  ${_qp_unbounded} further client(s) have no limit in effect and count as"
+        echo "  everything the others have not claimed — see ./scripts/09-show-all-users.sh."
     fi
     echo ""
 }
