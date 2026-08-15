@@ -41,8 +41,21 @@ RUN mkdir -p /var/run/sshd
 ARG ENV PUID=1111
 ARG ENV PGID=1111
 
+# -p '*' is not decoration. Without it useradd leaves '!' in /etc/shadow, which
+# means "account locked", and sshd runs with UsePAM no — so it performs that
+# check itself, in allowed_user(), BEFORE any authentication method is tried.
+# Every client authenticates as this one user, so a locked account refuses every
+# client with "User borg not allowed because account is locked" while the key is
+# never even looked at. '*' says the same thing '!' says about passwords — no
+# hash will ever match — without the lock. Nothing is loosened by it:
+# PasswordAuthentication no means there is no password path to begin with, and
+# what confines a session is the forced command in authorized_keys, not this
+# field. The login shell has to stay a real shell for the same reason: sshd runs
+# the forced command through it.
+# Note: `passwd -S borg` prints L for '*' just as it does for '!'. Use
+# `getent shadow borg` or an actual client connection to check this.
 RUN groupadd -g ${PGID} borg && \
-    useradd -u ${PUID} -g ${PGID} -m -d /home/borg -s /bin/bash borg
+    useradd -u ${PUID} -g ${PGID} -m -d /home/borg -s /bin/bash -p '*' borg
 
 # Prepare SSH directory
 RUN mkdir -p /home/borg/.ssh && \

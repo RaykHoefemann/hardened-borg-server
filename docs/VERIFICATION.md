@@ -137,6 +137,62 @@ over time, and it makes every later upgrade a deliberate act.
 > the code is what is actually running, wired up as intended. Neither replaces
 > the other, and you can run the suite yourself against a checkout.
 
+## 0.5. A provisioned client can actually connect ✅
+
+**Claim** — [Server Installation](SERVERINSTALL.md) step 10: once a client is
+in `clients.conf`, its key is in `/config/keys/`, and the container has been
+restarted, that client can reach the server and initialize its repository.
+
+**Why it matters** — every other test on this page starts *after* a working
+connection and examines what happens beyond it. Nothing checks the connection
+itself, and both of the bugs that made a fresh install unusable lived exactly
+there: a `borg` account left locked in `/etc/shadow`, which `sshd` refuses
+before it ever looks at a key, and a server-written file inside the client's
+repository directory, which made the client's first `borg init` fail. Neither
+is visible from the server side — `authorized_keys` looks perfect in both
+cases. This is the cheapest test here and the one with the widest reach.
+
+**Run** — from the client machine, with its own key:
+
+```bash
+ssh -o IdentitiesOnly=yes -o PreferredAuthentications=publickey \
+    -i ~/.ssh/borg_backup -p 2222 borg@<server> info
+
+borg init --encryption=keyfile-blake2 ssh://borg@<server>:2222/repo/OWN/<client>
+```
+
+`PreferredAuthentications=publickey` matters: without it a rejected key falls
+through to `keyboard-interactive`, and `MaxAuthTries 2` then reports "Too many
+authentication failures" — which points at the client's key agent rather than
+at the server.
+
+**Pass** — the first command prints the server's identity, this client's
+account and its quota usage; the second creates the repository and prints
+Borg's key-custody warning. Take custody of the key now
+([Client Usage](CLIENTUSE.md) chapter 3) — it exists only on the client.
+
+**Fail**
+
+- `Permission denied (publickey,...)` — check the container log for
+  `User borg not allowed because account is locked`. That is the `/etc/shadow`
+  bug; a server built from current sources sets the password field to `*`.
+  Confirm with `podman exec <container> getent shadow borg` → `borg:*:…`.
+  Note that `passwd -S borg` prints `L` either way and cannot tell you.
+- `There is already something at /repo/...` — the repository directory is not
+  empty, and `borg init` refuses it. Current sources render the client's info
+  text under `/run/borg-info/` and remove the leftover from older releases at
+  container start; if a file is still there, it was put there by something
+  else, and [Recovery](RECOVERY.md) applies rather than a fresh init.
+- A hanging connection or a host-key mismatch is a network or identity
+  problem, not an authorization one — resolve it before reading the two cases
+  above into it.
+
+> Verified: both failure modes above were reproduced against a container built
+> from this source, and both disappear with the fixes described. The run used
+> a Borg 1.2.8 client against the image's bundled 1.4.0.
+
+---
+
 ## 1. No interactive shell ⚠️
 
 **Claim** — [Design](DESIGN.md) Chapter 1.2: a client key grants no shell
@@ -489,6 +545,7 @@ effect for that connection. Return to test 3.
 | # | Property | Status |
 |---|---|---|
 | 0 | Image built from this source (do this first) | ☐ |
+| 0.5 | A provisioned client can connect and initialize | ☐ |
 | 1 | No interactive shell | ☐ |
 | 2 | Default-deny on commands | ☐ |
 | 3 | Every key bound to the forced command | ☐ |
@@ -502,6 +559,8 @@ effect for that connection. Return to test 3.
 
 A deployment that fails **test 0** has not been verified at all — the
 remaining results describe an artifact of unknown origin. A deployment that
+fails **test 0.5** is not a deployment yet: no client can use it, and every
+test below it is unrunnable. A deployment that
 fails any of 1–5 should not be considered hardened. A deployment that fails
 6–10 is not providing the guarantees this project exists to provide.
 
