@@ -181,6 +181,15 @@ quota_used_kib() { df -kP "$1" 2>/dev/null | awk 'NR==2{print $3}'; }
 # filesystem's own size.
 volume_kib() { quota_enforced_kib "${HOST_REPO_BASE%/}"; }
 
+# Physical blocks used on that volume, in KiB — what is really on the disk,
+# independent of what any client was promised.
+volume_used_kib() { quota_used_kib "${HOST_REPO_BASE%/}"; }
+
+# What is still writable, in KiB. df's own Available column rather than size
+# minus used: a filesystem can reserve blocks counted as neither, and what a
+# client can still write is what df reports as available.
+volume_avail_kib() { df -kP "${HOST_REPO_BASE%/}" 2>/dev/null | awk 'NR==2{print $4}'; }
+
 # <kib> as a whole-percent share of <volume-kib>, truncated. Computed in awk
 # rather than $(( )): a quota of 99999999999G is 1.05e17 KiB, and multiplying
 # that by 100 overflows the signed 64-bit arithmetic a shell does, which turns
@@ -254,61 +263,121 @@ quota_committed_total() {
     fi
 }
 
-# quota_preview <volume-kib> <username> <before-kib> <after-kib> <after-label>
+# quota_state_block <label> <volume-kib> <user> <quota-label> <limit-kib>
+#                   <bounded-kib> <bounded-n> <unbounded-n>
 #
-# The table 00 and 02 print before touching anything: what is enforced now,
-# what would be enforced after, and what that is as a share of the volume —
-# followed by the resulting sum across all clients. <before-kib> may be empty
-# (00, where there is nothing yet) or unreadable.
+# One state of the installation, in the shape 09-show-all-users.sh reports it:
+# the client's own line, then the same Committed/Disk usage/Disk free summary.
+# Printed twice by quota_preview — once for what is in effect, once for what
+# the change would make of it — so the two blocks can be read against each
+# other line by line, and the one line that moves is obvious.
+#
+# <limit-kib> empty means this client has no row in this state (00, before the
+# client exists). A limit of 0, or one equal to the volume, is no limit at all.
+quota_state_block() {
+    _qs_label="$1"; _qs_vol="$2"; _qs_user="$3"; _qs_quota="$4"; _qs_kib="$5"
+    _qs_bounded="$6"; _qs_n="$7"; _qs_unbounded="$8"
+
+    echo "  --- ${_qs_label} ---"
+
+    case "$_qs_kib" in
+        ''|*[!0-9]*) ;;
+        *)
+            printf '  %-24s %-10s %-9s %s\n' "USERNAME" "QUOTA" "% OF VOL" "ENFORCED"
+            if [ "$_qs_kib" -eq 0 ] || [ "$_qs_kib" = "$_qs_vol" ]; then
+                printf '  %-24s %-10s %-9s %s\n' \
+                    "$_qs_user" "$_qs_quota" "$(quota_pct "$_qs_kib" "$_qs_vol")%" "none (!)"
+            else
+                printf '  %-24s %-10s %-9s %s\n' \
+                    "$_qs_user" "$_qs_quota" "$(quota_pct "$_qs_kib" "$_qs_vol")%" \
+                    "$(quota_human "$_qs_kib")"
+            fi
+            ;;
+    esac
+
+    _qs_total=$(quota_committed_total "$_qs_bounded" "$_qs_unbounded" "$_qs_vol")
+    _qs_mark=""
+    quota_exceeds_pct "$_qs_total" "$_qs_vol" 99 && _qs_mark=" (!)"
+    echo "  Committed:     $(quota_human "$_qs_total") of $(quota_human "$_qs_vol") volume ($(quota_pct "$_qs_total" "$_qs_vol")%)${_qs_mark} across $((_qs_n + _qs_unbounded)) client(s)"
+
+    # Physical usage and free space are read fresh in each block and are the
+    # same in both: a quota is a promise, and changing one moves no data. Shown
+    # in both anyway, because the two blocks are meant to be diffed by eye —
+    # and because "will this free up space?" is a question the repetition
+    # answers without anyone having to ask it.
+    _qs_used=$(volume_used_kib)
+    _qs_avail=$(volume_avail_kib)
+    case "$_qs_used" in
+        ''|*[!0-9]*) echo "  Disk usage:    unreadable" ;;
+        *) echo "  Disk usage:    $(quota_human "$_qs_used") of $(quota_human "$_qs_vol") ($(quota_pct "$_qs_used" "$_qs_vol")%)" ;;
+    esac
+    case "$_qs_avail" in
+        ''|*[!0-9]*) echo "  Disk free:     unreadable" ;;
+        *) echo "  Disk free:     $(quota_human "$_qs_avail")" ;;
+    esac
+
+    if [ "$_qs_unbounded" -gt 0 ]; then
+        echo "  ($_qs_unbounded client(s) with no limit in effect count as everything"
+        echo "   the others have not claimed — see ./scripts/09-show-all-users.sh.)"
+    fi
+    echo ""
+}
+
+# quota_preview <volume-kib> <username> <before-kib> <before-quota>
+#               <after-kib> <after-quota>
+#
+# What 00 and 02 print before touching anything: the installation as it stands,
+# then the installation as this change would leave it, both in the same shape.
+# <before-kib>/<before-quota> are empty for a client that does not exist yet.
 quota_preview() {
-    _qp_vol="$1"; _qp_user="$2"; _qp_before="$3"; _qp_after="$4"; _qp_label="$5"
+    _qp_vol="$1"; _qp_user="$2"; _qp_before="$3"; _qp_before_q="$4"
+    _qp_after="$5"; _qp_after_q="$6"
 
     echo "[quota] Volume ${HOST_REPO_BASE%/} — $(quota_human "$_qp_vol")"
     echo ""
-    printf '  %-24s %-14s %s\n' "USERNAME" "QUOTA" "% OF VOLUME"
+
+    # Everyone except this client, whose own contribution differs between the
+    # two blocks. Read through a heredoc rather than `set --`: the three fields
+    # land in named variables in this shell, without splitting a command
+    # substitution or overwriting the caller's positional parameters.
+    read -r _qp_other_kib _qp_other_n _qp_other_unb <<EOF
+$(quota_committed "$_qp_vol" "$_qp_user")
+EOF
+
+    # This client's present contribution. Unreadable or absent means it has
+    # none; a limit of 0 or one equal to the volume means it is bounded by
+    # nothing, which counts as the whole remainder rather than as a number.
+    _qp_now_bounded="$_qp_other_kib"
+    _qp_now_n="$_qp_other_n"
+    _qp_now_unb="$_qp_other_unb"
     case "$_qp_before" in
         ''|*[!0-9]*) ;;
         *)
             if [ "$_qp_before" -eq 0 ] || [ "$_qp_before" = "$_qp_vol" ]; then
-                printf '  %-24s %-14s %-12s %s\n' \
-                    "$_qp_user" "none (!)" "—" "current — nothing limits this client"
+                _qp_now_unb=$(( _qp_other_unb + 1 ))
             else
-                printf '  %-24s %-14s %-12s %s\n' \
-                    "$_qp_user" "$(quota_human "$_qp_before")" \
-                    "$(quota_pct "$_qp_before" "$_qp_vol")%" "current (enforced)"
+                _qp_now_bounded=$(( _qp_other_kib + _qp_before ))
+                _qp_now_n=$(( _qp_other_n + 1 ))
             fi
             ;;
     esac
-    printf '  %-24s %-14s %-12s %s\n' \
-        "$_qp_user" "$(quota_human "$_qp_after")" \
-        "$(quota_pct "$_qp_after" "$_qp_vol")%" "$_qp_label"
-    echo ""
 
-    # The sum excludes this client's present limit and adds the intended one,
-    # so the figure is the state the operator is about to create. Read through
-    # a heredoc rather than `set --`: the three fields land in named variables
-    # in this shell, without splitting a command substitution or overwriting
-    # the caller's positional parameters.
-    read -r _qp_other_kib _qp_other_n _qp_unbounded <<EOF
-$(quota_committed "$_qp_vol" "$_qp_user")
-EOF
-    _qp_bounded=$(( _qp_other_kib + _qp_after ))
-    _qp_n=$(( _qp_other_n + _qp_unbounded + 1 ))
-    _qp_sum=$(quota_committed_total "$_qp_bounded" "$_qp_unbounded" "$_qp_vol")
-    _qp_sum_pct=$(quota_pct "$_qp_sum" "$_qp_vol")
+    quota_state_block "current state" "$_qp_vol" "$_qp_user" "$_qp_before_q" \
+        "$_qp_before" "$_qp_now_bounded" "$_qp_now_n" "$_qp_now_unb"
 
-    if quota_exceeds_pct "$_qp_sum" "$_qp_vol" 99; then
-        echo "  Committed after this change: $(quota_human "$_qp_sum") of $(quota_human "$_qp_vol") — ${_qp_sum_pct}% of the volume (!)"
-        echo "  Quotas that jointly reach the volume stop protecting it"
-        echo "  (OPERATIONS.md Chapter 10.2)."
-    else
-        echo "  Committed after this change: $(quota_human "$_qp_sum") of $(quota_human "$_qp_vol") — ${_qp_sum_pct}% of the volume, across ${_qp_n} client(s)"
+    _qp_after_bounded=$(( _qp_other_kib + _qp_after ))
+    quota_state_block "after this change" "$_qp_vol" "$_qp_user" "$_qp_after_q" \
+        "$_qp_after" "$_qp_after_bounded" "$(( _qp_other_n + 1 ))" "$_qp_other_unb"
+
+    # Said once, under the block it applies to, rather than in both.
+    if quota_exceeds_pct \
+        "$(quota_committed_total "$_qp_after_bounded" "$_qp_other_unb" "$_qp_vol")" \
+        "$_qp_vol" 99; then
+        echo "  (!) Quotas that jointly reach the volume stop protecting it: a client"
+        echo "      that fills its own limit can then take space another was promised"
+        echo "      (OPERATIONS.md Chapter 10.2)."
+        echo ""
     fi
-    if [ "$_qp_unbounded" -gt 0 ]; then
-        echo "  ${_qp_unbounded} further client(s) have no limit in effect and count as"
-        echo "  everything the others have not claimed — see ./scripts/09-show-all-users.sh."
-    fi
-    echo ""
 }
 
 # quota_confirm <prompt>

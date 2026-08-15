@@ -740,7 +740,8 @@ assert "10.18 a missing podman is reported before anything is created" $?
 setup_create
 df_stub "$T/repo:$((100 * GIB)):0" "$T/repo/OWN/user1:$((60 * GIB)):0"
 run_create user1 OWN 60G
-printf '%s' "$OUT" | grep -qE '^ +user1 +60\.0 GiB +60% +after this change'
+printf '%s' "$OUT" | grep -q -- '--- after this change ---' \
+    && printf '%s' "$OUT" | grep -qE '^ +user1 +60G +60% +60\.0 GiB'
 assert "10.20 the new quota is stated as a share of the volume" $?
 
 # 200G on a 100 GiB volume: xfs_quota would accept it and clamp it, and the
@@ -911,13 +912,15 @@ df_stub "$T/repo:$((100 * GIB)):$((2 * GIB))" \
 CONFIRM_INPUT="n"
 run_quota user1 60G
 CONFIRM_INPUT="y"
-printf '%s' "$OUT" | grep -qE '^ +user1 +10\.0 GiB +10% +current \(enforced\)' \
-    && printf '%s' "$OUT" | grep -qE '^ +user1 +60\.0 GiB +60% +after this change'
+printf '%s' "$OUT" | grep -qE '^ +user1 +10G +10% +10\.0 GiB' \
+    && printf '%s' "$OUT" | grep -qE '^ +user1 +60G +60% +60\.0 GiB'
+[ "$(printf '%s\n' "$OUT" | grep -c -- '---')" -eq 2 ]
 assert "12.1 both the current and the intended limit are shown against the volume" $?
 
 # Chapter 10.2's invariant, at the moment it is being changed: user2's 20 GiB
 # plus the 60 GiB about to be granted, against a 100 GiB volume.
-printf '%s' "$OUT" | grep -q 'Committed after this change: 80.0 GiB of 100.0 GiB — 80% of the volume, across 2 client(s)'
+printf '%s' "$OUT" | grep -q 'Committed:     30.0 GiB of 100.0 GiB volume (30%) across 2 client(s)' \
+    && printf '%s' "$OUT" | grep -q 'Committed:     80.0 GiB of 100.0 GiB volume (80%) across 2 client(s)'
 assert "12.2 the resulting sum across all clients is stated" $?
 
 [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'Aborted' && [ ! -s "$XFS_LOG" ]
@@ -932,7 +935,8 @@ df_stub "$T/repo:$((100 * GIB)):$((2 * GIB))" \
 CONFIRM_INPUT="n"
 run_quota user1 90G
 CONFIRM_INPUT="y"
-printf '%s' "$OUT" | grep -q '110% of the volume (!)' \
+printf '%s' "$OUT" | grep -q 'Committed:     30.0 GiB of 100.0 GiB volume (30%) across 2 client(s)' \
+    && printf '%s' "$OUT" | grep -q 'Committed:     110.0 GiB of 100.0 GiB volume (110%) (!)' \
     && printf '%s' "$OUT" | grep -q 'stop protecting it'
 assert "12.4 a change that overcommits the volume is marked as such" $?
 
@@ -1006,7 +1010,7 @@ df_stub "$T/repo:$((100 * GIB)):0" \
 CONFIRM_INPUT="n"
 run_quota user1 20G
 CONFIRM_INPUT="y"
-printf '%s' "$OUT" | grep -q '100% of the volume (!)' \
+printf '%s' "$OUT" | grep -q 'Committed:     100.0 GiB of 100.0 GiB volume (100%) (!)' \
     && printf '%s' "$OUT" | grep -q 'no limit in effect'
 assert "12.12 a change made alongside an unlimited client commits the volume" $?
 

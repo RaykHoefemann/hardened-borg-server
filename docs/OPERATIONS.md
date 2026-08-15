@@ -183,10 +183,17 @@ Before anything is created, the script states what the requested quota means for
 ```
 [quota] Volume /var/mnt/extern1/borg-server — 3.6 TiB
 
-  USERNAME                 QUOTA          % OF VOLUME
-  user1-os1-pc1            50.0 GiB       1%           after this change
+  --- current state ---
+  Committed:     270.0 GiB of 3.6 TiB volume (7%) across 3 client(s)
+  Disk usage:    39.5 GiB of 3.6 TiB (1%)
+  Disk free:     3.5 TiB
 
-  Committed after this change: 320.0 GiB of 3.6 TiB — 8% of the volume, across 4 client(s)
+  --- after this change ---
+  USERNAME                 QUOTA      % OF VOL  ENFORCED
+  user1-os1-pc1            50G        1%        50.0 GiB
+  Committed:     320.0 GiB of 3.6 TiB volume (8%) across 4 client(s)
+  Disk usage:    39.5 GiB of 3.6 TiB (1%)
+  Disk free:     3.5 TiB
 
 Create client 'user1-os1-pc1' with this quota? [y/N]
 ```
@@ -245,11 +252,19 @@ Changes the quota of an existing client. Looks up its host repository directory 
 
 [quota] Volume /var/mnt/extern1/borg-server — 3.6 TiB
 
-  USERNAME                 QUOTA          % OF VOLUME
-  user1-os1-pc1            50.0 GiB       1%           current (enforced)
-  user1-os1-pc1            100.0 GiB      2%           after this change
+  --- current state ---
+  USERNAME                 QUOTA      % OF VOL  ENFORCED
+  user1-os1-pc1            50G        1%        50.0 GiB
+  Committed:     320.0 GiB of 3.6 TiB volume (8%) across 4 client(s)
+  Disk usage:    39.5 GiB of 3.6 TiB (1%)
+  Disk free:     3.5 TiB
 
-  Committed after this change: 370.0 GiB of 3.6 TiB — 10% of the volume, across 4 client(s)
+  --- after this change ---
+  USERNAME                 QUOTA      % OF VOL  ENFORCED
+  user1-os1-pc1            100G       2%        100.0 GiB
+  Committed:     370.0 GiB of 3.6 TiB volume (10%) across 4 client(s)
+  Disk usage:    39.5 GiB of 3.6 TiB (1%)
+  Disk free:     3.5 TiB
 
 Apply this change? [y/N] y
 [quota] Applying new hard limit on host: project id 1003 -> 100G
@@ -258,7 +273,9 @@ Apply this change? [y/N] y
 [quota] Quota for 'user1-os1-pc1' changed: 50G → 100G (enforced immediately)
 ```
 
-The preview exists because a bare `100G` does not say whether it is generous or reckless, and because raising quotas one request at a time is exactly how a correctly sized volume drifts into overcommitment (Chapter 10.2). The sum is the one shown after the change, and it is marked `(!)` when it exceeds the volume. Overcommitment is not refused — thin provisioning is a legitimate choice — but it does not happen quietly. As in Chapter 9.2, a quota above 99% of the volume is refused before `sudo` is reached, and the confirmation is read from stdin.
+The two blocks carry the same lines as the summary of `09-show-all-users.sh` (Chapter 9.5), so they can be read against each other and the one figure that moves is obvious. `Disk usage` and `Disk free` appear in both and are identical in both — a quota is a promise, and changing one moves no data. That is worth seeing rather than assuming.
+
+The preview exists because a bare `100G` does not say whether it is generous or reckless, and because raising quotas one request at a time is exactly how a correctly sized volume drifts into overcommitment (Chapter 10.2). `Committed` is marked `(!)` in the block where it reaches the volume, with the consequence spelled out underneath. Overcommitment is not refused — thin provisioning is a legitimate choice — but it does not happen quietly. As in Chapter 9.2, a quota above 99% of the volume is refused before `sudo` is reached, and the confirmation is read from stdin.
 
 Two things follow from doing it in that order:
 
