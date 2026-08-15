@@ -263,6 +263,33 @@ quota_committed_total() {
     fi
 }
 
+# quota_enforced_text <limit-kib> <configured-quota> <volume-kib>
+#
+# The ENFORCED column, wherever it appears: a verdict on the limit the kernel
+# applies, not the number itself.
+#
+#   ok            the filesystem enforces what clients.conf records
+#   <size> (!)    it enforces something else, and the filesystem is what the
+#                 client will actually hit
+#   none (!)      no limit applies at all — df reports the whole volume, so
+#                 the client is bounded by nothing
+#
+# The absolute figure is not lost by saying "ok": it is in the USED column
+# beside it ("9.0 GiB of 10.0 GiB"), which is where 09-show-all-users.sh has
+# always carried it.
+quota_enforced_text() {
+    if [ -z "$1" ] || [ "$1" -eq 0 ] || { [ -n "$3" ] && [ "$1" = "$3" ]; }; then
+        printf 'none (!)'
+        return
+    fi
+    _qe_want=$(quota_kib "$2" 2>/dev/null) || _qe_want=""
+    if [ "$1" = "$_qe_want" ]; then
+        printf 'ok'
+    else
+        printf '%s (!)' "$(quota_human "$1")"
+    fi
+}
+
 # quota_usage_text <used-kib> <limit-kib> <volume-kib>
 #
 # What a client has stored, against the limit that applies to it — the USED
@@ -301,17 +328,26 @@ quota_state_block() {
         *)
             printf '  %-24s %-10s %-9s %-14s %s\n' \
                 "USERNAME" "QUOTA" "% OF VOL" "ENFORCED" "USED"
-            if [ "$_qs_kib" -eq 0 ] || [ "$_qs_kib" = "$_qs_vol" ]; then
-                _qs_enforced="none (!)"
-            else
-                _qs_enforced="$(quota_human "$_qs_kib")"
-            fi
+            # Same four columns as 09-show-all-users.sh, computed by the same
+            # helpers — ENFORCED is that listing's verdict, not a second
+            # spelling of the limit. In the "after" block it is a prediction,
+            # like every other figure under that heading.
+            #
             # Usage does not change with the limit, but what it is a share of
             # does: the same bytes are a different fraction of the quota after
             # this change, which is the headroom the change actually buys.
+            # % OF VOL belongs to the QUOTA beside it, not to the enforced
+            # limit — the same pairing 09-show-all-users.sh prints. Where the
+            # two disagree, ENFORCED is what says so.
+            _qs_quota_kib=$(quota_kib "$_qs_quota" 2>/dev/null) || _qs_quota_kib=""
+            if [ -n "$_qs_quota_kib" ]; then
+                _qs_quota_pct="$(quota_pct "$_qs_quota_kib" "$_qs_vol")%"
+            else
+                _qs_quota_pct="n/a"
+            fi
             printf '  %-24s %-10s %-9s %-14s %s\n' \
-                "$_qs_user" "$_qs_quota" "$(quota_pct "$_qs_kib" "$_qs_vol")%" \
-                "$_qs_enforced" \
+                "$_qs_user" "$_qs_quota" "$_qs_quota_pct" \
+                "$(quota_enforced_text "$_qs_kib" "$_qs_quota" "$_qs_vol")" \
                 "$(quota_usage_text "$_qs_client_used" "$_qs_kib" "$_qs_vol")"
             ;;
     esac

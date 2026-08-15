@@ -89,24 +89,13 @@ report_for() {
     case "$size_kib" in ''|*[!0-9]*) echo "n/a|unreadable"; return ;; esac
     case "$used_kib" in ''|*[!0-9]*) used_kib=0 ;; esac
 
-    # No quota in effect: either nothing is accounted at all, or df is
-    # reporting the whole volume because the directory has no project limit.
-    if [ "$size_kib" -eq 0 ] || { [ -n "$VOLUME_KIB" ] && [ "$size_kib" = "$VOLUME_KIB" ]; }; then
-        : > "$DRIFT_MARKER"
-        printf 'none (!)|%s' "$(quota_usage_text "$used_kib" "$size_kib" "$VOLUME_KIB")"
-        return
-    fi
+    # Both columns come from config.sh, which the quota preview in 00/02 uses
+    # too, so a client's state reads identically wherever it is reported. Any
+    # verdict other than "ok" is drift: what the kernel enforces is not what
+    # clients.conf records, and the kernel is the one that decides.
+    enforced=$(quota_enforced_text "$size_kib" "$want" "$VOLUME_KIB")
+    [ "$enforced" = "ok" ] || : > "$DRIFT_MARKER"
 
-    want_kib=$(quota_kib "$want" 2>/dev/null) || want_kib=""
-    if [ "$size_kib" = "$want_kib" ]; then
-        enforced="ok"
-    else
-        : > "$DRIFT_MARKER"
-        enforced="$(quota_human "$size_kib") (!)"
-    fi
-
-    # Same wording as the quota preview in 00/02 (config.sh: quota_usage_text),
-    # so a client's usage reads identically wherever it is reported.
     printf '%s|%s' "$enforced" "$(quota_usage_text "$used_kib" "$size_kib" "$VOLUME_KIB")"
 }
 
