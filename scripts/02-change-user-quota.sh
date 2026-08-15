@@ -4,12 +4,19 @@
 # -----------------------
 # Change the quota of an existing Borg client:
 #  - Looks up the client's HOST repository directory and its XFS project id
+#  - Refuses a limit above 99% of the volume outright: it cannot be enforced,
+#    and applying it is how a client ends up bounded by nothing at all
 #  - Shows the limit currently enforced on that directory (which is not
-#    necessarily what clients.conf claims)
+#    necessarily what clients.conf claims), the intended one, each as a share
+#    of the volume, and the resulting sum across all clients — then asks
 #  - Applies the new hard limit to that project id immediately (xfs_quota)
-#  - Reads the limit back from the directory and shows it; aborts without
-#    touching clients.conf if the new limit is not actually in effect
+#  - Reads the limit back from the directory and shows it; restores the
+#    previous limit and aborts without touching clients.conf if the new one is
+#    not actually in effect
 #  - Updates the quota field in config/clients.conf
+#
+# The confirmation is read from stdin, so an unattended caller answers it the
+# way tests and scripted runs do: `printf 'y\n' | 02-change-user-quota.sh ...`.
 #
 # The enforced limit takes effect immediately (xfs_quota applies live). The
 # container must still be restarted to refresh the 'quota:' value shown in
@@ -90,6 +97,28 @@ case "$NUMPART" in
     ''|0) echo "ERROR: quota must be greater than 0 (got '$QUOTA')"; exit 1 ;;
 esac
 
+# What the requested limit means relative to the volume, decided before sudo is
+# reached: a value that cannot be enforced must never make it as far as
+# xfs_quota. Applied first and verified afterwards — the order this script used
+# to work in — it stays on the filesystem when the verification fails, and the
+# client is left effectively unlimited on a volume shared with everyone else.
+VOLUME_KIB=$(volume_kib)
+case "$VOLUME_KIB" in
+    ''|*[!0-9]*|0)
+        echo "ERROR: could not read the size of the volume at '$HOST_REPO_BASE'."
+        exit 1
+        ;;
+esac
+
+WANT_KIB=$(quota_kib "$QUOTA") || {
+    echo "ERROR: quota '$QUOTA' is not a usable value."
+    exit 1
+}
+quota_reject_oversized "$QUOTA" "$WANT_KIB" "$VOLUME_KIB" || {
+    echo "       Nothing was changed."
+    exit 1
+}
+
 # check if user exists and read its current entry (username:group:repo:quota)
 ENTRY=$(grep "^${USERNAME}:" "$CONF" 2>/dev/null) || {
     echo "ERROR: user '$USERNAME' does not exist in clients.conf!"
@@ -151,7 +180,6 @@ esac
 # but the kernel enforces something else, fall through and re-apply — that
 # repairs the drift instead of reporting a quota that isn't real.
 if [ "$OLD_QUOTA" = "$QUOTA" ]; then
-    WANT_KIB=$(quota_kib "$QUOTA")
     if [ "$BEFORE_KIB" = "$WANT_KIB" ]; then
         echo "[quota] Quota for '$USERNAME' is already $QUOTA and enforced. Nothing to change."
         exit 0
@@ -159,6 +187,30 @@ if [ "$OLD_QUOTA" = "$QUOTA" ]; then
     echo "[quota] clients.conf already says $QUOTA, but that is not what is enforced."
     echo "[quota] Re-applying the limit to bring the filesystem back in line."
 fi
+
+# State what is about to happen as a share of the volume, and ask. A bare
+# "60G" does not tell an operator whether that is generous or reckless, and
+# raising quotas one request at a time is how a correctly sized volume drifts
+# into overcommitment without anyone deciding to overcommit (OPERATIONS.md
+# Chapter 10.2). Both figures are shown while stopping still costs nothing.
+echo ""
+quota_preview "$VOLUME_KIB" "$USERNAME" "$BEFORE_KIB" "$WANT_KIB" "after this change"
+
+if ! quota_confirm "Apply this change?"; then
+    echo "Aborted — nothing was changed."
+    exit 0
+fi
+
+# The limit currently on the project id, read from xfs_quota rather than from
+# df: df reports the volume size when no limit applies, so restoring what df
+# says would write a limit in volume size and make the very state this script
+# exists to prevent permanent. Empty when it cannot be read, which the rollback
+# below treats as "do not guess".
+PREV_BHARD_KIB=$(sudo xfs_quota -x -c "report -p -N -b" "$XFS_MOUNT" 2>/dev/null \
+    | awk -v p="#${PROJID}" '$1 == p { print $4; exit }')
+case "$PREV_BHARD_KIB" in
+    ''|*[!0-9]*) PREV_BHARD_KIB="" ;;
+esac
 
 echo "[quota] Applying new hard limit on host: project id $PROJID -> $QUOTA"
 sudo xfs_quota -x -c "limit -p bhard=${QUOTA} ${PROJID}" "$XFS_MOUNT"
@@ -169,6 +221,29 @@ sudo xfs_quota -x -c "limit -p bhard=${QUOTA} ${PROJID}" "$XFS_MOUNT"
 # clients.conf is rewritten, so a failed change never leaves the recorded
 # quota claiming something the filesystem does not enforce.
 if ! quota_verify "$HOST_REPO" "$QUOTA"; then
+    # clients.conf is intact, but the limit above is already on the filesystem.
+    # An abort that leaves it there does not mean "nothing changed", which is
+    # what this message used to imply and what OPERATIONS.md Chapter 9.4
+    # promises. Put the previous limit back, so the abort is true.
+    if [ -n "$PREV_BHARD_KIB" ]; then
+        echo "[quota] Restoring the previous hard limit on project id $PROJID."
+        if sudo xfs_quota -x -c "limit -p bhard=${PREV_BHARD_KIB}k ${PROJID}" "$XFS_MOUNT"; then
+            NOW_KIB=$(quota_enforced_kib "$HOST_REPO")
+            if [ "$NOW_KIB" = "$BEFORE_KIB" ]; then
+                echo "[quota] Restored: $(quota_human "$NOW_KIB") is enforced again."
+            else
+                echo "WARNING: the restored limit does not read back as before"
+                echo "         (was $(quota_human "$BEFORE_KIB"), now $(quota_human "$NOW_KIB"))."
+            fi
+        else
+            echo "WARNING: restoring the previous limit failed."
+        fi
+    else
+        echo "WARNING: the previous hard limit could not be read, so it was not"
+        echo "         restored. The limit now enforced for '$USERNAME' is"
+        echo "         whatever the failed change left behind — check it with"
+        echo "         ./scripts/09-show-all-users.sh before relying on it."
+    fi
     echo "ERROR: aborting — clients.conf was not modified, it still says $OLD_QUOTA."
     exit 1
 fi

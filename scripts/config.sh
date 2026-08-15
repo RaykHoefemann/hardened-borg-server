@@ -143,6 +143,13 @@ quota_kib() {
     case "$_q_num" in
         ''|*[!0-9]*|0) return 1 ;;
     esac
+    # A shell does signed 64-bit arithmetic, and 13 digits of GiB overflow it:
+    # the product wraps and an absurd request comes back out as a small or
+    # negative number that passes every check downstream, including the one
+    # that refuses a quota larger than the volume. Nothing near this is a real
+    # limit — 12 digits is already a zebibyte — so the value is rejected as
+    # unusable rather than silently reinterpreted.
+    [ "${#_q_num}" -le 12 ] || return 1
     echo $((_q_num * 1048576))
 }
 
@@ -160,6 +167,157 @@ quota_enforced_kib() { df -kP "$1" 2>/dev/null | awk 'NR==2{print $2}'; }
 
 # Blocks currently used by directory $1's project, in KiB (empty if unreadable).
 quota_used_kib() { df -kP "$1" 2>/dev/null | awk 'NR==2{print $3}'; }
+
+# --- Quotas as a share of the volume ---------------------------------------
+#
+# A bare "60G" says nothing about whether it is generous or reckless. What
+# decides that is the volume, and the invariant OPERATIONS.md Chapter 10.2
+# names: the sum of all *enforced* quotas must stay within the volume's
+# capacity. 00 and 02 state both figures before applying anything, and 09
+# reports the sum continuously.
+
+# Size of the storage volume in KiB. HOST_REPO_BASE itself carries no project
+# quota — only the client directories below it do — so df on it reports the
+# filesystem's own size.
+volume_kib() { quota_enforced_kib "${HOST_REPO_BASE%/}"; }
+
+# <kib> as a whole-percent share of <volume-kib>, truncated. Computed in awk
+# rather than $(( )): a quota of 99999999999G is 1.05e17 KiB, and multiplying
+# that by 100 overflows the signed 64-bit arithmetic a shell does, which turns
+# an absurd value negative and lets it pass a "> 99%" test.
+quota_pct() {
+    awk -v k="$1" -v v="$2" 'BEGIN { if (v <= 0) { print "?"; exit } printf "%d", (k * 100) / v }'
+}
+
+# True when <kib> is more than <pct> percent of <volume-kib>. Decided on the
+# exact value, not on the truncated percentage quota_pct prints.
+quota_exceeds_pct() {
+    awk -v k="$1" -v v="$2" -v p="$3" 'BEGIN { exit !(v > 0 && k > (v * p) / 100) }'
+}
+
+# quota_committed <volume-kib> [client-to-skip]
+#
+# The limits actually enforced across all clients, as
+# "<kib> <clients-counted> <clients-unbounded>".
+#
+# Enforced, not configured — Chapter 10.2 is explicit that a client nothing
+# limits contributes the whole remaining volume rather than its clients.conf
+# figure. Such a client is therefore not summed but counted separately: the
+# honest report is that the sum does not hold while it exists, not a smaller
+# number. A client whose directory is missing on the host is skipped; 09 flags
+# it as MISSING there.
+#
+# The loop reads from a heredoc rather than a pipe so it runs in this shell:
+# the counters have to survive it.
+quota_committed() {
+    _qc_vol="$1"
+    _qc_skip="${2:-}"
+    _qc_sum=0
+    _qc_n=0
+    _qc_unbounded=0
+    while IFS=: read -r _qc_user _qc_group _qc_repo _qc_quota; do
+        [ -n "$_qc_user" ] || continue
+        [ "$_qc_user" = "$_qc_skip" ] && continue
+        _qc_dir="${HOST_REPO_BASE%/}/${_qc_group}/${_qc_user}"
+        [ -d "$_qc_dir" ] || continue
+        _qc_kib=$(quota_enforced_kib "$_qc_dir")
+        case "$_qc_kib" in ''|*[!0-9]*) continue ;; esac
+        if [ "$_qc_kib" -eq 0 ] || [ "$_qc_kib" = "$_qc_vol" ]; then
+            _qc_unbounded=$((_qc_unbounded + 1))
+            continue
+        fi
+        _qc_sum=$((_qc_sum + _qc_kib))
+        _qc_n=$((_qc_n + 1))
+    done <<EOF
+$(clients_lines)
+EOF
+    echo "$_qc_sum $_qc_n $_qc_unbounded"
+}
+
+# quota_preview <volume-kib> <username> <before-kib> <after-kib> <after-label>
+#
+# The table 00 and 02 print before touching anything: what is enforced now,
+# what would be enforced after, and what that is as a share of the volume —
+# followed by the resulting sum across all clients. <before-kib> may be empty
+# (00, where there is nothing yet) or unreadable.
+quota_preview() {
+    _qp_vol="$1"; _qp_user="$2"; _qp_before="$3"; _qp_after="$4"; _qp_label="$5"
+
+    echo "[quota] Volume ${HOST_REPO_BASE%/} — $(quota_human "$_qp_vol")"
+    echo ""
+    printf '  %-24s %-14s %s\n' "USERNAME" "QUOTA" "% OF VOLUME"
+    case "$_qp_before" in
+        ''|*[!0-9]*) ;;
+        *)
+            if [ "$_qp_before" -eq 0 ] || [ "$_qp_before" = "$_qp_vol" ]; then
+                printf '  %-24s %-14s %-12s %s\n' \
+                    "$_qp_user" "none (!)" "—" "current — nothing limits this client"
+            else
+                printf '  %-24s %-14s %-12s %s\n' \
+                    "$_qp_user" "$(quota_human "$_qp_before")" \
+                    "$(quota_pct "$_qp_before" "$_qp_vol")%" "current (enforced)"
+            fi
+            ;;
+    esac
+    printf '  %-24s %-14s %-12s %s\n' \
+        "$_qp_user" "$(quota_human "$_qp_after")" \
+        "$(quota_pct "$_qp_after" "$_qp_vol")%" "$_qp_label"
+    echo ""
+
+    # The sum excludes this client's present limit and adds the intended one,
+    # so the figure is the state the operator is about to create.
+    set -- $(quota_committed "$_qp_vol" "$_qp_user")
+    _qp_sum=$(( $1 + _qp_after ))
+    _qp_n=$(( $2 + 1 ))
+    _qp_unbounded="$3"
+    _qp_sum_pct=$(quota_pct "$_qp_sum" "$_qp_vol")
+
+    if quota_exceeds_pct "$_qp_sum" "$_qp_vol" 100; then
+        echo "  Enforced total across ${_qp_n} clients: $(quota_human "$_qp_sum") — ${_qp_sum_pct}% of the volume (!)"
+        echo "  Quotas that jointly exceed the volume stop protecting it"
+        echo "  (OPERATIONS.md Chapter 10.2)."
+    else
+        echo "  Enforced total across ${_qp_n} clients: $(quota_human "$_qp_sum") — ${_qp_sum_pct}% of the volume"
+    fi
+    if [ "$_qp_unbounded" -gt 0 ]; then
+        echo "  ${_qp_unbounded} further client(s) have no limit in effect — the sum above"
+        echo "  does not hold while that is true (see ./scripts/09-show-all-users.sh)."
+    fi
+    echo ""
+}
+
+# quota_confirm <prompt>
+#
+# Anything other than an explicit y is a no. Read from stdin, the way
+# 01-ssh-set-user-key.sh asks before overwriting a key.
+quota_confirm() {
+    printf '%s [y/N] ' "$1"
+    read -r _qcf_answer || _qcf_answer=""
+    case "$_qcf_answer" in
+        y|Y) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# quota_reject_oversized <quota> <kib> <volume-kib>
+#
+# A limit at or above the volume cannot be enforced: statvfs() then reports the
+# whole volume to the client, which is indistinguishable from no quota at all —
+# for the client's info channel, for 09's ENFORCED column, and for
+# quota_verify, which would read the volume size back and abort *after* the
+# limit was already on the filesystem. Refused before anything is applied, and
+# before sudo is even reached.
+quota_reject_oversized() {
+    if ! quota_exceeds_pct "$2" "$3" 99; then
+        return 0
+    fi
+    echo "ERROR: $1 is $(quota_pct "$2" "$3")% of the volume ($(quota_human "$3"))."
+    echo "       Quotas above 99% of the volume are refused: a limit at or above"
+    echo "       the volume size cannot be enforced. The filesystem reports the"
+    echo "       whole volume to the client instead, which is indistinguishable"
+    echo "       from no quota at all (VERIFICATION.md test 5)."
+    return 1
+}
 
 # quota_verify <repo-dir> <quota>
 #

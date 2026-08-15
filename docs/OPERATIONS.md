@@ -178,6 +178,23 @@ Creates a new Borg client end-to-end: the host-side repository directory, an XFS
 
 Run it as **the same user that runs the container**: from the first container start onwards the repository base belongs to the container's `borg` user (the entrypoint takes ownership of it), which under rootless Podman is a mapped host UID nobody on the host is. `podman unshare` is what resolves that mapping, and it resolves *that user's* — so the directory is created and owned correctly, with nothing left to fix up afterwards. Running it as a different user, or without Podman available, is refused before anything is created.
 
+Before anything is created, the script states what the requested quota means for this volume and asks:
+
+```
+[quota] Volume /var/mnt/extern1/borg-server — 3.6 TiB
+
+  USERNAME                 QUOTA          % OF VOLUME
+  user1-os1-pc1            50.0 GiB       1%           after this change
+
+  Enforced total across 4 clients: 320.0 GiB — 8% of the volume
+
+Create client 'user1-os1-pc1' with this quota? [y/N]
+```
+
+This is where a client's quota is chosen for the first time, with nothing to compare the number against — so both figures the decision needs are on screen while stopping still costs nothing: the limit as a share of the volume, and the sum from Chapter 10.2 as it would stand afterwards. Anything other than `y` creates nothing.
+
+A quota **above 99% of the volume is refused outright**, before `sudo` is even reached. Such a limit cannot be enforced: XFS accepts it, but `statvfs()` then reports the whole volume to the client, which is indistinguishable from having no quota at all. The confirmation is read from stdin, so a scripted run answers it with `printf 'y\n' | ./scripts/00-ssh-create-user.sh …`.
+
 After setting the limit, the script **reads it back from the new directory** and prints what is in effect:
 
 ```
@@ -221,19 +238,38 @@ Sets (or overwrites, with confirmation) the public SSH key for an existing clien
 
 ## 9.4. 02-change-user-quota.sh
 
-Changes the quota of an existing client. Looks up its host repository directory and existing XFS project id, shows the limit currently enforced there, applies the new hard limit immediately via `xfs_quota` (takes effect right away — no container restart needed for enforcement), verifies it, and only then updates the `quota:` field in `clients.conf`.
+Changes the quota of an existing client. Looks up its host repository directory and existing XFS project id, shows the limit currently enforced there and the one about to replace it, asks, applies the new hard limit immediately via `xfs_quota` (takes effect right away — no container restart needed for enforcement), verifies it, and only then updates the `quota:` field in `clients.conf`.
 
 ```
 [quota] Currently enforced: 50.0 GiB (clients.conf says 50G)
+
+[quota] Volume /var/mnt/extern1/borg-server — 3.6 TiB
+
+  USERNAME                 QUOTA          % OF VOLUME
+  user1-os1-pc1            50.0 GiB       1%           current (enforced)
+  user1-os1-pc1            100.0 GiB      2%           after this change
+
+  Enforced total across 4 clients: 370.0 GiB — 10% of the volume
+
+Apply this change? [y/N] y
 [quota] Applying new hard limit on host: project id 1003 -> 100G
 [quota] Verified on host: hard limit 100.0 GiB is in effect
 [quota] Used now: 31.4 GiB of 100.0 GiB (31%)
 [quota] Quota for 'user1-os1-pc1' changed: 50G → 100G (enforced immediately)
 ```
 
+The preview exists because a bare `100G` does not say whether it is generous or reckless, and because raising quotas one request at a time is exactly how a correctly sized volume drifts into overcommitment (Chapter 10.2). The sum is the one shown after the change, and it is marked `(!)` when it exceeds the volume. Overcommitment is not refused — thin provisioning is a legitimate choice — but it does not happen quietly. As in Chapter 9.2, a quota above 99% of the volume is refused before `sudo` is reached, and the confirmation is read from stdin.
+
 Two things follow from doing it in that order:
 
-- **A failed change never gets recorded.** If the new limit is not what the filesystem reports back, the script aborts and leaves `clients.conf` at its old value, so the file never claims a quota that nothing enforces.
+- **A failed change never gets recorded — and never stays applied.** If the new limit is not what the filesystem reports back, the script restores the limit the project id carried before, then aborts leaving `clients.conf` at its old value. The previous limit is read from `xfs_quota` rather than from `df`, because `df` reports the volume size when nothing is enforced, and rolling back to *that* would write a limit in volume size and make the unbounded state permanent. If it cannot be read, the script says so plainly and points at Chapter 9.5 rather than guessing:
+
+  ```
+  WARNING: the previous hard limit could not be read, so it was not
+           restored. The limit now enforced for 'user1-os1-pc1' is
+           whatever the failed change left behind — check it with
+           ./scripts/09-show-all-users.sh before relying on it.
+  ```
 - **Re-running with the current value repairs drift.** Asking for the quota a client already has is normally a no-op — but if the enforced limit disagrees with `clients.conf` (someone ran `xfs_quota` by hand, a limit was lost), the script says so and re-applies it instead of reporting "nothing to change". This is the command `09-show-all-users.sh` points at when it flags a mismatch.
 
 > The container still needs a restart to refresh the *displayed* `quota:` value in the client's info text (see Chapter 8) — the actual enforced limit and the live `Used: X of Y` figure update immediately regardless, since both are read straight from the filesystem quota.
@@ -266,7 +302,13 @@ USERNAME                 QUOTA      ENFORCED       USED
 user1-os1-pc1            50G        ok             31.4 GiB of 50.0 GiB (62%)
 user2-os1-pc1            20G        10.0 GiB (!)   8.1 GiB of 10.0 GiB (81%)
 user3-os1-pc1            30G        n/a            MISSING on host
+
+Total clients: 3
+Committed:     60.0 GiB of 3.6 TiB volume (1%) across 2 client(s)
+Disk usage:    39.5 GiB of 3.6 TiB (1%)
 ```
+
+`Committed` is the sum from Chapter 10.2, computed rather than left to the operator: the limits **actually enforced**, against the size of the volume, marked `(!)` once they exceed it. A client whose limit is not in effect is not in that sum and is reported separately — while one exists, the sum does not hold, because nothing stops that client from taking the rest of the volume.
 
 The `ENFORCED` column is the check: `QUOTA` is what `clients.conf` records, `ENFORCED` is what the kernel applies.
 
@@ -384,7 +426,9 @@ Hold that, and no combination of client behaviour can fill the disk — a client
 
 *Enforced*, not configured: a client whose `ENFORCED` column shows `none (!)` (Chapter 9.5) contributes not its `clients.conf` figure but the whole remaining volume, because nothing stops it. Check that column before trusting the sum.
 
-This matters because the natural response to a client hitting its quota is to raise it (Chapter 9.4), and raising quotas one request at a time is exactly how a correctly sized volume drifts into overcommitment without anyone deciding to overcommit. Before raising a quota, check the sum against the volume — not just whether the volume currently has room.
+This matters because the natural response to a client hitting its quota is to raise it (Chapter 9.4), and raising quotas one request at a time is exactly how a correctly sized volume drifts into overcommitment without anyone deciding to overcommit.
+
+The sum is computed for you in both places it is needed: continuously as the `Committed` line of `09-show-all-users.sh` (Chapter 9.5), and as the figure that would result from the change you are about to make, in the preview `00-ssh-create-user.sh` and `02-change-user-quota.sh` print before applying anything. Neither refuses to overcommit — the decision stays yours — but neither lets it happen without the number being on screen first.
 
 ## 10.3. Monitor from both sides
 

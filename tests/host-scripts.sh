@@ -5,9 +5,14 @@
 # Behavioural tests for the host-side scripts that need no privileges:
 #
 #   00-ssh-create-user.sh    creating a client: the repository directory, its
-#                            ownership, project-id allocation, the abort paths
+#                            ownership, project-id allocation, the quota
+#                            preview and confirmation, the abort paths
 #   01-ssh-set-user-key.sh   input validation and key handling
+#   02-change-user-quota.sh  the preview, the refusal of a limit that cannot be
+#                            enforced, and the rollback of one that does not
+#                            verify
 #   09-show-all-users.sh     clients.conf parsing, grouping, quota reporting
+#   99-container-status.sh   how a unit's state is rendered
 #   config.sh                the quota helpers shared by 00/02/09
 #
 # Plus two packaging checks that are not behavioural at all (section 0): the
@@ -16,14 +21,11 @@
 # computes; both are about defects that made a correct release unusable on the
 # host without a single line of logic being wrong.
 #
-# 02-change-user-quota.sh is not covered end to end: it requires sudo and a
-# real XFS mount with enforcing project quotas, which a CI runner does not
-# have. What it relies on to decide whether a quota really took effect —
-# quota_verify and friends in config.sh — is covered here, because every one of
-# those reads the limit through df, and df can be substituted (section 2).
-# 00-ssh-create-user.sh is covered (section 10) by substituting all four of the
-# commands it reaches outside itself; see the note there for why that is enough
-# to test what actually broke.
+# 00-ssh-create-user.sh (section 10) and 02-change-user-quota.sh (section 12)
+# are covered by substituting the commands they reach outside themselves —
+# sudo, xfs_quota, lsattr, podman and df. Both were once excluded for needing
+# sudo and a real XFS mount with enforcing project quotas, and both broke in
+# ways that had nothing to do with either: see the notes at those sections.
 #
 # The scripts derive every path from the location of the config.sh they source,
 # so each case runs against a throwaway installation tree rather than the
@@ -113,7 +115,7 @@ DRV
 }
 GIB=1048576  # KiB per GiB
 
-echo "# host scripts — packaging, 00/01 client creation, config.sh quota helpers, 09-show-all-users.sh"
+echo "# host scripts — packaging, config.sh quota helpers, 00/01/02 client management, 09 listing, 99 status"
 echo
 
 # =========================================================================
@@ -284,16 +286,31 @@ for bad_q in 50 50M 0G "" abc 5.5G; do
 done
 [ "$RC" -ne 0 ]; assert "2.2 quota_kib rejects anything that is not <n>G, n>0" $?
 
+# A shell multiplies in signed 64 bits. 13 digits of GiB wrap it, and the
+# result comes back small or negative — which would pass the check that
+# refuses a quota larger than the volume, the one thing standing between a
+# typo and a client the filesystem does not bound.
+for huge_q in 9999999999999G 99999999999999999999G; do
+    run sh "$DRV" quota_kib "$huge_q"
+    [ "$RC" -ne 0 ] || { OUT="accepted '$huge_q' -> $OUT"; break; }
+done
+[ "$RC" -ne 0 ]; assert "2.3 quota_kib rejects a value that would overflow the arithmetic" $?
+
+# The largest value it does accept still has to convert correctly.
+run sh "$DRV" quota_kib 999999999999G
+[ "$RC" -eq 0 ] && [ "$OUT" = "1048575999998951424" ]
+assert "2.4 ... and converts the largest value it accepts exactly" $?
+
 # The point of quota_verify: a limit that xfs_quota accepted still has to be
 # the limit the kernel enforces on that directory. Only the read-back proves
 # it, so the two directions below are what 00 and 02 stake their exit codes on.
 df_stub "$T/repo/OWN/user1:$((50 * GIB)):$((5 * GIB))"
 run_stubbed sh "$DRV" quota_verify "$T/repo/OWN/user1" 50G
 { [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q '50.0 GiB is in effect'; }
-assert "2.3 quota_verify accepts a limit that is really enforced" $?
+assert "2.5 quota_verify accepts a limit that is really enforced" $?
 
 printf '%s' "$OUT" | grep -q '5.0 GiB of 50.0 GiB (10%)'
-assert "2.4 quota_verify shows current usage against the limit" $?
+assert "2.6 quota_verify shows current usage against the limit" $?
 
 # The dangerous case: the command succeeded but the directory is governed by
 # something else (wrong project id, quotas not enforcing) — here it still
@@ -301,14 +318,14 @@ assert "2.4 quota_verify shows current usage against the limit" $?
 df_stub "$T/repo/OWN/user1:$((4000 * GIB)):$((5 * GIB))"
 run_stubbed sh "$DRV" quota_verify "$T/repo/OWN/user1" 50G
 { [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'NOT enforced'; }
-assert "2.5 quota_verify rejects a limit that is not in effect" $?
+assert "2.7 quota_verify rejects a limit that is not in effect" $?
 
 printf '%s' "$OUT" | grep -q '4000.0 GiB'
-assert "2.6 quota_verify names the limit that is actually enforced" $?
+assert "2.8 quota_verify names the limit that is actually enforced" $?
 
 # An unreadable directory must fail closed, never pass for lack of an answer.
 run_stubbed sh "$DRV" quota_verify "$T/repo/OWN/nonexistent-and-unstubbed" 50G
-[ "$RC" -ne 0 ]; assert "2.7 quota_verify fails when nothing can be read back" $?
+[ "$RC" -ne 0 ]; assert "2.9 quota_verify fails when nothing can be read back" $?
 
 # =========================================================================
 # 09-show-all-users.sh
@@ -510,9 +527,27 @@ SSTUB
 
 cat > "$STUB/xfs_quota" <<'XSTUB'
 #!/bin/sh
+# Answers the two reads the scripts make and records the writes:
+#   state -p   enforcement is on
+#   report -p  the hard limit currently on each project id, from
+#              "<projid>:<kib>" lines in $XFS_REPORT_DATA
+#   limit -p   appended to $XFS_LOG, so a test can see what was applied and in
+#              which order — which is how a rollback is observed at all
 for a in "$@"; do
     case "$a" in
-        "state -p") echo "Enforcement: ON" ;;
+        "state -p")
+            echo "Enforcement: ON"
+            ;;
+        report*)
+            if [ -n "${XFS_REPORT_DATA:-}" ]; then
+                while IFS=: read -r pid kib; do
+                    [ -n "$pid" ] && echo "#$pid 0 0 $kib 00 [--------]"
+                done < "$XFS_REPORT_DATA"
+            fi
+            ;;
+        limit*)
+            [ -n "${XFS_LOG:-}" ] && echo "$a" >> "$XFS_LOG"
+            ;;
     esac
 done
 exit 0
@@ -533,10 +568,16 @@ chmod +x "$STUB/podman" "$STUB/sudo" "$STUB/xfs_quota" "$STUB/lsattr"
 
 lsattr_stub() { printf '%s\n' "$@" > "$WORK/lsattr.data"; export LSATTR_STUB_DATA="$WORK/lsattr.data"; }
 
+# The script states the quota as a share of the volume and asks before it
+# creates anything, so every run below answers that prompt. CONFIRM_INPUT is
+# what gets typed; the cases that decline set it to "n".
+CONFIRM_INPUT="y"
+
 run_create() { # run_create <args...> — 00-ssh-create-user.sh under all stubs
     export PODMAN_LOG="$WORK/podman.log"
     : > "$PODMAN_LOG"
-    OUT="$(PATH="$STUB:$DF_BIN:$PATH" "$T/scripts/00-ssh-create-user.sh" "$@" 2>&1)"
+    OUT="$(printf '%s\n' "$CONFIRM_INPUT" \
+        | PATH="$STUB:$DF_BIN:$PATH" "$T/scripts/00-ssh-create-user.sh" "$@" 2>&1)"
     RC=$?
 }
 
@@ -634,7 +675,7 @@ PODMAN_STAT_UID=1111 run_create user1 OWN 50G
 setup_create
 df_stub "$T/repo:$((4000 * GIB)):0" "$T/repo/OWN/user1:$((50 * GIB)):0"
 export PODMAN_LOG="$WORK/podman.log"; : > "$PODMAN_LOG"
-OUT="$(PATH="$STUB:$DF_BIN:$PATH" "$WORK/sh" "$T/scripts/00-ssh-create-user.sh" user1 OWN 50G 2>&1)"; RC=$?
+OUT="$(printf 'y\n' | PATH="$STUB:$DF_BIN:$PATH" "$WORK/sh" "$T/scripts/00-ssh-create-user.sh" user1 OWN 50G 2>&1)"; RC=$?
 [ "$RC" -eq 0 ] && grep -q "^podman unshare chown 1111:1111 $T/repo/OWN/user1$" "$WORK/podman.log"
 assert "10.17 the same run under bash-as-sh behaves identically" $?
 
@@ -643,11 +684,56 @@ setup_create
 NOPODMAN="$WORK/nopodman"; mkdir -p "$NOPODMAN"
 cp "$STUB/sudo" "$STUB/xfs_quota" "$STUB/lsattr" "$NOPODMAN/"
 df_stub "$T/repo:$((4000 * GIB)):0"
-OUT="$(PATH="$NOPODMAN:$DF_BIN:/usr/bin:/bin" "$T/scripts/00-ssh-create-user.sh" user1 OWN 50G 2>&1)"; RC=$?
+OUT="$(printf 'y\n' | PATH="$NOPODMAN:$DF_BIN:/usr/bin:/bin" "$T/scripts/00-ssh-create-user.sh" user1 OWN 50G 2>&1)"; RC=$?
 [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'podman not found'
 assert "10.18 a missing podman is reported before anything is created" $?
 
 [ ! -d "$T/repo/OWN/user1" ]; assert "10.19 ... and nothing was created" $?
+
+# --- the quota, before it is applied -------------------------------------
+#
+# This is where a client's quota is chosen for the first time, with nothing to
+# compare the number against. What it is as a share of the volume is stated
+# before anything exists, and a limit that cannot be enforced is refused.
+
+setup_create
+df_stub "$T/repo:$((100 * GIB)):0" "$T/repo/OWN/user1:$((60 * GIB)):0"
+run_create user1 OWN 60G
+printf '%s' "$OUT" | grep -qE '^ +user1 +60\.0 GiB +60% +after this change'
+assert "10.20 the new quota is stated as a share of the volume" $?
+
+# 200G on a 100 GiB volume: xfs_quota would accept it and clamp it, and the
+# client would then be told it may use the whole volume.
+setup_create
+df_stub "$T/repo:$((100 * GIB)):0"
+run_create user1 OWN 200G
+[ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q '200% of the volume'
+assert "10.21 a quota larger than the volume is refused" $?
+
+[ ! -d "$T/repo/OWN/user1" ] && ! grep -q '^user1:' "$T/config/clients.conf"
+assert "10.22 ... before anything is created" $?
+
+# A limit equal to the volume is refused for the same reason: through
+# statvfs() it is indistinguishable from having no limit at all.
+setup_create
+df_stub "$T/repo:$((100 * GIB)):0"
+run_create user1 OWN 100G
+[ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'above 99% of the volume are refused'
+assert "10.23 a quota equal to the volume is refused too" $?
+
+setup_create
+df_stub "$T/repo:$((100 * GIB)):0" "$T/repo/OWN/user1:$((60 * GIB)):0"
+# Set rather than prefixed: in bash an assignment preceding a *function* call
+# stays in effect after it returns, which would silently answer every later run
+# with "n".
+CONFIRM_INPUT="n"
+run_create user1 OWN 60G
+CONFIRM_INPUT="y"
+[ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'Aborted'
+assert "10.24 declining the prompt exits cleanly" $?
+
+[ ! -d "$T/repo/OWN/user1" ] && ! grep -q '^user1:' "$T/config/clients.conf"
+assert "10.25 ... and creates nothing" $?
 
 # =========================================================================
 # 11. 99-container-status.sh — the service-status section
@@ -739,6 +825,135 @@ run_status
 printf '%s' "$OUT" | grep -q 'not installed for this user' \
     && printf '%s' "$OUT" | grep -q '50-service-install.sh'
 assert "11.5 an uninstalled unit says so and names the script that installs it" $?
+
+# =========================================================================
+# 12. 02-change-user-quota.sh — changing a quota
+# =========================================================================
+#
+# This script used to be excluded from the suite for needing sudo and a real
+# XFS mount with enforcing project quotas. It needs neither: section 10's
+# stubs are exactly the four commands it reaches outside itself, and the one
+# addition — xfs_quota answering `report -p` and recording `limit -p` — is what
+# makes the rollback observable.
+#
+# What went untested was not a detail. The script applied the new limit first
+# and verified it afterwards, so a verification failure left the limit on the
+# filesystem while reporting that nothing had changed; with a quota larger than
+# the volume, the result was a client the filesystem no longer bounded at all.
+
+setup_02() {
+    new_tree
+    {
+      clients_conf_header
+      echo 'user1:OWN:/repo/OWN/user1:10G'
+      echo 'user2:OWN:/repo/OWN/user2:20G'
+    } > "$T/config/clients.conf"
+    mkdir -p "$T/repo/OWN/user1" "$T/repo/OWN/user2"
+    lsattr_stub "$T/repo/OWN/user1:1000" "$T/repo/OWN/user2:1001"
+    XFS_LOG="$WORK/xfs.log"; : > "$XFS_LOG"; export XFS_LOG
+    printf '1000:%s\n1001:%s\n' "$((10 * GIB))" "$((20 * GIB))" > "$WORK/xfs.report"
+    export XFS_REPORT_DATA="$WORK/xfs.report"
+}
+
+run_quota() { # run_quota <args...> — 02-change-user-quota.sh under all stubs
+    OUT="$(printf '%s\n' "$CONFIRM_INPUT" \
+        | PATH="$STUB:$DF_BIN:$PATH" "$T/scripts/02-change-user-quota.sh" "$@" 2>&1)"
+    RC=$?
+}
+
+# --- what the operator is shown before deciding --------------------------
+
+setup_02
+df_stub "$T/repo:$((100 * GIB)):$((2 * GIB))" \
+        "$T/repo/OWN/user1:$((10 * GIB)):$((1 * GIB))" \
+        "$T/repo/OWN/user2:$((20 * GIB)):0"
+CONFIRM_INPUT="n"
+run_quota user1 60G
+CONFIRM_INPUT="y"
+printf '%s' "$OUT" | grep -qE '^ +user1 +10\.0 GiB +10% +current \(enforced\)' \
+    && printf '%s' "$OUT" | grep -qE '^ +user1 +60\.0 GiB +60% +after this change'
+assert "12.1 both the current and the intended limit are shown against the volume" $?
+
+# Chapter 10.2's invariant, at the moment it is being changed: user2's 20 GiB
+# plus the 60 GiB about to be granted, against a 100 GiB volume.
+printf '%s' "$OUT" | grep -q 'Enforced total across 2 clients: 80.0 GiB — 80% of the volume'
+assert "12.2 the resulting sum across all clients is stated" $?
+
+[ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'Aborted' && [ ! -s "$XFS_LOG" ]
+assert "12.3 declining applies nothing at all" $?
+
+# Overcommitment is not refused — thin provisioning is a legitimate choice —
+# but it is not allowed to happen quietly either.
+setup_02
+df_stub "$T/repo:$((100 * GIB)):$((2 * GIB))" \
+        "$T/repo/OWN/user1:$((10 * GIB)):0" \
+        "$T/repo/OWN/user2:$((20 * GIB)):0"
+CONFIRM_INPUT="n"
+run_quota user1 90G
+CONFIRM_INPUT="y"
+printf '%s' "$OUT" | grep -q '110% of the volume (!)' \
+    && printf '%s' "$OUT" | grep -q 'stop protecting it'
+assert "12.4 a change that overcommits the volume is marked as such" $?
+
+# --- the limit that cannot be enforced -----------------------------------
+#
+# The reported failure: xfs_quota accepts a quota larger than the volume and
+# clamps it, the read-back cannot match, and the script aborted — leaving the
+# clamped limit in place, which is the whole volume. The client was then bound
+# by nothing.
+
+setup_02
+df_stub "$T/repo:$((100 * GIB)):0" "$T/repo/OWN/user1:$((10 * GIB)):0"
+run_quota user1 200G
+[ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q '200% of the volume'
+assert "12.5 a quota larger than the volume is refused" $?
+
+[ ! -s "$XFS_LOG" ] && grep -q '^user1:OWN:/repo/OWN/user1:10G$' "$T/config/clients.conf"
+assert "12.6 ... without reaching xfs_quota, and clients.conf is untouched" $?
+
+# --- applying a limit that does take effect ------------------------------
+
+setup_02
+df_stub "$T/repo:$((100 * GIB)):0" \
+        "$T/repo/OWN/user1:$((60 * GIB)):0" \
+        "$T/repo/OWN/user2:$((20 * GIB)):0"
+run_quota user1 60G
+[ "$RC" -eq 0 ] && grep -q 'limit -p bhard=60G 1000' "$XFS_LOG"
+assert "12.7 a confirmed change is applied to the client's project id" $?
+
+grep -q '^user1:OWN:/repo/OWN/user1:60G$' "$T/config/clients.conf"
+assert "12.8 ... and recorded in clients.conf once it verified" $?
+
+# --- the abort that has to mean nothing changed --------------------------
+#
+# df keeps reporting 10 GiB, so the read-back cannot confirm the 60G that was
+# just applied. OPERATIONS.md Chapter 9.4 promises a failed change is never
+# recorded; that has to hold for the filesystem too, not only for clients.conf.
+
+setup_02
+df_stub "$T/repo:$((100 * GIB)):0" \
+        "$T/repo/OWN/user1:$((10 * GIB)):0" \
+        "$T/repo/OWN/user2:$((20 * GIB)):0"
+run_quota user1 60G
+[ "$RC" -ne 0 ] && grep -q "limit -p bhard=$((10 * GIB))k 1000" "$XFS_LOG"
+assert "12.9 a limit that does not verify is rolled back to the previous one" $?
+
+printf '%s' "$OUT" | grep -q 'Restored' \
+    && grep -q '^user1:OWN:/repo/OWN/user1:10G$' "$T/config/clients.conf"
+assert "12.10 ... and the abort reports that state truthfully" $?
+
+# The previous limit is read from xfs_quota, not from df: df reports the volume
+# size when nothing is enforced, so a rollback taking its figure would write a
+# limit in volume size and make the unbounded state permanent.
+setup_02
+: > "$WORK/xfs.report"
+df_stub "$T/repo:$((100 * GIB)):0" \
+        "$T/repo/OWN/user1:$((10 * GIB)):0" \
+        "$T/repo/OWN/user2:$((20 * GIB)):0"
+run_quota user1 60G
+[ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'could not be read, so it was not' \
+    && ! grep -q "bhard=$((100 * GIB))k" "$XFS_LOG"
+assert "12.11 an unreadable previous limit is reported, never guessed" $?
 
 # --- summary -------------------------------------------------------------
 

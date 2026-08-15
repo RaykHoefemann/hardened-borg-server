@@ -23,6 +23,14 @@
 # Quota:
 #   Format: <number>G (e.g. 10G, 50G, 200G)
 #
+#   Stated as a share of the volume, together with the resulting sum across
+#   all clients, and confirmed before anything is created — this is where the
+#   number is chosen for the first time, with nothing to compare it against.
+#   A quota above 99% of the volume is refused: it cannot be enforced, and the
+#   client would be told it may use the whole disk. The confirmation is read
+#   from stdin, so a scripted run answers it with
+#   `printf 'y\n' | 00-ssh-create-user.sh ...`.
+#
 # Run as the normal operator user, NOT as root, and as the SAME user that runs
 # the container: only the individual xfs_quota calls that need CAP_SYS_ADMIN
 # are elevated internally via sudo (you'll be prompted for your password
@@ -197,6 +205,36 @@ if [ -e "$HOST_REPO" ]; then
     exit 1
 fi
 
+# What the requested quota means relative to the volume — stated before
+# anything is created, and refused outright above 99%, where a limit stops
+# being enforceable at all. This is the more likely place to hand out an
+# oversized quota than 02: it is where the number is chosen for the first time,
+# with nothing to compare it against.
+VOLUME_KIB=$(volume_kib)
+case "$VOLUME_KIB" in
+    ''|*[!0-9]*|0)
+        echo "ERROR: could not read the size of the volume at '$HOST_REPO_BASE'."
+        exit 1
+        ;;
+esac
+
+WANT_KIB=$(quota_kib "$QUOTA") || {
+    echo "ERROR: quota '$QUOTA' is not a usable value."
+    exit 1
+}
+quota_reject_oversized "$QUOTA" "$WANT_KIB" "$VOLUME_KIB" || {
+    echo "       Nothing was created."
+    exit 1
+}
+
+echo ""
+quota_preview "$VOLUME_KIB" "$USERNAME" "" "$WANT_KIB" "after this change"
+
+if ! quota_confirm "Create client '$USERNAME' with this quota?"; then
+    echo "Aborted — nothing was created."
+    exit 0
+fi
+
 # Created and owned inside the container's user namespace, not on the host.
 #
 # entrypoint.sh takes ownership of the bind-mounted repository base at every
@@ -282,7 +320,14 @@ sudo xfs_quota -x -c "limit -p bhard=${QUOTA} ${PROJID}" "$XFS_MOUNT"
 # stick), and the client would then be effectively unlimited until the whole
 # volume runs full. Verify before the client exists in clients.conf at all.
 if ! quota_verify "$HOST_REPO" "$QUOTA"; then
+    # The directory goes, and so does the limit that was just set on the
+    # project id — bhard=0 is XFS for "no limit", which is what this id had
+    # before this run. The id is handed out again by the next create (max+1
+    # over the directories that exist), and leaving a limit on it would make
+    # that client inherit a number nobody chose for it.
     echo "ERROR: aborting — no client was created."
+    sudo xfs_quota -x -c "limit -p bhard=0 ${PROJID}" "$XFS_MOUNT" 2>/dev/null || \
+        echo "WARNING: the limit set on project id $PROJID could not be cleared."
     podman unshare rmdir "$HOST_REPO" 2>/dev/null
     exit 1
 fi

@@ -389,6 +389,12 @@ condition appears as `none (!)` in the `ENFORCED` column; a `<size> (!)`
 there means a limit *is* enforced, but not the one `clients.conf` records —
 re-apply it with `02-change-user-quota.sh` (OPERATIONS Chapter 9.4).
 
+One route into this state is closed by the tooling itself: `00-` and `02-`
+refuse a quota above 99% of the volume, because a limit at or above the volume
+size is reported back through `statvfs()` as the whole volume and is therefore
+indistinguishable from no limit at all — the very condition this test looks
+for. Asking for one is a quick way to see that the refusal works.
+
 ---
 
 ## 6. No key material exists on the server ⚠️

@@ -143,6 +143,22 @@ fi
 TOTAL=$(printf '%s\n' "$ROSTER" | wc -l | tr -d ' ')
 echo "Total clients: $TOTAL"
 
+# The invariant from OPERATIONS.md Chapter 10.2: the sum of all enforced
+# quotas has to stay within the volume, or the quotas stop protecting it.
+# Reported here continuously, because the chapter asks the operator to check
+# the sum before raising a quota and nothing computed it for them.
+if [ -n "$VOLUME_KIB" ]; then
+    set -- $(quota_committed "$VOLUME_KIB")
+    COMMITTED_KIB="$1"; COMMITTED_N="$2"; COMMITTED_UNBOUNDED="$3"
+    COMMITTED_MARK=""
+    quota_exceeds_pct "$COMMITTED_KIB" "$VOLUME_KIB" 100 && COMMITTED_MARK=" (!)"
+    echo "Committed:     $(quota_human "$COMMITTED_KIB") of $(quota_human "$VOLUME_KIB") volume ($(quota_pct "$COMMITTED_KIB" "$VOLUME_KIB")%)${COMMITTED_MARK} across ${COMMITTED_N} client(s)"
+    if [ "$COMMITTED_UNBOUNDED" -gt 0 ]; then
+        echo "               ${COMMITTED_UNBOUNDED} client(s) with no limit in effect are not in that"
+        echo "               sum — while they exist it does not hold (Chapter 10.2)."
+    fi
+fi
+
 # Real physical disk usage of the underlying filesystem (df on HOST_REPO_BASE
 # itself, not a client subdirectory) — this is the actual disk fill level,
 # independent of any individual client's quota.

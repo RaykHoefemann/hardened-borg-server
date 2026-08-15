@@ -218,7 +218,11 @@ which resolves that user's rootless UID mapping:
 ```
 
 - Group is `OWN` (your own devices) or `MIRROR` (external/offsite partners)
-- Quota is mandatory — there is no unlimited option
+- Quota is mandatory — there is no unlimited option. The script shows it as a
+  share of the volume, together with the sum across all clients as it would
+  stand afterwards, and asks before creating anything; a quota above 99% of the
+  volume is refused, because such a limit cannot be enforced (see
+  [Operations](OPERATIONS.md) Chapter 9.2)
 - The repository base belongs to the container's `borg` user from the first
   container start onwards (the entrypoint takes ownership of it), which is why
   this step goes through `podman unshare` rather than a plain `mkdir`. Nothing

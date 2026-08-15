@@ -58,7 +58,11 @@ properties with far less setup.
 Modest is enough: **2 vCPU, 2 GB RAM**. What matters is the rest.
 
 **Two disks.** The system disk, plus a second one that becomes the repository
-volume. A few GB is plenty — the append-only probe in test 9 writes 1 MB.
+volume. **At least 20 GB**: the data written here is trivial — the append-only
+probe in test 9 writes 1 MB — but the two clients below are given 5G each, and
+`00-ssh-create-user.sh` refuses a quota above 99% of the volume because such a
+limit cannot be enforced at all (OPERATIONS Chapter 9.2). A disk of a few GB
+would make the documented steps fail for that reason rather than any other.
 Keeping repositories on their own volume also matches
 [Best Practices](BEST_PRACTICES.md) Chapter 1, which requires dedicated
 storage.
@@ -167,12 +171,20 @@ Provision both in the VM (SERVERINSTALL steps 8–9), then restart the container
 so `authorized_keys` is rebuilt:
 
 ```bash
-./scripts/00-ssh-create-user.sh clientA OWN 5G
+./scripts/00-ssh-create-user.sh clientA OWN 5G     # shows the quota against
 ./scripts/01-ssh-set-user-key.sh clientA /path/to/borg_clientA.pub
-./scripts/00-ssh-create-user.sh clientB OWN 5G
+./scripts/00-ssh-create-user.sh clientB OWN 5G     # the volume, then asks
 ./scripts/01-ssh-set-user-key.sh clientB /path/to/borg_clientB.pub
 ./scripts/92-container-restart.sh
 ```
+
+Watch what the two `00-…` runs print. On a 20 GB volume each 5G quota is a
+quarter of it, and the `Enforced total` line reaches 50% after the second
+client — the invariant from OPERATIONS Chapter 10.2, stated before the change
+rather than reconstructed after it. Two things are worth trying once here,
+since a check that has only ever passed has not been shown to discriminate:
+ask for a third client at `15G` and watch the total cross the volume and be
+marked `(!)`, and ask for `50G` and watch it be refused outright.
 
 From the workstation, `ssh borgA info` should now answer. Follow
 [Client Usage](CLIENTUSE.md) from Chapter 2 to initialize and take a first
