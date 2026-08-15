@@ -141,6 +141,11 @@ ssh-keygen -t ed25519 -f ~/.ssh/borg_clientA -N '' -C clientA
 ssh-keygen -t ed25519 -f ~/.ssh/borg_clientB -N '' -C clientB
 ```
 
+The workstation also needs `borg` itself, from the **1.x** line — **BorgBackup
+2.x is not supported** and would make the run meaningless
+([Supported BorgBackup versions](../README.md#supported-borgbackup-versions-1x-only)).
+Check with `borg --version` before starting.
+
 ```
 # ~/.ssh/config
 Host borgA

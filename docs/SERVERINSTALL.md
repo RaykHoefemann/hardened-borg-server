@@ -38,6 +38,7 @@ non-negotiable rather than a nice-to-have.
 | **Rootless Podman working**, with `subuid`/`subgid` configured for the user that will run the service | `podman info --format '{{.Host.Security.Rootless}}'` → `true`; `grep "^$(whoami):" /etc/subuid /etc/subgid` → both present |
 | **A dedicated volume, formatted XFS and mounted with *enforcing* project quotas (`prjquota`)**, for repository storage | `xfs_quota -x -c 'state -p' <mount>` → `Enforcement: ON` (accounting-only `pqnoenforce` is not sufficient — see [Design & Threat Model](DESIGN.md) Chapter 1.1.3) |
 | **A non-root user** to own and run the service — every remaining step runs as this user unless a step says `sudo` | — |
+| **BorgBackup 1.x on every client** you will onboard — **2.x is not supported** | `borg --version` on the client → `1.x` (see [Supported BorgBackup versions](../README.md#supported-borgbackup-versions-1x-only)) |
 
 Note the mount path of the XFS volume — it's needed as `HOST_REPO_BASE` in
 step 3.

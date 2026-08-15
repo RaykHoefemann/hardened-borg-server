@@ -55,8 +55,34 @@ a recommendation:
 | **SELinux** — enforcing | Mandatory access control; containment of a compromised process |
 | **rootless Podman** | Required runtime. Rootless execution is a security boundary of the design; rootful containers and Docker are not supported. |
 | **XFS with enforcing `prjquota`** | Hard, filesystem-level per-client quotas — `pqnoenforce` (accounting only) does **not** satisfy this |
+| **BorgBackup 1.x on every client** | **BorgBackup 2.x is not supported.** Borg 2 is a separate line with its own repository format; this project is built and tested against 1.x only — see [Supported BorgBackup versions](#supported-borgbackup-versions-1x-only) |
 
 This project intentionally targets a narrow deployment model. If your environment doesn't match these requirements, another Borg-based solution will likely be a better fit.
+
+### Supported BorgBackup versions: 1.x only
+
+> **BorgBackup 2.x is NOT supported. Do not use a Borg 2 client against this
+> server, and do not point it at a repository on it.**
+
+Supported is **BorgBackup 1.x**, and within that line the versions this project
+is actually exercised against: **1.2.x on the client**, **1.4.x** as bundled in
+the image (`tests/wrapper-gating.sh` runs both). Client and server do not have
+to be the same version inside 1.x; the evidence base today is a 1.2.8 client
+against the image's 1.4.0 server.
+
+Why Borg 2 is excluded: it is a separate line with its own repository format,
+and nothing here has been run against it. The server's encryption gate reads the
+repository manifest's type byte through Borg's own 1.x segment reader; against a
+Borg 2 repository neither that on-disk layout nor the type-byte table can be
+assumed to hold, and a Borg 2 client and the image's `borg serve` 1.4 would
+first have to agree on a client/server protocol across a major version. The gate
+is fail-closed, so the expected outcome is a denial rather than a wrong ALLOW —
+but a denial you cannot interpret is not support.
+
+This section is the authoritative statement of the supported set for the whole
+project; [Client Usage](docs/CLIENTUSE.md) and `borg-wrapper.sh` defer to it.
+Anything outside it is untested: do not assume it works, and bump the base image
+and the tests together when the set changes.
 
 A firewall and/or VPN (e.g. WireGuard) in front of the SSH port is **optional**
 defense-in-depth — the application layer is designed to be safely reachable

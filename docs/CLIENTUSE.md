@@ -28,8 +28,22 @@ ssh://borg@<server>:2222/repo/OWN/user1-os1-pc1
 
 ## 1. Prepare the client
 
-Install BorgBackup 1.2 or newer from your distribution, then generate a
-dedicated key pair for backups — not the key you use for anything else:
+> **BorgBackup 2.x is NOT supported by this server. Install a 1.x version.**
+> Borg 2 writes a different repository format, has never been run against this
+> server, and is expected to be refused rather than to work. Supported and
+> tested: **1.2.x** and **1.4.x**. See
+> [Supported BorgBackup versions](../README.md#supported-borgbackup-versions-1x-only)
+> for the authoritative statement.
+
+Install BorgBackup from the 1.x line — your distribution's package is normally
+the right one — and confirm what you actually got before going any further:
+
+```bash
+borg --version        # must report 1.x, e.g. "borg 1.2.8"
+```
+
+Then generate a dedicated key pair for backups — not the key you use for
+anything else:
 
 ```bash
 ssh-keygen -t ed25519 -f ~/.ssh/borg_backup -C "user1-os1-pc1"

@@ -230,6 +230,8 @@ Two independent checks must both pass, and the connection is refused on any erro
 
 > **Client provisioning consequence:** clients must initialize their repositories with `borg init --encryption=keyfile-blake2` (or `keyfile`). A repository created with any other mode will be refused on its first real backup — see the key-custody requirement in 2.1.1, which is especially critical in keyfile mode since the key exists only on the client.
 
+This check is tied to the Borg **1.x** repository format: it reads the manifest's key type through Borg's own 1.x segment reader and decides on the 1.x type-byte table. **BorgBackup 2.x is therefore not supported** — its repository format is a different one, the table cannot be assumed to hold for it, and no Borg 2 client has been run against this server. The check is fail-closed, so the expected outcome against a Borg 2 repository is a refused connection, not a wrong acceptance; supporting Borg 2 deliberately would require its own path here. The supported set is stated once in the [README](../README.md#supported-borgbackup-versions-1x-only).
+
 ## 2.2. Client Isolation & No Cross-Visibility
 
 - Each client is mapped to its own dedicated repository path (see 1.2.3)

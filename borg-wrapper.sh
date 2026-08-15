@@ -20,13 +20,20 @@
 #   restriction is what --append-only provides (segment-level + transaction log).
 #
 # OPERATING REQUIREMENTS (all mandatory — see README):
-#   * borg 1.2.x or 1.4.x   The encryption check below reads the manifest's
+#   * borg 1.x only         Supported set: 1.2.x and 1.4.x. borg 2.x is NOT
+#     (1.2.x / 1.4.x)       supported. README, "Supported BorgBackup versions:
+#                           1.x only", is authoritative; this comment and
+#                           docs/CLIENTUSE.md defer to it.
+#                           The encryption check below reads the manifest's
 #                           TYPE byte through borg's own segment reader. Both
 #                           versions are exercised by tests/wrapper-gating.sh:
 #                           1.2.8 on the CI runner and whatever the image
 #                           actually ships (1.4.0 as of debian:trixie-slim),
 #                           the latter run against this file as installed in
-#                           the image. Do not assume an untested version works
+#                           the image. borg 2.x is a different repository
+#                           format and is NOT supported — untested, and the
+#                           TYPE byte table below cannot be assumed to hold
+#                           for it. Do not assume an untested version works
 #                           — bump the base image and the tests together.
 #   * python3               Pulled in automatically by the borgbackup package.
 #   * XFS project quotas, mounted 'prjquota' (ENFORCING) with a per-repo project

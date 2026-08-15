@@ -39,7 +39,10 @@ Status markers:
 
 ## Before you start
 
-You need a client machine with an SSH key already provisioned on the server
+You need a client machine with **BorgBackup 1.x** installed (**2.x is not
+supported** — see
+[Supported BorgBackup versions](../README.md#supported-borgbackup-versions-1x-only))
+and an SSH key already provisioned on the server
 (see [Server Installation](SERVERINSTALL.md), step 9), and a willingness to
 write a small amount of throwaway data into the repository. Test 0
 additionally needs the GitHub CLI (`gh`), authenticated — and is best run
