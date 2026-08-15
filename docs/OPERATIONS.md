@@ -104,7 +104,7 @@ Each client can query basic server and account information over the same SSH con
 ssh -p 2222 borg@<server-host> info
 ```
 
-This returns two things: a small, read-only text file (`info.txt`, stored inside the client's own repository path) describing the server and the client's account, followed by a single live line reporting current storage usage against the client's quota:
+This returns two things: a small, read-only text describing the server and the client's account, followed by a single live line reporting current storage usage against the client's quota:
 
 ```
 [server]
@@ -123,7 +123,9 @@ quota: 50G
 Used: 12.4 GiB of 50.0 GiB (24%)
 ```
 
-- `info.txt` is generated and updated automatically whenever `authorized_keys` is rebuilt (i.e. on every container start), based on `clients.conf` and `server_info.conf`. It is read-only from the client's perspective — clients cannot modify it.
+- The text part is rendered automatically whenever `authorized_keys` is rebuilt (i.e. on every container start), based on `clients.conf` and `server_info.conf`. One file per client, under `/run/borg-info/` inside the container, mirroring the client's repository path — runtime state that lives and dies with the container, not data. Clients cannot read or modify it: the only thing that reaches them is the output above.
+  - It deliberately does **not** live inside the client's repository directory, where earlier releases put it. `borg init` refuses to initialize a directory that is not empty, so a server-written file there made every new client's first command fail. A leftover from those releases is removed automatically at the next container start.
+  - It is also not read from `/config` on demand: `clients.conf` describes *every* client, while the process serving a client runs unprivileged and must never be able to reach more than that client's own entry (see [Design](DESIGN.md) 2.2).
 - The `Used:` line is computed **live at query time** from the client's own repository directory via `statvfs()`. Because the repository sits under an enforcing XFS project quota (Chapter 1.1.3), `statvfs()` reports the quota's limit and current consumption directly, so no elevated privileges, quota tooling, or host-side helper are needed inside the container. The reported limit is the actual filesystem-enforced quota, not merely the configured `clients.conf` value.
   - *Diagnostic:* if this line reports the size of the whole underlying disk instead of the per-client limit, project-quota enforcement is not active on the repository mount (i.e. the mount is missing `prjquota` / is `pqnoenforce`).
 - No interactive shell, TTY, or any command other than `info` and the normal Borg protocol is accepted; any other command is rejected.
@@ -232,7 +234,7 @@ Two things follow from doing it in that order:
 - **A failed change never gets recorded.** If the new limit is not what the filesystem reports back, the script aborts and leaves `clients.conf` at its old value, so the file never claims a quota that nothing enforces.
 - **Re-running with the current value repairs drift.** Asking for the quota a client already has is normally a no-op — but if the enforced limit disagrees with `clients.conf` (someone ran `xfs_quota` by hand, a limit was lost), the script says so and re-applies it instead of reporting "nothing to change". This is the command `09-show-all-users.sh` points at when it flags a mismatch.
 
-> The container still needs a restart to refresh the *displayed* `quota:` value in the client's `info.txt` (see Chapter 8) — the actual enforced limit and the live `Used: X of Y` figure update immediately regardless, since both are read straight from the filesystem quota.
+> The container still needs a restart to refresh the *displayed* `quota:` value in the client's info text (see Chapter 8) — the actual enforced limit and the live `Used: X of Y` figure update immediately regardless, since both are read straight from the filesystem quota.
 
 Run as the normal operator user, not as root — only the individual
 `xfs_quota` calls inside the script elevate via `sudo` (you'll be prompted

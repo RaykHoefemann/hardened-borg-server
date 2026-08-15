@@ -52,8 +52,8 @@ if command -v bwrap >/dev/null 2>&1 \
     MODE=bwrap
 elif sudo -n true 2>/dev/null; then
     MODE=sudo
-    sudo mkdir -p /config/keys /log /repo /home/borg/.ssh
-    sudo chown -R "$(id -u):$(id -g)" /config /log /repo /home/borg
+    sudo mkdir -p /config/keys /log /repo /home/borg/.ssh /run/borg-info
+    sudo chown -R "$(id -u):$(id -g)" /config /log /repo /home/borg /run/borg-info
 else
     echo "FAIL neither bubblewrap nor passwordless sudo is available;" >&2
     echo "     the absolute paths this script needs cannot be provided." >&2
@@ -85,16 +85,18 @@ chmod +x "$WORK/shim/chown"
 pass=0 fail=0
 RC=0; FIX=""
 
-CFG=""; LOGD=""; REPOD=""; SSHD=""
+CFG=""; LOGD=""; REPOD=""; SSHD=""; INFOD=""
 
-new_fixture() { # new_fixture — fresh /config, /log, /repo, /home/borg/.ssh
+new_fixture() { # new_fixture — fresh /config, /log, /repo, /home/borg/.ssh, /run/borg-info
     if [ "$MODE" = bwrap ]; then
         FIX="$WORK/case$RANDOM$RANDOM"
         CFG="$FIX/config"; LOGD="$FIX/log"; REPOD="$FIX/repo"; SSHD="$FIX/ssh"
-        mkdir -p "$CFG/keys" "$LOGD" "$REPOD" "$SSHD"
+        INFOD="$FIX/info"
+        mkdir -p "$CFG/keys" "$LOGD" "$REPOD" "$SSHD" "$INFOD"
     else
         CFG=/config; LOGD=/log; REPOD=/repo; SSHD=/home/borg/.ssh
-        rm -rf /config/* /log/* /repo/* /home/borg/.ssh/*
+        INFOD=/run/borg-info
+        rm -rf /config/* /log/* /repo/* /home/borg/.ssh/* /run/borg-info/*
         mkdir -p "$CFG/keys"
     fi
     printf 'name=testserver\nlocation=Testville\ncontact=admin@example.com\n' \
@@ -121,6 +123,7 @@ generate() {
         --ro-bind "$WORK/VERSION" /VERSION \
         --bind "$CFG" /config --bind "$LOGD" /log \
         --bind "$REPOD" /repo --bind "$SSHD" /home/borg/.ssh \
+        --bind "$INFOD" /run/borg-info \
         --setenv PATH /shim:/usr/bin:/usr/sbin:/bin:/sbin \
         -- /usr/bin/bash /build_authorized_keys.sh >"$WORK/out" 2>"$WORK/err"
     RC=$?
@@ -167,20 +170,48 @@ unprefixed=$(keys_file | grep -vE '^[[:space:]]*(#|$)' | grep -cv '^command="/bo
 keys_file | grep -q '^command="/borg-wrapper.sh /repo/OWN/user1",restrict ssh-ed25519 '
 assert "1.3 entry carries the client's own repo path and 'restrict'" $?
 
-[ -f "$REPOD/OWN/user1/info.txt" ] && grep -q 'quota: 50G' "$REPOD/OWN/user1/info.txt"
-assert "1.4 info.txt generated with the client's quota" $?
+INFO1="$INFOD/repo/OWN/user1.txt"
 
-grep -q 'name: testserver' "$REPOD/OWN/user1/info.txt" 2>/dev/null
-assert "1.5 info.txt carries server_info.conf" $?
+[ -f "$INFO1" ] && grep -q 'quota: 50G' "$INFO1"
+assert "1.4 info text rendered with the client's quota" $?
+
+grep -q 'name: testserver' "$INFO1" 2>/dev/null
+assert "1.5 info text carries server_info.conf" $?
 
 # The client is told which software serves it and where to read its source —
 # both baked into the image rather than taken from operator-editable config,
 # so a deployment cannot claim to be a version it is not.
-grep -q 'version: 9.9.9-test' "$REPOD/OWN/user1/info.txt" 2>/dev/null
-assert "1.6 info.txt reports the image's release version" $?
+grep -q 'version: 9.9.9-test' "$INFO1" 2>/dev/null
+assert "1.6 info text reports the image's release version" $?
 
-grep -q 'source: https://github.com/RaykHoefemann/hardened-borg-server' "$REPOD/OWN/user1/info.txt" 2>/dev/null
-assert "1.7 info.txt reports the source repository" $?
+grep -q 'source: https://github.com/RaykHoefemann/hardened-borg-server' "$INFO1" 2>/dev/null
+assert "1.7 info text reports the source repository" $?
+
+# The reason it lives under /run at all: `borg init` refuses a directory that
+# is not empty, so anything the server leaves in a client's repository makes
+# that client's very first command fail. This is the regression guard.
+[ -z "$(ls -A "$REPOD/OWN/user1")" ]
+assert "1.8 the client's repository directory is left empty for borg init" $?
+
+# Two clients, two files — no client's file is reachable from another's path.
+[ -f "$INFOD/repo/MIRROR/friend1.txt" ] && grep -q 'user: friend1' "$INFOD/repo/MIRROR/friend1.txt"
+assert "1.9 each client gets its own file, mirroring its repo path" $?
+
+# Migration: a leftover from the releases that wrote into the repository is
+# removed, or it keeps blocking init for exactly the clients this bug hit.
+printf 'stale\n' > "$REPOD/OWN/user1/info.txt"
+generate
+[ "$RC" -eq 0 ] && [ ! -e "$REPOD/OWN/user1/info.txt" ]
+assert "1.10 a legacy info.txt in the repository is removed" $?
+
+# A client removed from clients.conf must not keep an info text in a live
+# container — its key is gone from authorized_keys in the same run.
+{
+  echo 'user1:OWN:/repo/OWN/user1:50G'
+} > "$CFG/clients.conf"
+generate
+[ "$RC" -eq 0 ] && [ -f "$INFO1" ] && [ ! -e "$INFOD/repo/OWN/user2.txt" ]
+assert "1.11 info text of a removed client is pruned" $?
 
 # --- 2. key-file injection ---------------------------------------------------
 #

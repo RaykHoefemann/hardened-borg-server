@@ -37,7 +37,39 @@ command -v python3 >/dev/null || { echo "python3 is required"    >&2; exit 1; }
 # The wrapper rejects any repo path outside [a-zA-Z0-9/_-] — which includes
 # the dot in mktemp's default "tmp.XXXX" template. Use a dotless one.
 WORK="$(mktemp -d /tmp/borgwrappertest_XXXXXX)"
-trap 'rm -rf "$WORK"' EXIT
+
+# The info channel reads /run/borg-info<repo>.txt — an absolute path, so the
+# fixture for it needs privileges the rest of this suite does not. Skipping the
+# case instead is not an option: it is the only coverage the info channel has,
+# and a check that quietly stops checking is the failure mode this test tree
+# exists to prevent (same position as tests/authorized-keys-generation.sh).
+# Three ways, in order of preference:
+#   root   how the run inside the built image works — write it directly
+#   bwrap  no privileges: a private tmpfs at /run, wrapper run inside it
+#   sudo   write it on the real /run
+INFO_MODE=""
+if [ "$(id -u)" = 0 ]; then
+    INFO_MODE=root
+elif command -v bwrap >/dev/null 2>&1 \
+     && bwrap --dev-bind / / --tmpfs /run -- /usr/bin/true 2>/dev/null; then
+    INFO_MODE=bwrap
+elif sudo -n true 2>/dev/null; then
+    INFO_MODE=sudo
+else
+    echo "FAIL the info channel needs a fixture under /run/borg-info, which this" >&2
+    echo "     user cannot create: run as root, or provide bubblewrap or" >&2
+    echo "     passwordless sudo." >&2
+    exit 1
+fi
+
+cleanup() {
+    rm -rf "$WORK"
+    case "$INFO_MODE" in
+        root) rm -rf "/run/borg-info$WORK" ;;
+        sudo) sudo rm -rf "/run/borg-info$WORK" ;;
+    esac
+}
+trap cleanup EXIT
 
 export BORG_KEYS_DIR="$WORK/keys" BORG_CACHE_DIR="$WORK/cache"
 export BORG_PASSPHRASE=test
@@ -56,6 +88,38 @@ run() { # run <repo> <ssh_original_command>
     OUT="$(SSH_ORIGINAL_COMMAND="$2" PATH="$SHIM:$PATH" bash "$WRAPPER" "$1" 2>"$WORK/err")"
     RC=$?
     ERR="$(cat "$WORK/err")"
+}
+
+INFO_TEXT='[server]
+name: test
+'
+
+run_info() { # run_info <repo>  — 'info' with this client's rendered text in place
+    local repo="$1" file="/run/borg-info$1.txt"
+    case "$INFO_MODE" in
+        root)
+            mkdir -p "$(dirname "$file")"
+            printf '%s' "$INFO_TEXT" > "$file"
+            run "$repo" info
+            ;;
+        sudo)
+            sudo mkdir -p "$(dirname "$file")"
+            printf '%s' "$INFO_TEXT" | sudo tee "$file" >/dev/null
+            sudo chmod 644 "$file"
+            run "$repo" info
+            ;;
+        bwrap)
+            # Fixture and wrapper have to share the sandbox: the tmpfs at /run
+            # exists only for the duration of this one command.
+            OUT="$(bwrap --dev-bind / / --tmpfs /run -- \
+                   env SSH_ORIGINAL_COMMAND=info PATH="$SHIM:$PATH" \
+                   bash -c 'mkdir -p "$(dirname "$2")" && printf "%s" "$3" > "$2" \
+                            && exec bash "$0" "$1"' \
+                   "$WRAPPER" "$repo" "$file" "$INFO_TEXT" 2>"$WORK/err")"
+            RC=$?
+            ERR="$(cat "$WORK/err")"
+            ;;
+    esac
 }
 
 run_unset() { # run_unset <repo>   — SSH_ORIGINAL_COMMAND not set at all
@@ -97,9 +161,8 @@ borg init -e repokey        "$WORK/repokey"        >/dev/null 2>&1
 borg init -e none           "$WORK/unencrypted"    >/dev/null 2>&1
 borg init -e authenticated  "$WORK/authenticated"  >/dev/null 2>&1
 
-printf '[server]\nname: test\n' > "$WORK/keyfile_blake2/info.txt"
-
 echo "# borg-wrapper.sh — gating and policy"
+echo "# info fixture mode: $INFO_MODE"
 echo
 
 # --- A. repo path validation (argv[1]) -------------------------------------
@@ -151,8 +214,15 @@ assert_serves_exactly "C2 client args do not reach the exec" "$WORK/emptydir"
 run "$WORK/emptydir" "borg serve --restrict-to-path / --append-only=no"
 assert_serves_exactly "C3 client cannot override --restrict-to-path or --append-only" "$WORK/emptydir"
 
-run "$WORK/keyfile_blake2" "info"
-assert_ok_contains "C4 'info' returns info.txt" "name: test"
+run_info "$WORK/keyfile_blake2"
+assert_ok_contains "C4 'info' returns the client's rendered info text" "name: test"
+
+# The text is rendered at container start, so it can legitimately be absent
+# (a server that has not generated it yet). The channel must still answer with
+# the live quota line rather than fail — this is the connection check every
+# client is told to run first.
+run "$WORK/emptydir" "info"
+assert_ok_contains "C5 'info' still answers when no text is rendered" "Used:"
 
 # --- D. repository state ----------------------------------------------------
 
@@ -162,22 +232,28 @@ assert_serves_exactly "D1 uninitialized repo allowed (borg init path)" "$WORK/do
 run "$WORK/nocfg" "borg serve"
 assert_deny "D2 non-empty repo without config denied" "DENY: repo non-empty but config missing"
 
-# The server writes info.txt into the repository directory when it regenerates
-# authorized_keys, so a freshly provisioned client always finds that file
-# already present the very first time it connects. Treating the directory as
-# non-empty would reject every new client before it could run "borg init" —
-# there is no moment at which the directory is both empty and reachable.
+# The emptiness test is strict, and nothing is exempt from it. Earlier releases
+# excused info.txt, because the server itself wrote that file into every
+# client's repository directory — which also made the client's first `borg
+# init` fail, since borg refuses a directory that is not empty. The info text
+# now lives under /run, so an empty directory is a state a new client actually
+# reaches, and a file in there means something else put it there.
 mkdir -p "$WORK/onlyinfo"
 printf '[server]\nname: test\n' > "$WORK/onlyinfo/info.txt"
 run "$WORK/onlyinfo" "borg serve"
-assert_serves_exactly "D3 repo containing only info.txt counts as uninitialized" "$WORK/onlyinfo"
+assert_deny "D3 a leftover info.txt in the repo is not exempt" "DENY: repo non-empty but config missing"
 
-# ... but info.txt alongside anything else is still the Case 2 anomaly.
-mkdir -p "$WORK/infoplus"
-printf '[server]\nname: test\n' > "$WORK/infoplus/info.txt"
-: > "$WORK/infoplus/stray-file"
-run "$WORK/infoplus" "borg serve"
-assert_deny "D4 info.txt plus foreign content still denied" "DENY: repo non-empty but config missing"
+# Hidden files count too: dotglob is set, so a dotfile cannot pass as empty.
+mkdir -p "$WORK/dotonly"
+: > "$WORK/dotonly/.hidden"
+run "$WORK/dotonly" "borg serve"
+assert_deny "D4 a hidden file does not pass as an empty repo" "DENY: repo non-empty but config missing"
+
+# The empty directory an operator creates for a new client: this is the state
+# in which `borg init` has to be allowed through.
+mkdir -p "$WORK/freshdir"
+run "$WORK/freshdir" "borg serve"
+assert_serves_exactly "D5 an empty repo directory is allowed (borg init path)" "$WORK/freshdir"
 
 # --- E. encryption policy: client-held keyfile only -------------------------
 

@@ -6,9 +6,10 @@
 #   /config/clients.conf (Format: name:group:repo:quota)
 #   /config/keys/<name>.pub (public ssh-key from user)
 #
-# Also generates <repo>/info.txt per client, containing server
-# contact info (from /config/server_info.conf) and client-specific
-# info (user, quota).
+# Also renders one info text per client under /run/borg-info/, containing
+# server contact info (from /config/server_info.conf) and client-specific
+# info (user, quota). It is served by borg-wrapper.sh's 'info' channel — see
+# $INFO_DIR below for why it lives there and not in the repository.
 #
 # A client list that is missing or empty is a normal state, not an error: it is
 # what a server looks like before its first client is provisioned. Both ends of
@@ -23,6 +24,25 @@ KEYDIR="/config/keys"
 OUT="/home/borg/.ssh/authorized_keys"
 TMPOUT="${OUT}.tmp"
 SERVER_INFO="/config/server_info.conf"
+
+# Where each client's info text is rendered, one file per client, mirroring its
+# repository path: /repo/OWN/clientA -> /run/borg-info/repo/OWN/clientA.txt.
+#
+# Under /run rather than in the repository itself, and that is not cosmetic:
+# `borg init` refuses to initialize a directory that is not empty, so the
+# server writing a file into a client's repository directory made the client's
+# very first `borg init` fail — the one command every new client runs.
+#
+# Rendered here, at container start, rather than read from /config by the
+# wrapper on demand: the wrapper runs unprivileged as 'borg' inside a client's
+# own session, while clients.conf holds EVERY client's name, path and quota.
+# Pre-rendering keeps the promise in DESIGN 2.2 structural — a session can only
+# ever reach its own file — instead of making it depend on a parser.
+#
+# /run is runtime state: not a volume, gone when the container stops, rebuilt
+# from clients.conf and server_info.conf on every start. A client removed from
+# clients.conf leaves nothing behind (see the pruning pass after the loop).
+INFO_DIR="/run/borg-info"
 
 # Identity of the software itself, as opposed to the operator's deployment.
 # Baked into the image at build time (Dockerfile), so it cannot be edited into
@@ -113,6 +133,10 @@ echo "" >> "$TMPOUT"
 
 count=0
 
+# Every info file written by this run. What is left over in $INFO_DIR
+# afterwards belonged to a client that no longer exists (see below).
+written_info=()
+
 # read each line from clients.conf
 while IFS=":" read -r name group repo quota; do
     [ -z "$name" ] && continue
@@ -173,12 +197,17 @@ while IFS=":" read -r name group repo quota; do
     count=$((count + 1))
 
     # ---------------------------------------------------------
-    # Generate info.txt for this client
+    # Render this client's info text (see $INFO_DIR at the top)
     # ---------------------------------------------------------
     mkdir -p "$repo"
-    INFO_FILE="${repo}/info.txt"
+    INFO_FILE="${INFO_DIR}${repo}.txt"
+    mkdir -p "$(dirname "$INFO_FILE")"
 
-    cat > "$INFO_FILE" <<EOF
+    # Written atomically, like authorized_keys below. This script normally runs
+    # at container start, before sshd exists — but it can also be run inside a
+    # live container, where an 'info' request may read the file at the very
+    # moment it is rewritten. A torn read would misreport an account.
+    cat > "${INFO_FILE}.tmp" <<EOF
 [server]
 name: ${SERVER_NAME}
 location: ${SERVER_LOCATION}
@@ -193,10 +222,40 @@ user: ${name}
 quota: ${quota}
 EOF
 
-    chown borg:borg "$INFO_FILE"
-    chmod 644 "$INFO_FILE"
-    log "[INFO] Generated info.txt for '$name'"
+    chown borg:borg "${INFO_FILE}.tmp"
+    chmod 600 "${INFO_FILE}.tmp"
+    mv "${INFO_FILE}.tmp" "$INFO_FILE"
+    written_info+=("$INFO_FILE")
+    log "[INFO] Rendered info text for '$name' at $INFO_FILE"
+
+    # Migration: the same text used to be written into the client's repository
+    # directory, where it now blocks the client's first `borg init`. Remove the
+    # leftover. This only ever deletes a file this script itself wrote — it has
+    # always overwritten $repo/info.txt unconditionally, so it was never a
+    # place where operator content could survive.
+    if [ -f "${repo}/info.txt" ]; then
+        rm -f "${repo}/info.txt"
+        log "[INFO] Removed legacy ${repo}/info.txt (now rendered at $INFO_FILE)"
+    fi
 done < "$CONF"
+
+# Info texts of clients that no longer exist.
+#
+# At container start there is nothing to prune: /run is empty on a fresh
+# container. This matters when the script is re-run inside a live container
+# after a client was removed from clients.conf — its key is gone from
+# authorized_keys by then, and its info text must not outlive it either.
+if [ -d "$INFO_DIR" ]; then
+    while IFS= read -r stale; do
+        keep=0
+        for f in ${written_info[@]+"${written_info[@]}"}; do
+            [ "$f" = "$stale" ] && { keep=1; break; }
+        done
+        [ "$keep" -eq 1 ] && continue
+        rm -f "$stale"
+        log "[INFO] Removed info text of a client no longer configured: $stale"
+    done < <(find "$INFO_DIR" -type f)
+fi
 
 # Nothing to write.
 #

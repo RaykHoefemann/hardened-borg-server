@@ -13,7 +13,7 @@
 #
 # The enforced limit takes effect immediately (xfs_quota applies live). The
 # container must still be restarted to refresh the 'quota:' value shown in
-# the client's info.txt; the live 'Used: X of Y' figure in the info channel
+# the client's info text; the live 'Used: X of Y' figure in the info channel
 # (see README Chapter 7) reflects the new limit right away, since it reads
 # the XFS quota directly via statvfs().
 #
@@ -189,4 +189,4 @@ if [ "$OLD_QUOTA" = "$QUOTA" ]; then
 else
     echo "[quota] Quota for '$USERNAME' changed: ${OLD_QUOTA} → ${QUOTA} (enforced immediately)"
 fi
-echo "→ Restart the container to refresh the 'quota:' value in the client's info.txt."
+echo "→ Restart the container to refresh the 'quota:' value in the client's info text."

@@ -55,13 +55,29 @@ if ! echo "$REPO" | grep -qE '^/[a-zA-Z0-9/_-]+$'; then
     exit 1
 fi
 
+# This client's info text, rendered at container start by
+# build_authorized_keys.sh and mirroring the repo path under /run:
+#   /repo/OWN/clientA -> /run/borg-info/repo/OWN/clientA.txt
+# Derived from $REPO, which the check above has already constrained to
+# [a-zA-Z0-9/_-], so no client-controlled string reaches this path.
+#
+# Not read from the repository directory, where it used to live: a file the
+# server puts there makes the client's first `borg init` fail, because borg
+# refuses to initialize a non-empty directory. Not read from /config either —
+# this runs unprivileged as 'borg' in a client's own session, and clients.conf
+# describes every client, while this session must never reach more than its own
+# entry (DESIGN 2.2).
+INFO_FILE="/run/borg-info${REPO}.txt"
+
 # ---------------------------------------------------------
 # Command gating (default-deny). Only 'info' and 'borg serve ...' get through.
 # ---------------------------------------------------------
 case "${SSH_ORIGINAL_COMMAND:-}" in
     info)
-        # Static per-repo notes (optional), maintained by the admin.
-        [ -f "$REPO/info.txt" ] && cat "$REPO/info.txt"
+        # Server identity, release and this client's account, rendered from
+        # clients.conf and server_info.conf at container start. Absent only
+        # before the first generation has run, hence the guard.
+        [ -f "$INFO_FILE" ] && cat "$INFO_FILE"
         # Quota usage, read inside the container with no privileges: XFS surfaces
         # the enforcing project quota through statvfs(), so df on the repo path
         # reports the per-client size/used/percent (see requirements header).
@@ -89,27 +105,23 @@ case "${SSH_ORIGINAL_COMMAND:-}" in
         ;;
 esac
 
-# Case 1: directory does not exist, or holds nothing the client put there
+# Case 1: directory does not exist or is empty
 # -> never initialized yet, client is allowed to run "borg init"
 #
-# info.txt is excluded deliberately: the SERVER writes it into the client's
-# repository directory when authorized_keys is regenerated (see the 'info'
-# channel above and build_authorized_keys.sh). By the time a newly provisioned
-# client can connect at all, its key and that file have been created by the
-# same container start — so a strict emptiness test rejects every first-time
-# client with the Case 2 message below, and there is no point in the sequence
-# at which it could ever have run "borg init". Only files the server itself
-# placed are ignored here; anything else still falls through to Case 2.
+# The test is strict: anything at all in the directory means this is not a
+# fresh repository. It used to make an exception for info.txt, because the
+# server wrote that file into every client's repository directory and a strict
+# test would therefore have rejected every first-time client. The exception was
+# treating the symptom — borg's own `init` refuses a non-empty directory
+# regardless of what the wrapper allows, so no first client could initialize
+# anyway. The info text now lives under /run (see $INFO_FILE above), the
+# directory is genuinely empty until the client itself writes to it, and the
+# question this test asks is once again the honest one.
 shopt -s nullglob dotglob
 repo_entries=("$REPO"/*)
 shopt -u nullglob dotglob
 
-client_content=0
-for entry in "${repo_entries[@]}"; do
-    [ "${entry##*/}" = "info.txt" ] || { client_content=1; break; }
-done
-
-if [ "$client_content" -eq 0 ]; then
+if [ "${#repo_entries[@]}" -eq 0 ]; then
     mkdir -p "$REPO"
     exec borg serve --restrict-to-path "$REPO" --append-only
 fi

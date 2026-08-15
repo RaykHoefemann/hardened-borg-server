@@ -300,7 +300,7 @@ This is bounded by the same trust split as privacy: the server can run repositor
 
 ## 3.4. Integrity of Server-Side Control Files
 
-Beyond the repositories themselves, the server generates control files from configuration — notably `authorized_keys` and each client's `info.txt` (see Chapters 7 and 8). These are written **atomically**: a crash or interruption mid-write cannot leave a half-written, corrupt control file that would break client access or misreport an account. The on-disk state is always either the complete previous version or the complete new version, never a torn mixture of the two.
+Beyond the repositories themselves, the server generates control files from configuration — notably `authorized_keys` and each client's info text (see Chapters 7 and 8). These are written **atomically**: a crash or interruption mid-write cannot leave a half-written, corrupt control file that would break client access or misreport an account. The on-disk state is always either the complete previous version or the complete new version, never a torn mixture of the two.
 
 ## 3.5. Scope & Operator Responsibility
 

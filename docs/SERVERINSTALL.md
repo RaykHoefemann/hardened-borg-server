@@ -231,7 +231,7 @@ first if it doesn't already have one — see [CLIENTUSE.md](CLIENTUSE.md)):
 
 ## 9. Apply the new client config
 
-`authorized_keys` and each client's `info.txt` are only rebuilt at container
+`authorized_keys` and each client's info text are only rebuilt at container
 start, so restart after any change to `clients.conf` or a client's key:
 
 ```bash
