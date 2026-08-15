@@ -361,6 +361,13 @@ Generates the systemd unit's `EnvironmentFile` from `config.sh`, renders the uni
 systemctl --user restart container-borg-server.service
 ```
 
+It refuses to install anything while `HOST_REPO_BASE` does not exist. That path is the source of the container's `/repo` bind mount, and podman will not start a container whose bind-mount source is missing — so a unit installed regardless would be enabled successfully and then restart-loop on `statfs …: no such file or directory`, with `systemctl --user enable --now` still exiting 0 and the unit sitting in `activating (auto-restart)` rather than `failed`.
+
+The script does not create the directory, and the error says which of the two situations you are in:
+
+- the parent **is** a mount point — the volume is mounted and only a subdirectory is missing, so it names the `mkdir -p` to run;
+- the parent is **not** a mount point — the volume is probably not mounted, and creating the directory would put client repositories on the root filesystem without project quotas. Mount the volume instead.
+
 ## 9.7. 51-service-uninstall.sh
 
 Reverses `50-service-install.sh`: stops and disables the systemd unit, removes its symlink from `~/.config/systemd/user/`, and deletes the generated `EnvironmentFile` and rendered unit. Does **not** touch the container image or any data under `HOST_CONFIG_BASE`/`HOST_REPO_BASE`/`HOST_LOG_BASE` — clients, repositories, and logs are left untouched.

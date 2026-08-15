@@ -1044,6 +1044,54 @@ printf '%s' "$OUT" | grep -q 'Committed:     100.0 GiB of 100.0 GiB volume (100%
     && printf '%s' "$OUT" | grep -q 'no limit in effect'
 assert "12.14 a change made alongside an unlimited client commits the volume" $?
 
+# =========================================================================
+# 13. 50-service-install.sh — refusing to install a unit that cannot start
+# =========================================================================
+#
+# HOST_REPO_BASE is the source of the container's /repo bind mount, and podman
+# will not start a container whose bind-mount source is missing. The script
+# used to warn and install the unit anyway, which produced the worst shape of
+# that failure: `systemctl --user enable --now` exits 0, the unit sits in
+# `activating (auto-restart)` rather than `failed`, and the only evidence is a
+# statfs error in the journal one step after the warning scrolled away.
+#
+# Only the refusal is exercised here. Everything past it writes into
+# ~/.config/systemd/user and runs `systemctl --user daemon-reload`, which a
+# test has no business doing to the machine it runs on — and the abort happens
+# before any of it, which is the property being checked.
+
+setup_install() {
+    new_tree
+    mkdir -p "$T/systemd"
+    cp "$ROOT/systemd/container-borg-server.service" "$T/systemd/"
+    sed -i "s|^HOST_REPO_BASE=.*|HOST_REPO_BASE=\"$1\"|" "$T/scripts/config.sh"
+}
+
+# The parent is not a mount point: the volume is probably not mounted, and
+# creating the directory would put repositories on the root filesystem.
+setup_install "$WORK/notmounted/repo"
+mkdir -p "$WORK/notmounted"
+run sh "$T/scripts/50-service-install.sh"
+[ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'does not exist'
+assert "13.1 a missing HOST_REPO_BASE aborts the install" $?
+
+printf '%s' "$OUT" | grep -q 'not a mount point' \
+    && printf '%s' "$OUT" | grep -q 'Do NOT create the directory'
+assert "13.2 ... and an unmounted volume is named as the likely cause" $?
+
+[ ! -e "$T/systemd/container-borg-server.service.env" ] \
+    && [ ! -e "$T/systemd/container-borg-server.service.rendered" ]
+assert "13.3 ... before the unit or its EnvironmentFile is written" $?
+
+# The parent IS a mount point: the volume looks mounted and only the
+# subdirectory is missing, which is a layout the documentation allows and the
+# one case where creating it is the right answer — by hand, not silently here.
+setup_install "/dev/shm/borg-repo-test-$$"
+run sh "$T/scripts/50-service-install.sh"
+[ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'is a mount point' \
+    && printf '%s' "$OUT" | grep -q "mkdir -p /dev/shm/borg-repo-test-$$"
+assert "13.4 a missing subdirectory of a mounted volume names the mkdir to run" $?
+
 # --- summary -------------------------------------------------------------
 
 echo

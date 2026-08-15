@@ -51,10 +51,42 @@ fi
 # validates this before ever writing to it). Silently mkdir'ing it here
 # could mask a not-yet-mounted storage volume.
 mkdir -p "$HOST_CONFIG_BASE" "$HOST_LOG_BASE"
+
+# A missing HOST_REPO_BASE is fatal, not a warning.
+#
+# It is the source of the container's /repo bind mount, and podman refuses to
+# start a container whose bind-mount source does not exist. Installing the unit
+# anyway produced the worst possible shape of that failure: `systemctl --user
+# enable --now` still exits 0, the unit does not reach `failed` but sits in
+# `activating (auto-restart)`, and the only evidence is "statfs ...: no such
+# file or directory" in the journal — one step after the warning that predicted
+# it has scrolled off the screen.
+#
+# The directory is still not created here, for the reason above: an unmounted
+# volume usually leaves its mount point behind as an empty directory on the
+# root filesystem, where a mkdir succeeds and client repositories then land on
+# the system disk with no project quotas at all.
 if [ ! -d "$HOST_REPO_BASE" ]; then
-    echo "WARNING: HOST_REPO_BASE '$HOST_REPO_BASE' does not exist yet."
-    echo "         Make sure the storage volume is mounted before starting the"
-    echo "         container (see BEST_PRACTICES.md Chapter 1)."
+    echo "ERROR: HOST_REPO_BASE '$HOST_REPO_BASE' does not exist."
+    echo "       It is bind-mounted into the container as /repo, and podman will"
+    echo "       not start a container whose bind-mount source is missing."
+    echo ""
+    PARENT_DIR="$(dirname "$HOST_REPO_BASE")"
+    if [ -d "$PARENT_DIR" ] && [ "$(stat -c %m "$PARENT_DIR" 2>/dev/null)" = "$PARENT_DIR" ]; then
+        echo "       '$PARENT_DIR' is a mount point, so the storage volume looks"
+        echo "       mounted and only this subdirectory is missing. Create it and"
+        echo "       re-run this script:"
+        echo ""
+        echo "           mkdir -p $HOST_REPO_BASE"
+    else
+        echo "       '$PARENT_DIR' is not a mount point, so the storage volume is"
+        echo "       probably not mounted. Do NOT create the directory to get past"
+        echo "       this: on an unmounted mount point that succeeds silently, and"
+        echo "       client repositories end up on the root filesystem without the"
+        echo "       enforcing XFS project quotas this server depends on"
+        echo "       (BEST_PRACTICES.md Chapter 1). Mount the volume first."
+    fi
+    exit 1
 fi
 
 # --- Generate the EnvironmentFile from config.sh ------------------------

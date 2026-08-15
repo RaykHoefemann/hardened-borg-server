@@ -118,6 +118,17 @@ $EDITOR scripts/config.sh
 
 - `HOST_REPO_BASE` → the XFS/`prjquota` mount noted in step 0 (e.g. `/var/mnt/borg-repo`)
 
+  A **subdirectory** of that mount works too (e.g. `/var/mnt/borg-repo/repo`,
+  which keeps filesystem snapshots beside the repositories rather than inside
+  them). Whichever you choose, **the directory has to exist before step 4**: it
+  is bind-mounted into the container as `/repo`, and podman will not start a
+  container whose bind-mount source is missing. `50-service-install.sh` refuses
+  to install the unit until it does, rather than leaving you with a service
+  that restart-loops. Create a subdirectory yourself — `mkdir -p
+  /var/mnt/borg-repo/repo` — but never create the *mount point* to get past
+  that error: on an unmounted volume that succeeds silently and puts client
+  repositories on the root filesystem, with no project quotas at all.
+
 `IMAGE` already points at the image built from this same release — it is
 derived from the `VERSION` file copied in step 1, so there is nothing to edit
 unless you want to pin a digest instead of a tag ([Verification](VERIFICATION.md),
