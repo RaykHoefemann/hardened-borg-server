@@ -84,9 +84,19 @@ EnvironmentFile=@@ENV_FILE@@
 # runtime PUID/PGID env vars — passing them would be dead configuration.
 # See config.sh (BORG_UID/BORG_GID) for the actual build-time value, used
 # by 00-ssh-create-user.sh to set matching host-side ownership.
+#
+# --log-driver=passthrough hands the container's stdout/stderr straight to the
+# unit instead of having podman journal it a second time. podman runs in the
+# foreground here, so systemd already captures its output; with the default
+# journald driver every container log line was written twice under this same
+# unit — once by conmon, once by podman — which doubled `journalctl --user -u
+# container-borg-server` for anyone reading it, debugging a failed start
+# included. The cost is `podman logs` for this container, which has no output
+# of its own to show once the journal holds it all.
 ExecStart=/usr/bin/podman run \
     --name=${CONTAINER} \
     --rm \
+    --log-driver=passthrough \
     --publish=${SSH_PORT}:22 \
     --volume=${HOST_CONFIG_BASE}:/config:Z \
     --volume=${HOST_REPO_BASE}:/repo:Z \
@@ -142,7 +152,7 @@ Before installing, review `scripts/config.sh` — in particular `HOST_REPO_BASE`
 systemctl --user enable --now container-borg-server.service
 ```
 
-`50-service-install.sh` generates the `EnvironmentFile` from `config.sh`, renders the unit template into `systemd/container-borg-server.service.rendered`, and symlinks that into `~/.config/systemd/user/`. Re-run it after any change to `config.sh` (e.g. bumping `IMAGE` to a new tag), then restart the service for the change to take effect — day-to-day start/stop/restart/status is handled by the scripts in Chapter 9.8–9.11:
+`50-service-install.sh` generates the `EnvironmentFile` from `config.sh`, renders the unit template into `systemd/container-borg-server.service.rendered`, and symlinks that into `~/.config/systemd/user/`. Re-run it after any change to `config.sh` (e.g. bumping `IMAGE` to a new tag) **and after updating the checkout to a new release**, since the unit itself is part of a release and the installed symlink points at a rendering of the template as it stood when the script last ran. Then restart the service for the change to take effect — day-to-day start/stop/restart/status is handled by the scripts in Chapter 9.8–9.11:
 
 ```bash
 ./scripts/50-service-install.sh

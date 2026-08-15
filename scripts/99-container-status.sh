@@ -69,7 +69,50 @@ echo
 echo "------------------------------------------------------------"
 echo "[status] Systemd Service Status"
 echo "------------------------------------------------------------"
-systemctl --user status "$SERVICE" --no-pager
+
+# `systemctl status` used to stand here, and most of what it printed worked
+# against this report. It ends with a ten-line journal tail that [status] Last
+# Log Lines prints again below, and its CGroup block renders the full command
+# line of every process in the cgroup — for conmon some forty
+# --exit-command-arg arguments — between the service state and the container
+# state, which are what the report is opened for. The resolved `podman run`
+# line, the one genuinely useful part of that block, is in [status] Container
+# Details as podman itself reports it.
+#
+# Read in one call and picked apart below, the way the container's runtime
+# info is handled above; `systemctl show` prints Key=Value and says nothing
+# when a property is unset.
+UNIT_PROPS="$(systemctl --user show "$SERVICE" \
+    -p LoadState -p UnitFileState -p ActiveState -p SubState -p Result \
+    -p NRestarts -p ExecMainStartTimestamp -p ExecMainStatus 2>/dev/null || true)"
+unit_prop() { printf '%s\n' "$UNIT_PROPS" | sed -n "s/^$1=//p"; }
+
+if [ -z "$UNIT_PROPS" ] || [ "$(unit_prop LoadState)" = "not-found" ]; then
+    echo "Unit:        ${SERVICE} — not installed for this user."
+    echo "→ Install it with ./scripts/50-service-install.sh"
+else
+    ACTIVE_STATE="$(unit_prop ActiveState)"
+    NRESTARTS="$(unit_prop NRestarts)"
+    STARTED="$(unit_prop ExecMainStartTimestamp)"
+
+    echo "Unit:        ${SERVICE} ($(unit_prop UnitFileState))"
+    echo "State:       ${ACTIVE_STATE} ($(unit_prop SubState))"
+    [ -n "$STARTED" ] && echo "Started:     ${STARTED}"
+    [ -n "$NRESTARTS" ] && echo "Restarts:    ${NRESTARTS}"
+
+    # A unit that keeps failing spends most of its time in 'activating
+    # (auto-restart)' rather than 'failed', so neither the state above nor a
+    # zero exit status from `systemctl enable --now` says anything is wrong.
+    # The restart counter is what does.
+    RESULT="$(unit_prop Result)"
+    if [ -n "$RESULT" ] && [ "$RESULT" != "success" ]; then
+        echo "Result:      ${RESULT} (last exit status $(unit_prop ExecMainStatus))"
+    fi
+    if [ -n "$NRESTARTS" ] && [ "$NRESTARTS" != "0" ] || [ "$ACTIVE_STATE" = "failed" ]; then
+        echo "→ The service is not running steadily. [status] Last Log Lines below"
+        echo "  shows why it stopped; a repeating error there is a restart loop."
+    fi
+fi
 
 echo
 echo "------------------------------------------------------------"

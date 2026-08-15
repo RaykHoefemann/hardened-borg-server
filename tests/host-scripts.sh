@@ -190,6 +190,26 @@ for f in "$UNIT" "$ROOT/docs/DEPLOYMENT.md"; do
     n=$((n + 1))
 done
 
+# podman runs in the foreground under this unit, so systemd already captures
+# its output. Without passthrough, podman's default journald driver logs the
+# container a second time under the same unit — every line present twice for
+# anyone reading `journalctl --user -u container-borg-server`, a failed start
+# included.
+RC=0
+OUT="$(grep -A6 '^ExecStart=' "$UNIT")"
+grep -q -- '--log-driver=passthrough' "$UNIT"
+assert "0.6 the unit hands container output to systemd rather than journalling it twice" $?
+
+# DEPLOYMENT.md 6.2 presents the unit as the file's contents, so a reader can
+# reintroduce anything the two copies disagree about by following the document
+# — which is why the User=/Group= check above already covers both. Comparing
+# them outright is the general form of that: whatever the template says, the
+# documented copy says the same.
+RC=0
+OUT="$(diff <(awk '/^```ini$/{f=1;next} f&&/^```$/{exit} f' "$ROOT/docs/DEPLOYMENT.md") "$UNIT")"
+[ -z "$OUT" ]
+assert "0.7 the unit quoted in DEPLOYMENT.md is identical to the template" $?
+
 # =========================================================================
 # 01-ssh-set-user-key.sh
 # =========================================================================
@@ -628,6 +648,97 @@ OUT="$(PATH="$NOPODMAN:$DF_BIN:/usr/bin:/bin" "$T/scripts/00-ssh-create-user.sh"
 assert "10.18 a missing podman is reported before anything is created" $?
 
 [ ! -d "$T/repo/OWN/user1" ]; assert "10.19 ... and nothing was created" $?
+
+# =========================================================================
+# 11. 99-container-status.sh — the service-status section
+# =========================================================================
+#
+# The report used to print `systemctl status`, whose ten-line journal tail the
+# script then printed again below — and with the container's output journalled
+# twice (see 0.6), a single log event appeared four times in one run. What it
+# prints instead is read from `systemctl show`, so the state a reader needs is
+# stated rather than buried in a cgroup dump.
+#
+# Everything the script reaches outside itself is substituted: systemctl
+# answers from a properties file, podman and journalctl are inert. That is
+# enough, because what is asserted here is how a given unit state is rendered.
+
+STATUS_STUB="$WORK/statusstub"
+mkdir -p "$STATUS_STUB"
+# `status` answers the way systemd really does — the cgroup tree and the
+# ten-line journal tail included — so 11.2 and 11.3 fail against a script that
+# calls it, instead of merely describing what this one happens to print.
+cat > "$STATUS_STUB/systemctl" <<'STUB'
+#!/bin/sh
+case "$*" in
+    *show*)
+        cat "$UNIT_PROPS_DATA"
+        ;;
+    *status*)
+        cat <<'REAL'
+● container-borg-server.service - Borg Backup Server (Podman)
+     Loaded: loaded (/home/core/.config/systemd/user/container-borg-server.service; enabled)
+     Active: active (running) since Fri 2026-08-15 16:00:13 CEST; 2h ago
+   Main PID: 5214 (podman)
+     CGroup: /user.slice/user-1000.slice/user@1000.service/app.slice/container-borg-server.service
+             |-5214 /usr/bin/podman run --name=borg-server --rm --log-driver=passthrough
+             `-5243 /usr/bin/conmon --api-version 1 -c e601e84e5c8b --exit-command-arg --root
+Aug 15 16:00:13 host borg-server[5243]: Server listening on 0.0.0.0 port 22.
+REAL
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+STUB
+cat > "$STATUS_STUB/podman" <<'STUB'
+#!/bin/sh
+case "$1" in ps) echo "CONTAINER ID  IMAGE  STATUS  NAMES" ;; *) exit 1 ;; esac
+STUB
+cat > "$STATUS_STUB/journalctl" <<'STUB'
+#!/bin/sh
+echo "Aug 15 16:00:13 host borg-server[5243]: Server listening on 0.0.0.0 port 22."
+STUB
+chmod +x "$STATUS_STUB"/*
+
+unit_state() { printf '%s\n' "$@" > "$WORK/unit.props"; export UNIT_PROPS_DATA="$WORK/unit.props"; }
+run_status() {
+    new_tree
+    OUT="$(PATH="$STATUS_STUB:$PATH" "$WORK/sh" "$T/scripts/99-container-status.sh" 2>&1)"; RC=$?
+}
+
+unit_state 'LoadState=loaded' 'UnitFileState=enabled' 'ActiveState=active' \
+    'SubState=running' 'Result=success' 'NRestarts=0' \
+    'ExecMainStartTimestamp=Fri 2026-08-15 16:00:13 CEST' 'ExecMainStatus=0'
+run_status
+printf '%s' "$OUT" | grep -qE '^State: +active \(running\)'
+assert "11.1 a healthy unit is stated in one line" $?
+
+printf '%s' "$OUT" | grep -q 'CGroup:'
+[ $? -ne 0 ]; assert "11.2 no cgroup process dump between service and container state" $?
+
+# The journal appears once, in its own section — not also as the tail of a
+# `systemctl status` a few lines earlier.
+[ "$(printf '%s\n' "$OUT" | grep -c 'Server listening on 0.0.0.0 port 22.')" -eq 1 ]
+assert "11.3 a log line is printed once per run" $?
+
+# The state a restart loop actually sits in. 'activating' is not 'failed', and
+# `systemctl enable --now` exits 0 on the way into it, so the restart counter
+# is the thing that has to be visible.
+unit_state 'LoadState=loaded' 'UnitFileState=enabled' 'ActiveState=activating' \
+    'SubState=auto-restart' 'Result=exit-code' 'NRestarts=7' \
+    'ExecMainStartTimestamp=Fri 2026-08-15 16:04:51 CEST' 'ExecMainStatus=125'
+run_status
+printf '%s' "$OUT" | grep -qE '^Restarts: +7' \
+    && printf '%s' "$OUT" | grep -q 'last exit status 125' \
+    && printf '%s' "$OUT" | grep -q 'not running steadily'
+assert "11.4 a restart loop is named, with its exit status" $?
+
+unit_state 'LoadState=not-found' 'UnitFileState=' 'ActiveState=inactive' 'SubState=dead'
+run_status
+printf '%s' "$OUT" | grep -q 'not installed for this user' \
+    && printf '%s' "$OUT" | grep -q '50-service-install.sh'
+assert "11.5 an uninstalled unit says so and names the script that installs it" $?
 
 # --- summary -------------------------------------------------------------
 

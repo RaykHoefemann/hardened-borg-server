@@ -343,6 +343,19 @@ A difference between `Host scripts` and `Running image` is reported explicitly â
 
 After that: the systemd service state, `podman ps` output, a detailed `podman inspect` (image, PID, network, mounts) if the container is currently registered with Podman, and the last 20 lines of the service's journal log.
 
+The service state is stated as fields rather than as `systemctl status` output:
+
+```
+Unit:        container-borg-server.service (enabled)
+State:       active (running)
+Started:     Fri 2026-08-15 16:00:13 CEST
+Restarts:    0
+```
+
+`Restarts` is the one to read when something is wrong. A unit that fails and is restarted spends most of its time in `activating (auto-restart)` rather than `failed`, and `systemctl --user enable --now` exits 0 on the way into that loop â€” so a nonzero restart count, together with the `Result` line the report then adds, is what distinguishes a service that is running from one that keeps being started. The report points at its own log section when it sees this; a single error repeating there is the loop.
+
+The journal appears once, in that section alone. The container's output is handed to systemd by the unit itself (`--log-driver=passthrough`, [Deployment](DEPLOYMENT.md) Chapter 6.2) rather than journalled a second time by Podman, so `journalctl --user -u container-borg-server.service` shows one copy of each line as well.
+
 ```bash
 ./scripts/99-container-status.sh
 ```

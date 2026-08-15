@@ -19,9 +19,19 @@ EnvironmentFile=@@ENV_FILE@@
 # runtime PUID/PGID env vars — passing them would be dead configuration.
 # See config.sh (BORG_UID/BORG_GID) for the actual build-time value, used
 # by 00-ssh-create-user.sh to set matching host-side ownership.
+#
+# --log-driver=passthrough hands the container's stdout/stderr straight to the
+# unit instead of having podman journal it a second time. podman runs in the
+# foreground here, so systemd already captures its output; with the default
+# journald driver every container log line was written twice under this same
+# unit — once by conmon, once by podman — which doubled `journalctl --user -u
+# container-borg-server` for anyone reading it, debugging a failed start
+# included. The cost is `podman logs` for this container, which has no output
+# of its own to show once the journal holds it all.
 ExecStart=/usr/bin/podman run \
     --name=${CONTAINER} \
     --rm \
+    --log-driver=passthrough \
     --publish=${SSH_PORT}:22 \
     --volume=${HOST_CONFIG_BASE}:/config:Z \
     --volume=${HOST_REPO_BASE}:/repo:Z \
