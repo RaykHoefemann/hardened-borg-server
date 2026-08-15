@@ -265,11 +265,15 @@ quota_preview() {
     echo ""
 
     # The sum excludes this client's present limit and adds the intended one,
-    # so the figure is the state the operator is about to create.
-    set -- $(quota_committed "$_qp_vol" "$_qp_user")
-    _qp_sum=$(( $1 + _qp_after ))
-    _qp_n=$(( $2 + 1 ))
-    _qp_unbounded="$3"
+    # so the figure is the state the operator is about to create. Read through
+    # a heredoc rather than `set --`: the three fields land in named variables
+    # in this shell, without splitting a command substitution or overwriting
+    # the caller's positional parameters.
+    read -r _qp_other_kib _qp_other_n _qp_unbounded <<EOF
+$(quota_committed "$_qp_vol" "$_qp_user")
+EOF
+    _qp_sum=$(( _qp_other_kib + _qp_after ))
+    _qp_n=$(( _qp_other_n + 1 ))
     _qp_sum_pct=$(quota_pct "$_qp_sum" "$_qp_vol")
 
     if quota_exceeds_pct "$_qp_sum" "$_qp_vol" 100; then

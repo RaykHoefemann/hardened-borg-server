@@ -148,8 +148,9 @@ echo "Total clients: $TOTAL"
 # Reported here continuously, because the chapter asks the operator to check
 # the sum before raising a quota and nothing computed it for them.
 if [ -n "$VOLUME_KIB" ]; then
-    set -- $(quota_committed "$VOLUME_KIB")
-    COMMITTED_KIB="$1"; COMMITTED_N="$2"; COMMITTED_UNBOUNDED="$3"
+    read -r COMMITTED_KIB COMMITTED_N COMMITTED_UNBOUNDED <<EOF
+$(quota_committed "$VOLUME_KIB")
+EOF
     COMMITTED_MARK=""
     quota_exceeds_pct "$COMMITTED_KIB" "$VOLUME_KIB" 100 && COMMITTED_MARK=" (!)"
     echo "Committed:     $(quota_human "$COMMITTED_KIB") of $(quota_human "$VOLUME_KIB") volume ($(quota_pct "$COMMITTED_KIB" "$VOLUME_KIB")%)${COMMITTED_MARK} across ${COMMITTED_N} client(s)"
