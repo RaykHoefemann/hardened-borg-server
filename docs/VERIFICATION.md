@@ -104,7 +104,7 @@ admission checks) will **not** find it and will report its absence — that is a
 property of where it is stored, not evidence that it is missing.
 
 **Then pin what you verified.** Tags are mutable: verifying
-`:0.1.0-beta.23` today says nothing about what that tag points to next month.
+`:0.1.0-beta.24` today says nothing about what that tag points to next month.
 Resolve it once and pin the digest in `scripts/config.sh`:
 
 ```bash
