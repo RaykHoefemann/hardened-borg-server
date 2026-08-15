@@ -295,9 +295,37 @@ run_stubbed sh "$DRV" quota_verify "$T/repo/OWN/nonexistent-and-unstubbed" 50G
 # =========================================================================
 echo
 
+# The fixture carries the comment header the container's
+# build_authorized_keys.sh writes into a clients.conf it finds missing — which
+# is every installation whose server was started before its first client
+# existed, i.e. the order SERVERINSTALL.md documents. The old fixture was bare
+# data, so a parser that treats comments as clients passed all of section 9
+# while producing a phantom group, two spurious "MISSING on host" rows and a
+# client count of 12 on real installations.
+#
+# The two trailing lines are not from the real header. They are the shapes a
+# filter has to survive regardless of how that header is worded: a blank line,
+# and a comment that does not begin in column one.
+clients_conf_header() {
+    cat <<'HDR'
+# Client roster — one line per client:
+#
+#   name:group:repo:quota
+#
+# e.g.  user1-os1-pc1:OWN:/repo/OWN/user1-os1-pc1:50G
+#
+# group is OWN (your own devices) or MIRROR (external partners); quota is
+# mandatory and has the form <digits>G. Written by scripts/00-ssh-create-user.sh
+# — there is normally no reason to edit this file by hand.
+
+   # indented comment
+HDR
+}
+
 setup_09() {
     new_tree
     {
+      clients_conf_header
       echo 'user1:OWN:/repo/OWN/user1:50G'
       echo 'user2:OWN:/repo/OWN/user2:20G'
       echo 'friend1:MIRROR:/repo/MIRROR/friend1:200G'
@@ -381,6 +409,34 @@ df_stub \
 run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
 printf '%s' "$OUT" | grep -qE '^user1 +50G +none \(!\) +5\.0 GiB \(unlimited\)'
 assert "9.11 a directory with no quota in effect is reported as unlimited" $?
+
+# --- comment lines are not clients ---------------------------------------
+#
+# Everything above runs against a clients.conf that carries the real header
+# (see setup_09). These three name what that header must not turn into. The
+# damage is not cosmetic: "MISSING on host" is the marker for a real client
+# whose repository is gone, and emitting it on every healthy installation
+# trains the operator to ignore the one signal this listing exists to raise.
+setup_09
+run_in "$WORK/sh" "$T/scripts/09-show-all-users.sh"
+printf '%s' "$OUT" | grep -E '^=== ' | grep -qvE '^=== (OWN|MIRROR) ===$'
+[ $? -ne 0 ]; assert "9.12 the format legend does not become a group of its own" $?
+
+printf '%s' "$OUT" | grep -q 'MISSING on host'
+[ $? -ne 0 ]; assert "9.13 no client is invented from a comment line" $?
+
+# The example line in the header has OWN as its second field, so it lands in a
+# real group rather than a phantom one — the count is where it shows up.
+printf '%s' "$OUT" | grep -q 'Total clients: 3'
+assert "9.14 the count is of clients, not of lines" $?
+
+# A clients.conf holding only that header is not an empty file, but it
+# describes no clients — 00-ssh-create-user.sh has never run here.
+new_tree
+clients_conf_header > "$T/config/clients.conf"
+run_in "$WORK/sh" "$T/scripts/09-show-all-users.sh"
+[ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'no users configured yet'
+assert "9.15 a header-only clients.conf reports no clients, not a listing" $?
 
 # =========================================================================
 # 10. 00-ssh-create-user.sh — creating a client

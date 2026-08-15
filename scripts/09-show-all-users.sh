@@ -36,8 +36,17 @@ if [ ! -f "$CONF" ]; then
     exit 0
 fi
 
-if [ ! -s "$CONF" ]; then
-    echo "clients.conf is empty — no users configured yet."
+# Read the roster once, through the shared filter (config.sh: clients_lines),
+# and work from that everywhere below. Reading "$CONF" directly is what made
+# this script report the format header the container writes into a fresh
+# clients.conf as two clients and a phantom group.
+#
+# "Empty" is decided on client lines, not file size: a clients.conf that holds
+# only that header is not an empty file, but it does describe no clients.
+ROSTER=$(clients_lines)
+
+if [ -z "$ROSTER" ]; then
+    echo "clients.conf lists no clients — no users configured yet."
     exit 0
 fi
 
@@ -109,12 +118,12 @@ report_for() {
 # would work) but bash on Fedora CoreOS — the platform this project requires.
 # There, the loop would have iterated over the operator's numeric group IDs
 # and listed no clients at all.
-CLIENT_GROUPS=$(awk -F: '{print $2}' "$CONF" | awk '!seen[$0]++')
+CLIENT_GROUPS=$(printf '%s\n' "$ROSTER" | awk -F: '{print $2}' | awk '!seen[$0]++')
 
 for GROUP in $CLIENT_GROUPS; do
     echo "=== ${GROUP} ==="
     printf '%-24s %-10s %-14s %s\n' "USERNAME" "QUOTA" "ENFORCED" "USED"
-    awk -F: -v g="$GROUP" '$2==g {print $1, $4}' "$CONF" | sort | \
+    printf '%s\n' "$ROSTER" | awk -F: -v g="$GROUP" '$2==g {print $1, $4}' | sort | \
     while read -r USERNAME QUOTA; do
         [ -n "$USERNAME" ] || continue
         REPORT=$(report_for "$GROUP" "$USERNAME" "$QUOTA")
@@ -131,7 +140,7 @@ if [ -e "$DRIFT_MARKER" ]; then
     echo ""
 fi
 
-TOTAL=$(wc -l < "$CONF" | tr -d ' ')
+TOTAL=$(printf '%s\n' "$ROSTER" | wc -l | tr -d ' ')
 echo "Total clients: $TOTAL"
 
 # Real physical disk usage of the underlying filesystem (df on HOST_REPO_BASE

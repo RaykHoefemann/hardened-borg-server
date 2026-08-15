@@ -73,6 +73,26 @@ KEYDIR="${HOST_CONFIG_BASE}/keys"
 # existing repo dirs and takes max+1, starting from this floor).
 PROJID_BASE=1000
 
+# --- Client roster ---------------------------------------------------------
+
+# The client lines of clients.conf: everything that is neither a comment nor
+# blank. There is exactly one place that decides what counts as a client, and
+# this is it.
+#
+# clients.conf is not necessarily bare data. On a fresh installation the
+# container's build_authorized_keys.sh creates it with a header explaining the
+# format — which is the normal state of every installation whose container was
+# started before its first client existed, i.e. the documented order in
+# SERVERINSTALL.md. Reading the file without this filter parses that header as
+# client data: the format legend becomes a group, the example line becomes a
+# client, and a line count becomes the client total.
+#
+# Matches the container's own parser (build_authorized_keys.sh) and the count
+# VERIFICATION.md test 3 performs by hand, so all three agree on who exists.
+clients_lines() {
+    grep -vE '^[[:space:]]*(#|$)' "$CONF" 2>/dev/null || true
+}
+
 # --- Container runtime -----------------------------------------------------
 
 CONTAINER="borg-server"
