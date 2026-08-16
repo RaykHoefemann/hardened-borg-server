@@ -188,11 +188,31 @@ container starts, generates its SSH host key, and authorizes nobody.
 The server is reachable and rejects every connection with
 `Permission denied (publickey)` until step 8 provisions the first client. That
 is deliberate: it lets you verify the container, the volume mounts and quota
-enforcement before handing out any access, and it lets you confirm over the
-network — with `ssh-keyscan -p 2222 <server-host>` — that the host key clients
-will be asked to trust is the one this server actually holds (clients are told
-to verify that fingerprint on first connection, see
-[CLIENTUSE.md](CLIENTUSE.md)).
+enforcement before handing out any access.
+
+It is also where you obtain the host key fingerprint. Clients are told to
+compare it on first connection through a channel that is not this SSH
+connection ([CLIENTUSE.md](CLIENTUSE.md) chapter 1), so this is the number you
+hand out. Read it from the key the container actually holds:
+
+```bash
+podman exec borg-server \
+  ssh-keygen -lf /config/ssh_host_keys/ssh_host_ed25519_key.pub
+```
+
+Then confirm over the network that the daemon really serves that key — both
+readings must print the same fingerprint:
+
+```bash
+ssh-keyscan -t ed25519 -p 2222 <server-host> | ssh-keygen -lf -
+```
+
+**Name the key type.** Without `-t ed25519`, `ssh-keyscan` probes three key
+types over three concurrent connections, and the image's
+`PerSourceMaxStartups 2` refuses the third — the scan then returns no key at
+all, which reads exactly like an unreachable server rather than like a
+deliberate throttle. Two of those three probes could never succeed anyway,
+since the image offers ed25519 host keys only.
 
 ---
 
