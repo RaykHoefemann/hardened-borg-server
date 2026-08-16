@@ -698,14 +698,34 @@ three and why 4C exists.
 **Run**
 
 ```bash
-systemctl --user status container-borg-server.service | head -3
+systemctl --user show container-borg-server.service \
+    -p LoadState -p ActiveState -p SubState -p FragmentPath
 ```
 
-**Pass** — the unit is loaded and active as a **user** service.
+**Pass** — loaded, running, and a unit file that belongs to this user:
+
+```
+LoadState=loaded
+ActiveState=active
+SubState=running
+FragmentPath=/var/home/<user>/.config/systemd/user/container-borg-server.service
+```
+
+`--user` already carries half the claim — it addresses the calling user's own
+manager, in which a system-wide unit does not exist — and `FragmentPath` is
+what makes that visible instead of implicit.
 
 **Fail** — a system-level unit, or a user unit that is not running. A container
 started by hand outside systemd also fails here, and should: nothing restarts it
 and nothing records why it stopped.
+
+`systemctl --user status … | head -3` stood here before and cannot show this:
+on Fedora CoreOS the distribution ships a service drop-in whose path prints on
+its own continuation line, which puts `Active:` on line 5 — and the number of
+drop-ins is not fixed, so no larger constant is reliable either (#23). `show`
+prints the properties themselves and stays a measurement rather than a
+rendering, which is why `99-container-status.sh` reads the unit state the same
+way.
 
 ### 4C — the container's own processes belong to an unprivileged user ⚠️
 
