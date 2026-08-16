@@ -214,7 +214,7 @@ git clone --branch "$NEW" --depth 1 \
   https://github.com/RaykHoefemann/hardened-borg-server.git ~/tmp/upgrade
 ```
 
-Verify the new image **before** pulling it — the provenance attestation is what makes the next step something other than trust ([Verification](VERIFICATION.md), Test 0):
+Verify the new image **before** pulling it — the provenance attestation is what makes the next step something other than trust ([Verification](VERIFICATION.md), Test 0). It needs no registry credential; if it reports that a token was denied access, that is a stored `ghcr.io` credential getting in the way rather than a permission you are missing, and Test 0 says what to do about it:
 
 ```bash
 # 4. Verify, then pull

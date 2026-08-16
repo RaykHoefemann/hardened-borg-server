@@ -45,9 +45,12 @@ supported** — see
 and an SSH key already provisioned on the server
 (see [Server Installation](SERVERINSTALL.md), step 9), and a willingness to
 write a small amount of throwaway data into the repository. Test 0
-additionally needs the GitHub CLI (`gh`), authenticated, and `skopeo` (part of
-the Fedora CoreOS base image) — and is best run *before* the installation,
-since its whole purpose is to decide whether the image should be run at all.
+additionally needs the GitHub CLI (`gh`), logged in to github.com, and
+`skopeo` (part of the Fedora CoreOS base image) — and is best run *before* the
+installation, since its whole purpose is to decide whether the image should be
+run at all. It needs no registry credential of any kind, and an unusable one
+already stored will stop it; see the note under that test. `jq` is optional,
+and only for the machine-readable form of the result shown there.
 
 No hardware to spare? [Test Environment](TESTENV.md) builds a throwaway bench
 on one VM that covers every test on this page, and shows how to make each test
@@ -66,7 +69,7 @@ point of the storage volume and `/var/mnt/extern1/borg-server` is
 
 ---
 
-## 0. The image was built from this source ⚠️
+## 0. The image was built from this source ✅
 
 **Run this before the others.** Every test below examines the behaviour of a
 running container. If that container was not built from the source you
@@ -91,13 +94,80 @@ gh attestation verify \
   --repo RaykHoefemann/hardened-borg-server
 ```
 
-**Pass** — verification succeeds, and the attestation names **this**
+**Pass** — the command exits `0`, and the attestation names **this**
 repository and the `.github/workflows/docker.yml` workflow, at the git tag
 matching the image tag you pulled.
 
 **Fail** — no attestation found, verification errors, or an attestation naming
 a different repository or workflow. Do not run the image; obtain it again from
 the documented location and re-check.
+
+**Success is silent off a terminal.** `gh` prints its `✓ Verification
+succeeded!` only when stdout is a terminal. Redirected, piped or run from a
+script it prints **nothing at all** on success, which is indistinguishable from
+having done nothing — so read the exit status, or ask for the result in a form
+that is always printed:
+
+```bash
+gh attestation verify \
+  oci://ghcr.io/raykhoefemann/hardened-borg-server:<tag> \
+  --repo RaykHoefemann/hardened-borg-server --format json \
+| jq -r '.[].verificationResult | .statement.subject[0] as $s |
+    "subject : \($s.name)@sha256:\($s.digest.sha256)",
+    "repo    : \(.signature.certificate.sourceRepositoryURI)",
+    "workflow: \(.signature.certificate.buildSignerURI)",
+    "ref     : \(.signature.certificate.sourceRepositoryRef)",
+    "commit  : \(.signature.certificate.sourceRepositoryDigest)"'
+```
+
+```
+subject : ghcr.io/raykhoefemann/hardened-borg-server@sha256:9b0d7e8b0574f26cc7b8346c7e22c2849f5b2828422a605e247a89b52aef4da3
+repo    : https://github.com/RaykHoefemann/hardened-borg-server
+workflow: https://github.com/RaykHoefemann/hardened-borg-server/.github/workflows/docker.yml@refs/tags/v0.1.0-beta.25
+ref     : refs/tags/v0.1.0-beta.25
+commit  : 293d1f1e06bb651435de7305e6731cbfee114c77
+```
+
+Those five lines *are* the pass criterion, spelled out: the repository, the
+workflow, the tag and the commit that produced the image — and the subject
+digest, which is the index digest you pin below.
+
+**It needs no registry credential, and a bad one will stop it.** The image is
+public, so the registry side of this command works anonymously. What `gh` does
+not use for it is your `gh auth login` session: for an `oci://` reference it
+authenticates against the registry through the OCI keychain —
+`~/.docker/config.json`, or `${XDG_RUNTIME_DIR}/containers/auth.json` for
+podman — exactly as `podman pull` would. So an unusable `ghcr.io` entry sitting
+in that file is enough to stop the first test on the page. The ordinary case is
+a classic PAT from a `docker login ghcr.io` months ago that has since expired,
+been revoked, or never carried `read:packages` — it keeps being sent long after
+anyone remembers storing it. The obvious repair is a trap of its own:
+`docker login ghcr.io -p "$(gh auth token)"` stores the OAuth token
+`gh auth login` holds (`gho_…`), which GHCR refuses for package reads whether
+`read:packages` is granted or not, and the message does not change. What you
+see either way is
+
+```
+Error: the provided token was denied access to the requested resource, please
+check the token's expiration and repository access
+```
+
+which reads like an expiry or a scope problem and is neither. `gh attestation
+download` names the step that actually failed — `failed to digest artifact` —
+the registry lookup that resolves the tag to a digest, reached before any
+signature is examined. Granting scopes will not help, and neither will pinning
+the digest in the `oci://` reference: the same lookup runs either way. Drop the
+credential with `docker logout ghcr.io` (or `podman logout ghcr.io`), or step
+around it for one command:
+
+```bash
+DOCKER_CONFIG=$(mktemp -d) gh attestation verify \
+  oci://ghcr.io/raykhoefemann/hardened-borg-server:<tag> \
+  --repo RaykHoefemann/hardened-borg-server
+```
+
+A private image would be the other way round — there the keychain entry is
+what makes the lookup possible — but nothing this project publishes is private.
 
 **Where the attestation lives:** it is uploaded to GitHub's Attestations API
 and deliberately *not* pushed into the registry, so `gh attestation verify`
@@ -143,9 +213,13 @@ tag you verified.
 A pinned digest is the only form in which the result of this test stays true
 over time, and it makes every later upgrade a deliberate act.
 
-> Marked unverified because it was derived from the published workflow rather
-> than executed against a live tag. If you run it, the output is worth
-> reporting back.
+> Marked verified: executed end to end against the published
+> `v0.1.0-beta.25` tag, signature check included, producing the five lines
+> above. What that shows is that the test passes on a correct image — not that
+> it rejects a tampered one, which cannot be staged without a second signing
+> identity. The `--repo` argument is the part doing that work, so keep it as
+> written: `gh` requires either it or the looser `--owner`, and `--owner` would
+> accept an attestation from any repository of that account.
 
 ---
 
