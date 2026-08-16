@@ -84,19 +84,31 @@ run_in() { local sh="$1"; shift; OUT="$("$sh" "$@" 2>&1)"; RC=$?; }
 # a directory under an XFS project quota, statvfs() reports the project's hard
 # limit as the filesystem size. That is the whole mechanism, so replacing df
 # with a stub earlier in PATH exercises it exactly — no XFS, no root, no
-# xfs_quota. The stub answers from "<path>:<size_kib>:<used_kib>" lines in
-# $DF_STUB_DATA and reports 0/0 for anything not listed.
+# xfs_quota. The stub answers from "<path>:<size_kib>:<used_kib>[:<avail_kib>]"
+# lines in $DF_STUB_DATA and reports 0/0 for anything not listed.
+#
+# The optional fourth field is what a filesystem with reserved blocks does:
+# available is then less than size minus used, and the two stop being the same
+# question. Omitted, it is size minus used, as every existing case assumes.
+#
+# The Capacity column is deliberately nonsense. Nothing may read it: df rounds
+# it up and computes it against used+available rather than against the size
+# printed beside it, so passing it through produces a percentage that does not
+# match the two figures it stands next to — which is what 09-show-all-users.sh
+# did until the fill level got its own helper. A stub answering plausibly there
+# would let that return unnoticed.
 DF_BIN="$WORK/dfstub"
 mkdir -p "$DF_BIN"
 cat > "$DF_BIN/df" <<'STUB'
 #!/bin/sh
 for a in "$@"; do case "$a" in -*) ;; *) p="$a" ;; esac; done
-size=0; used=0
-while IFS=: read -r path s u; do
-    [ "$path" = "$p" ] && { size="$s"; used="$u"; }
+size=0; used=0; avail=""
+while IFS=: read -r path s u av; do
+    [ "$path" = "$p" ] && { size="$s"; used="$u"; avail="$av"; }
 done < "$DF_STUB_DATA"
+[ -n "$avail" ] || avail=$((size - used))
 echo "Filesystem 1024-blocks Used Available Capacity Mounted on"
-echo "/dev/stub $size $used $((size-used)) 1% /stub"
+echo "/dev/stub $size $used $avail 99% /stub"
 STUB
 chmod +x "$DF_BIN/df"
 
@@ -512,9 +524,43 @@ assert "9.19 ... and the total says which part of it that is" $?
 # committed on a volume that is almost empty, and that is not a contradiction.
 # Free space is df's own Available figure, not size minus used — a filesystem
 # may reserve blocks that are counted as neither.
-printf '%s' "$OUT" | grep -q 'Disk usage:    100.0 GiB of 4000.0 GiB (1%)' \
+#
+# 100 of 4000 GiB is 2.5% and the line says 3%: a fill level is rounded up, so
+# that it can reach 100% and so that it never reports a volume as emptier than
+# it is. The stub's own Capacity column says 99% and is ignored, which is the
+# other half of what this checks.
+printf '%s' "$OUT" | grep -q 'Disk usage:    100.0 GiB of 4000.0 GiB (3%)' \
     && printf '%s' "$OUT" | grep -q 'Disk free:     3900.0 GiB'
 assert "9.20 physical usage and free space are reported alongside the promises" $?
+
+# A fill level has to be able to say "full", and "full" is not the same as
+# "used equals size": 95 GiB used of 100 with nothing available is a volume
+# that will reject the next write. Computed against the size it reads as 95%
+# and looks like it has room; computed against what can still be written it
+# reads as 100%, which is the truth the operator needs.
+setup_09
+df_stub "$T/repo:$((100 * GIB)):$((95 * GIB)):0" \
+    "$T/repo/OWN/user1:$((50 * GIB)):$((50 * GIB)):0" \
+    "$T/repo/OWN/user2:$((20 * GIB)):0" \
+    "$T/repo/MIRROR/friend1:$((10 * GIB)):0"
+run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
+printf '%s' "$OUT" | grep -q 'Disk usage:    95.0 GiB of 100.0 GiB (100%)' \
+    && printf '%s' "$OUT" | grep -q 'Disk free:     0 KiB'
+assert "9.21 a volume with nothing left reports 100%, whatever its size says" $?
+
+# Reserved blocks: available is below size minus used, and the fill level
+# follows what can still be written rather than what the size suggests. 90 GiB
+# used with 5 GiB available is 95% full, not the 90% the size would give — and
+# that gap is the reason the percentage is not computed against the size.
+setup_09
+df_stub "$T/repo:$((100 * GIB)):$((90 * GIB)):$((5 * GIB))" \
+    "$T/repo/OWN/user1:$((50 * GIB)):0" \
+    "$T/repo/OWN/user2:$((20 * GIB)):0" \
+    "$T/repo/MIRROR/friend1:$((10 * GIB)):0"
+run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
+printf '%s' "$OUT" | grep -q 'Disk usage:    90.0 GiB of 100.0 GiB (95%)' \
+    && printf '%s' "$OUT" | grep -q 'Disk free:     5.0 GiB'
+assert "9.22 reserved blocks count as full, not as free" $?
 
 # =========================================================================
 # 10. 00-ssh-create-user.sh — creating a client
@@ -922,14 +968,15 @@ CONFIRM_INPUT="y"
 # One && chain, deliberately: written as separate statements the assert would
 # record only the last one's status and the rest would be decoration.
 printf '%s' "$OUT" | grep -qE '^ +user1 +10\.0 GiB +10% +10G +1\.0 GiB of 10\.0 GiB \(10%\)' \
-    && printf '%s' "$OUT" | grep -qE '^ +user1 +60\.0 GiB +60% +60G +1\.0 GiB of 60\.0 GiB \(1%\)' \
+    && printf '%s' "$OUT" | grep -qE '^ +user1 +60\.0 GiB +60% +60G +1\.0 GiB of 60\.0 GiB \(2%\)' \
     && [ "$(printf '%s\n' "$OUT" | grep -c -- '--- ')" -eq 2 ]
 assert "12.1 the client's line is shown for both states, usage included" $?
 
 # The same bytes against a different limit: what the change actually buys is
-# headroom, and that is the figure the two USED cells differ in.
+# headroom, and that is the figure the two USED cells differ in. 1 of 60 GiB is
+# 1.67% and reads as 2%, for the same reason the volume's own fill level does.
 printf '%s' "$OUT" | grep -q 'of 10.0 GiB (10%)' \
-    && printf '%s' "$OUT" | grep -q 'of 60.0 GiB (1%)'
+    && printf '%s' "$OUT" | grep -q 'of 60.0 GiB (2%)'
 assert "12.2 usage is unchanged but its share of the quota is not" $?
 
 # Chapter 10.2's invariant, at the moment it is being changed: user2's 20 GiB
@@ -1043,6 +1090,39 @@ CONFIRM_INPUT="y"
 printf '%s' "$OUT" | grep -q 'Committed:     100.0 GiB of 100.0 GiB volume (100%) (!)' \
     && printf '%s' "$OUT" | grep -q 'no limit in effect'
 assert "12.14 a change made alongside an unlimited client commits the volume" $?
+
+# The symptom issue #16 reported: one volume, two tools, two percentages —
+# 09 printed df's Capacity column verbatim while the preview computed a
+# truncated share of the size, so the same volume read twice in a row came back
+# as 2% and 1%. Both now end on the same two lines from the same helper, and
+# this compares them literally rather than by matching each against a figure
+# written into the test.
+setup_02
+df_stub "$T/repo:$((100 * GIB)):$((2 * GIB))" \
+        "$T/repo/OWN/user1:$((10 * GIB)):$((1 * GIB))" \
+        "$T/repo/OWN/user2:$((20 * GIB)):0"
+CONFIRM_INPUT="n"
+run_quota user1 60G
+CONFIRM_INPUT="y"
+# Both preview blocks, de-indented and de-duplicated: a quota change moves no
+# data, so the pair has to be identical in both — two lines, not four.
+PREVIEW_DISK=$(printf '%s\n' "$OUT" | grep -E 'Disk (usage|free):' | sed 's/^ *//' | sort -u)
+
+setup_09
+df_stub "$T/repo:$((100 * GIB)):$((2 * GIB))" \
+        "$T/repo/OWN/user1:$((10 * GIB)):$((1 * GIB))" \
+        "$T/repo/OWN/user2:$((20 * GIB)):0"
+run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
+LISTING_DISK=$(printf '%s\n' "$OUT" | grep -E 'Disk (usage|free):' | sort -u)
+
+[ "$(printf '%s\n' "$PREVIEW_DISK" | wc -l)" -eq 2 ] \
+    && [ "$PREVIEW_DISK" = "$LISTING_DISK" ]
+DISK_RC=$?
+OUT="preview:
+$PREVIEW_DISK
+listing:
+$LISTING_DISK"
+assert "12.15 the preview and the listing report one volume the same way" "$DISK_RC"
 
 # =========================================================================
 # 13. 50-service-install.sh — refusing to install a unit that cannot start

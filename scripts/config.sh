@@ -168,6 +168,12 @@ quota_enforced_kib() { df -kP "$1" 2>/dev/null | awk 'NR==2{print $2}'; }
 # Blocks currently used by directory $1's project, in KiB (empty if unreadable).
 quota_used_kib() { df -kP "$1" 2>/dev/null | awk 'NR==2{print $3}'; }
 
+# Blocks still writable in directory $1, in KiB (empty if unreadable). df's own
+# Available column, not size minus used: a filesystem can reserve blocks that
+# are counted as neither, and a project quota can be capped by the volume
+# running out underneath it. What a client can still write is what df says.
+quota_avail_kib() { df -kP "$1" 2>/dev/null | awk 'NR==2{print $4}'; }
+
 # --- Quotas as a share of the volume ---------------------------------------
 #
 # A bare "60G" says nothing about whether it is generous or reckless. What
@@ -181,21 +187,89 @@ quota_used_kib() { df -kP "$1" 2>/dev/null | awk 'NR==2{print $3}'; }
 # filesystem's own size.
 volume_kib() { quota_enforced_kib "${HOST_REPO_BASE%/}"; }
 
-# Physical blocks used on that volume, in KiB — what is really on the disk,
-# independent of what any client was promised.
-volume_used_kib() { quota_used_kib "${HOST_REPO_BASE%/}"; }
-
-# What is still writable, in KiB. df's own Available column rather than size
-# minus used: a filesystem can reserve blocks counted as neither, and what a
-# client can still write is what df reports as available.
-volume_avail_kib() { df -kP "${HOST_REPO_BASE%/}" 2>/dev/null | awk 'NR==2{print $4}'; }
-
 # <kib> as a whole-percent share of <volume-kib>, truncated. Computed in awk
 # rather than $(( )): a quota of 99999999999G is 1.05e17 KiB, and multiplying
 # that by 100 overflows the signed 64-bit arithmetic a shell does, which turns
 # an absurd value negative and lets it pass a "> 99%" test.
+#
+# For a *share* — what a client was promised, what all of them jointly claim —
+# truncation is right: half a volume should read as 50%, not 51%, and an
+# overcommitment should not be printed larger than it is. A *fill level* is a
+# different question and uses quota_fill_pct below.
 quota_pct() {
     awk -v k="$1" -v v="$2" 'BEGIN { if (v <= 0) { print "?"; exit } printf "%d", (k * 100) / v }'
+}
+
+# <used-kib> as a whole-percent fill level of <used-kib> + <avail-kib>,
+# rounded UP. This is df's own Capacity rule, and it is deliberate on both
+# counts.
+#
+# Rounded up, because a fill level is a warning rather than a statistic: it has
+# to be able to reach 100%, and truncation cannot — a volume with one block
+# left reads as 99%, and so does one that is genuinely full. Anything non-empty
+# reporting 1% rather than 0% errs the same way, which is the safe direction.
+#
+# Against used+avail rather than against the size, because that is what makes
+# 100% mean "nothing more can be written". A filesystem that reserves blocks
+# never reaches its own size — an ext4 root at 37.1 of 49.0 GiB is full for
+# everyone but root — and a project quota can be capped by the volume filling
+# up underneath it. Taking both figures from df means the host reports exactly
+# what the kernel reports to the client through the info channel
+# (borg-wrapper.sh), rather than a second opinion computed beside it.
+quota_fill_pct() {
+    awk -v u="$1" -v a="$2" 'BEGIN {
+        t = u + a
+        if (t <= 0) { print "?"; exit }
+        p = (u * 100) / t
+        printf "%d", (p == int(p) ? p : int(p) + 1)
+    }'
+}
+
+# quota_disk_lines [indent]
+#
+# The physical state of the storage volume, as the two lines that end both
+# 09-show-all-users.sh's listing and each block of the quota preview:
+#
+#   Disk usage:    100.0 GiB of 4000.0 GiB (3%)
+#   Disk free:     3900.0 GiB
+#
+# One df call for all three figures, in one place, so the listing and the
+# preview cannot state the same measurement differently — which they did:
+# 09 printed df's Capacity column verbatim while the preview computed a
+# truncated share of the volume size, and the two disagreed by a point on the
+# same volume read twice in a row.
+#
+# The percentage is a fill level (quota_fill_pct), the size beside it is the
+# volume (as in `Committed` and `% OF VOL`, which are shares and stay
+# truncated). On a filesystem with reserved blocks those two denominators
+# differ slightly, and the percentage follows the one that can reach 100%.
+quota_disk_lines() {
+    _qd_indent="${1:-}"
+
+    if [ -z "${HOST_REPO_BASE:-}" ] || [ ! -d "${HOST_REPO_BASE%/}" ]; then
+        echo "${_qd_indent}Disk usage:    n/a (HOST_REPO_BASE not set or not accessible)"
+        echo "${_qd_indent}Disk free:     n/a (HOST_REPO_BASE not set or not accessible)"
+        return
+    fi
+
+    _qd_df=$(df -kP "${HOST_REPO_BASE%/}" 2>/dev/null | awk 'NR==2{print $2, $3, $4}')
+    _qd_size=$(echo "$_qd_df" | cut -d' ' -f1)
+    _qd_used=$(echo "$_qd_df" | cut -d' ' -f2)
+    _qd_avail=$(echo "$_qd_df" | cut -d' ' -f3)
+    case "$_qd_size"  in ''|*[!0-9]*) _qd_size=""  ;; esac
+    case "$_qd_used"  in ''|*[!0-9]*) _qd_used=""  ;; esac
+    case "$_qd_avail" in ''|*[!0-9]*) _qd_avail="" ;; esac
+
+    if [ -n "$_qd_size" ] && [ -n "$_qd_used" ] && [ -n "$_qd_avail" ]; then
+        echo "${_qd_indent}Disk usage:    $(quota_human "$_qd_used") of $(quota_human "$_qd_size") ($(quota_fill_pct "$_qd_used" "$_qd_avail")%)"
+    else
+        echo "${_qd_indent}Disk usage:    unreadable"
+    fi
+    if [ -n "$_qd_avail" ]; then
+        echo "${_qd_indent}Disk free:     $(quota_human "$_qd_avail")"
+    else
+        echo "${_qd_indent}Disk free:     unreadable"
+    fi
 }
 
 # True when <kib> is more than <pct> percent of <volume-kib>. Decided on the
@@ -264,6 +338,7 @@ quota_committed_total() {
 }
 
 # quota_row_fields <limit-kib> <configured-quota> <volume-kib> <used-kib>
+#                  <avail-kib>
 #
 # The four cells describing one client, pipe-separated, for 09-show-all-users
 # and for the quota preview alike:
@@ -280,7 +355,7 @@ quota_committed_total() {
 # it is not the file: clients.conf records an intention, which is worth seeing
 # precisely when it turns out not to have taken effect.
 quota_row_fields() {
-    _qr_kib="$1"; _qr_conf="$2"; _qr_vol="$3"; _qr_used="$4"
+    _qr_kib="$1"; _qr_conf="$2"; _qr_vol="$3"; _qr_used="$4"; _qr_avail="$5"
 
     _qr_want=$(quota_kib "$_qr_conf" 2>/dev/null) || _qr_want=""
     if [ -z "$_qr_kib" ] || [ "$_qr_kib" -eq 0 ] \
@@ -301,27 +376,47 @@ quota_row_fields() {
     fi
 
     printf '%s|%s|%s|%s' "$_qr_quota" "$_qr_pct" "$_qr_conf_cell" \
-        "$(quota_usage_text "$_qr_used" "$_qr_kib" "$_qr_vol")"
+        "$(quota_usage_text "$_qr_used" "$_qr_kib" "$_qr_vol" "$_qr_avail")"
 }
 
-# quota_usage_text <used-kib> <limit-kib> <volume-kib>
+# quota_usage_text <used-kib> <limit-kib> <volume-kib> <avail-kib>
 #
 # What a client has stored, against the limit that applies to it — the USED
 # column of 09-show-all-users.sh and of the quota preview, so both say it the
 # same way. A limit of 0, or one equal to the volume, is no limit at all: there
 # is no share to express the usage as, and reporting one would be a fiction.
+#
+# The percentage is a fill level and comes from df's own two figures
+# (quota_fill_pct), which is precisely what borg-wrapper.sh shows the client
+# through the info channel. Computing it here as used/limit instead would be a
+# second opinion on the same measurement — and was one: the host truncated
+# where the client rounded up, so the same client at 62.8% of its quota was
+# told 63% and shown 62% by the operator's own listing.
+#
+# <avail-kib> is empty where nothing measured it — the preview's "after this
+# change" block, whose figures are predictions — and then what the limit leaves
+# free is used instead. Under an enforced project quota the kernel reports the
+# same thing, so the two agree wherever both exist.
 quota_usage_text() {
-    case "$1" in ''|*[!0-9]*) set -- 0 "$2" "$3" ;; esac
+    case "$1" in ''|*[!0-9]*) set -- 0 "$2" "$3" "$4" ;; esac
     if [ -z "$2" ] || [ "$2" -eq 0 ] || [ "$2" = "$3" ]; then
         printf '%s (unlimited)' "$(quota_human "$1")"
     else
+        _qu_avail="$4"
+        case "$_qu_avail" in
+            ''|*[!0-9]*)
+                _qu_avail=$(( $2 - $1 ))
+                [ "$_qu_avail" -lt 0 ] && _qu_avail=0
+                ;;
+        esac
         printf '%s of %s (%s%%)' "$(quota_human "$1")" "$(quota_human "$2")" \
-            "$(( $1 * 100 / $2 ))"
+            "$(quota_fill_pct "$1" "$_qu_avail")"
     fi
 }
 
 # quota_state_block <label> <volume-kib> <user> <quota-label> <limit-kib>
-#                   <used-kib> <bounded-kib> <bounded-n> <unbounded-n>
+#                   <used-kib> <avail-kib> <bounded-kib> <bounded-n>
+#                   <unbounded-n>
 #
 # One state of the installation, in the shape 09-show-all-users.sh reports it:
 # the client's own line, then the same Committed/Disk usage/Disk free summary.
@@ -335,9 +430,14 @@ quota_usage_text() {
 # and the change is a line-by-line comparison rather than a search.
 #
 # A limit of 0, or one equal to the volume, is no limit at all.
+#
+# <avail-kib> is what df reports as still writable for this client, and is
+# empty in the "after this change" block, where nothing has measured anything
+# yet — quota_usage_text then derives it from the limit.
 quota_state_block() {
     _qs_label="$1"; _qs_vol="$2"; _qs_user="$3"; _qs_quota="$4"; _qs_kib="$5"
-    _qs_client_used="$6"; _qs_bounded="$7"; _qs_n="$8"; _qs_unbounded="$9"
+    _qs_client_used="$6"; _qs_client_avail="$7"; _qs_bounded="$8"; _qs_n="$9"
+    _qs_unbounded="${10}"
 
     echo "  --- ${_qs_label} ---"
 
@@ -357,7 +457,7 @@ quota_state_block() {
             ;;
         *)
             _qs_row=$(quota_row_fields "$_qs_kib" "$_qs_quota" "$_qs_vol" \
-                "$_qs_client_used")
+                "$_qs_client_used" "$_qs_client_avail")
             ;;
     esac
     IFS='|' read -r _qs_c1 _qs_c2 _qs_c3 _qs_c4 <<EOF
@@ -375,17 +475,9 @@ EOF
     # same in both: a quota is a promise, and changing one moves no data. Shown
     # in both anyway, because the two blocks are meant to be diffed by eye —
     # and because "will this free up space?" is a question the repetition
-    # answers without anyone having to ask it.
-    _qs_used=$(volume_used_kib)
-    _qs_avail=$(volume_avail_kib)
-    case "$_qs_used" in
-        ''|*[!0-9]*) echo "  Disk usage:    unreadable" ;;
-        *) echo "  Disk usage:    $(quota_human "$_qs_used") of $(quota_human "$_qs_vol") ($(quota_pct "$_qs_used" "$_qs_vol")%)" ;;
-    esac
-    case "$_qs_avail" in
-        ''|*[!0-9]*) echo "  Disk free:     unreadable" ;;
-        *) echo "  Disk free:     $(quota_human "$_qs_avail")" ;;
-    esac
+    # answers without anyone having to ask it. From the same helper as the
+    # listing's own pair, so the two cannot report one volume two ways.
+    quota_disk_lines "  "
 
     if [ "$_qs_unbounded" -gt 0 ]; then
         echo "  ($_qs_unbounded client(s) with no limit in effect count as everything"
@@ -395,15 +487,20 @@ EOF
 }
 
 # quota_preview <volume-kib> <username> <before-kib> <before-quota>
-#               <after-kib> <after-quota> <used-kib>
+#               <after-kib> <after-quota> <used-kib> <avail-kib>
 #
 # What 00 and 02 print before touching anything: the installation as it stands,
 # then the installation as this change would leave it, both in the same shape.
 # <before-kib>/<before-quota> are empty for a client that does not exist yet,
-# and so is <used-kib>, which is then nothing.
+# and so are <used-kib> and <avail-kib>, which are then nothing.
+#
+# <avail-kib> describes the client as it is now and is therefore passed only to
+# the first block. The second one is a prediction: nothing has measured what a
+# limit that does not exist yet leaves free, so quota_usage_text derives it from
+# that limit.
 quota_preview() {
     _qp_vol="$1"; _qp_user="$2"; _qp_before="$3"; _qp_before_q="$4"
-    _qp_after="$5"; _qp_after_q="$6"; _qp_used="${7:-0}"
+    _qp_after="$5"; _qp_after_q="$6"; _qp_used="${7:-0}"; _qp_avail="${8:-}"
 
     echo "[quota] Volume ${HOST_REPO_BASE%/} — $(quota_human "$_qp_vol")"
     echo ""
@@ -435,12 +532,13 @@ EOF
     esac
 
     quota_state_block "current state" "$_qp_vol" "$_qp_user" "$_qp_before_q" \
-        "$_qp_before" "$_qp_used" "$_qp_now_bounded" "$_qp_now_n" "$_qp_now_unb"
+        "$_qp_before" "$_qp_used" "$_qp_avail" \
+        "$_qp_now_bounded" "$_qp_now_n" "$_qp_now_unb"
 
     _qp_after_bounded=$(( _qp_other_kib + _qp_after ))
     quota_state_block "after this change" "$_qp_vol" "$_qp_user" "$_qp_after_q" \
-        "$_qp_after" "$_qp_used" "$_qp_after_bounded" "$(( _qp_other_n + 1 ))" \
-        "$_qp_other_unb"
+        "$_qp_after" "$_qp_used" "" \
+        "$_qp_after_bounded" "$(( _qp_other_n + 1 ))" "$_qp_other_unb"
 
     # Said once, under the block it applies to, rather than in both.
     if quota_exceeds_pct \
@@ -522,7 +620,12 @@ quota_verify() {
     case "$_qv_used_kib" in
         ''|*[!0-9]*) _qv_used_kib=0 ;;
     esac
+    _qv_avail_kib=$(quota_avail_kib "$_qv_dir")
+    case "$_qv_avail_kib" in
+        ''|*[!0-9]*) _qv_avail_kib=$(( _qv_have_kib - _qv_used_kib )) ;;
+    esac
+    [ "$_qv_avail_kib" -lt 0 ] && _qv_avail_kib=0
 
     echo "[quota] Verified on host: hard limit $(quota_human "$_qv_have_kib") is in effect"
-    echo "[quota] Used now: $(quota_human "$_qv_used_kib") of $(quota_human "$_qv_have_kib") ($((_qv_used_kib * 100 / _qv_have_kib))%)"
+    echo "[quota] Used now: $(quota_human "$_qv_used_kib") of $(quota_human "$_qv_have_kib") ($(quota_fill_pct "$_qv_used_kib" "$_qv_avail_kib")%)"
 }

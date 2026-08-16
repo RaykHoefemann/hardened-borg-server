@@ -187,14 +187,14 @@ Before anything is created, the script states what the requested quota means for
   USERNAME                 QUOTA        % OF VOL  CONFIGURED   USED
   user1-os1-pc1            n/a          n/a       n/a          does not exist yet
   Committed:     270.0 GiB of 3.6 TiB volume (7%) across 3 client(s)
-  Disk usage:    39.5 GiB of 3.6 TiB (1%)
+  Disk usage:    39.5 GiB of 3.6 TiB (2%)
   Disk free:     3.5 TiB
 
   --- after this change ---
   USERNAME                 QUOTA        % OF VOL  CONFIGURED   USED
   user1-os1-pc1            50.0 GiB     1%        50G          0 KiB of 50.0 GiB (0%)
   Committed:     320.0 GiB of 3.6 TiB volume (8%) across 4 client(s)
-  Disk usage:    39.5 GiB of 3.6 TiB (1%)
+  Disk usage:    39.5 GiB of 3.6 TiB (2%)
   Disk free:     3.5 TiB
 
 Create client 'user1-os1-pc1' with this quota? [y/N]
@@ -256,26 +256,26 @@ Changes the quota of an existing client. Looks up its host repository directory 
 
   --- current state ---
   USERNAME                 QUOTA        % OF VOL  CONFIGURED   USED
-  user1-os1-pc1            50.0 GiB     1%        50G          31.4 GiB of 50.0 GiB (62%)
+  user1-os1-pc1            50.0 GiB     1%        50G          31.4 GiB of 50.0 GiB (63%)
   Committed:     320.0 GiB of 3.6 TiB volume (8%) across 4 client(s)
-  Disk usage:    39.5 GiB of 3.6 TiB (1%)
+  Disk usage:    39.5 GiB of 3.6 TiB (2%)
   Disk free:     3.5 TiB
 
   --- after this change ---
   USERNAME                 QUOTA        % OF VOL  CONFIGURED   USED
-  user1-os1-pc1            100.0 GiB    2%        100G         31.4 GiB of 100.0 GiB (31%)
+  user1-os1-pc1            100.0 GiB    2%        100G         31.4 GiB of 100.0 GiB (32%)
   Committed:     370.0 GiB of 3.6 TiB volume (10%) across 4 client(s)
-  Disk usage:    39.5 GiB of 3.6 TiB (1%)
+  Disk usage:    39.5 GiB of 3.6 TiB (2%)
   Disk free:     3.5 TiB
 
 Apply this change? [y/N] y
 [quota] Applying new hard limit on host: project id 1003 -> 100G
 [quota] Verified on host: hard limit 100.0 GiB is in effect
-[quota] Used now: 31.4 GiB of 100.0 GiB (31%)
+[quota] Used now: 31.4 GiB of 100.0 GiB (32%)
 [quota] Quota for 'user1-os1-pc1' changed: 50G → 100G (enforced immediately)
 ```
 
-The two blocks carry the same columns and the same summary lines as `09-show-all-users.sh` (Chapter 9.5), so they can be read against each other and the figures that move are obvious. `USED` is the same number of bytes in both — the change moves no data — against a different limit: `62%` of the old quota is `31%` of the new one, which is the headroom the change actually buys. `QUOTA` is the limit the filesystem really applies and `CONFIGURED` the `clients.conf` value beside it, exactly as in the listing (Chapter 9.5) — so a client whose limit has drifted shows the real figure with `10G (!)` next to it in the current block, and agreement in the block that would repair it. Under *after this change* every figure is a prediction. `Disk usage` and `Disk free` appear in both and are identical in both — a quota is a promise, and changing one moves no data. That is worth seeing rather than assuming.
+The two blocks carry the same columns and the same summary lines as `09-show-all-users.sh` (Chapter 9.5), so they can be read against each other and the figures that move are obvious. `USED` is the same number of bytes in both — the change moves no data — against a different limit: `63%` of the old quota is `32%` of the new one, which is the headroom the change actually buys. `QUOTA` is the limit the filesystem really applies and `CONFIGURED` the `clients.conf` value beside it, exactly as in the listing (Chapter 9.5) — so a client whose limit has drifted shows the real figure with `10G (!)` next to it in the current block, and agreement in the block that would repair it. Under *after this change* every figure is a prediction. `Disk usage` and `Disk free` appear in both and are identical in both — a quota is a promise, and changing one moves no data. That is worth seeing rather than assuming.
 
 The preview exists because a bare `100G` does not say whether it is generous or reckless, and because raising quotas one request at a time is exactly how a correctly sized volume drifts into overcommitment (Chapter 10.2). `Committed` is marked `(!)` in the block where it reaches the volume, with the consequence spelled out underneath. Overcommitment is not refused — thin provisioning is a legitimate choice — but it does not happen quietly. As in Chapter 9.2, a quota above 99% of the volume is refused before `sudo` is reached, and the confirmation is read from stdin.
 
@@ -318,13 +318,13 @@ Prints an overview of every configured client, grouped by `OWN`/`MIRROR`, with e
 ```
 === OWN ===
 USERNAME                 QUOTA        % OF VOL  CONFIGURED   USED
-user1-os1-pc1            50.0 GiB     1%        50G          31.4 GiB of 50.0 GiB (62%)
+user1-os1-pc1            50.0 GiB     1%        50G          31.4 GiB of 50.0 GiB (63%)
 user2-os1-pc1            10.0 GiB     0%        20G (!)      8.1 GiB of 10.0 GiB (81%)
 user3-os1-pc1            n/a          n/a       30G          MISSING on host
 
 Total clients: 3
 Committed:     60.0 GiB of 3.6 TiB volume (1%) across 2 client(s)
-Disk usage:    39.5 GiB of 3.6 TiB (1%)
+Disk usage:    39.5 GiB of 3.6 TiB (2%)
 Disk free:     3.5 TiB
 ```
 
@@ -351,6 +351,8 @@ Counting it any other way would make the figure look *better* the more dangerous
 - `n/a` — nothing could be read, e.g. the repository directory is missing (`clients.conf` and the filesystem have drifted apart).
 
 Any `(!)` also prints a hint under the listing. This matters for the sizing invariant in Chapter 10.2, which is about **enforced** limits: reading the configured ones would report a volume that is safe on paper while the disk fills.
+
+**The percentages in this listing answer two different questions and are rounded accordingly.** `% OF VOL` and `Committed` are *shares* — what a client was promised, what all of them jointly claim — and are truncated, so half a volume reads as `50%` and an overcommitment is never printed larger than it is. `USED` and `Disk usage` are *fill levels*, and those round **up**, against what can still be written rather than against the size printed beside them. That is what lets them reach `100%`: a volume that will reject the next write says so, even where reserved blocks keep the used figure below the size. It is also df's own rule, and therefore exactly the number a client is shown through its own `info` channel (Chapter 10.3) — the host and the client report one measurement, not two opinions about it. The rounding errs towards *fuller*, which is the direction that prompts a look rather than a shrug.
 
 ## 9.6. 50-service-install.sh
 
@@ -490,7 +492,7 @@ ssh -p 2222 borg@<server-host> info
 
 Its own usage against its own quota (Chapter 8).
 
-Both figures are read from the same enforcing XFS project quota, so they cannot disagree — the client sees exactly what the operator sees for that client, and neither view depends on the application's own bookkeeping. A client noticing its own growth can ask for an increase before its next backup fails; an operator watching the totals can plan storage before any client is affected. Neither substitutes for the other: the client sees its own trend earliest, the operator is the only one who can see the volume as a whole.
+Both figures are read from the same enforcing XFS project quota, so they cannot disagree — the client sees exactly what the operator sees for that client, down to the rounding of the percentage (Chapter 9.5), and neither view depends on the application's own bookkeeping. A client noticing its own growth can ask for an increase before its next backup fails; an operator watching the totals can plan storage before any client is affected. Neither substitutes for the other: the client sees its own trend earliest, the operator is the only one who can see the volume as a whole.
 
 Sensible practice is to check on a schedule rather than on suspicion, and to treat a client above roughly 80% of its quota as something to act on rather than watch.
 

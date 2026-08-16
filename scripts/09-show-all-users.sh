@@ -84,17 +84,23 @@ report_for() {
         echo "n/a|n/a|${want}|MISSING on host"
         return
     fi
-    line=$(df -kP "$d" 2>/dev/null | awk 'NR==2{print $2, $3}') || { echo "n/a|n/a|${want}|unreadable"; return; }
+    # Available as well as size and used: the USED percentage is a fill level
+    # taken from df's own two figures, which is exactly what the client is told
+    # through the info channel (borg-wrapper.sh). Deriving it from the limit
+    # here instead would be a second opinion on the same measurement.
+    line=$(df -kP "$d" 2>/dev/null | awk 'NR==2{print $2, $3, $4}') || { echo "n/a|n/a|${want}|unreadable"; return; }
     size_kib=$(echo "$line" | cut -d' ' -f1)
     used_kib=$(echo "$line" | cut -d' ' -f2)
+    avail_kib=$(echo "$line" | cut -d' ' -f3)
     case "$size_kib" in ''|*[!0-9]*) echo "n/a|n/a|${want}|unreadable"; return ;; esac
     case "$used_kib" in ''|*[!0-9]*) used_kib=0 ;; esac
+    case "$avail_kib" in ''|*[!0-9]*) avail_kib="" ;; esac
 
     # From config.sh, which the quota preview in 00/02 uses too, so a client's
     # state reads identically wherever it is reported. A (!) in the CONFIGURED
     # cell is drift: clients.conf records one limit and the kernel applies
     # another, and the kernel is the one the client will hit.
-    row=$(quota_row_fields "$size_kib" "$want" "$VOLUME_KIB" "$used_kib")
+    row=$(quota_row_fields "$size_kib" "$want" "$VOLUME_KIB" "$used_kib" "$avail_kib")
     case "$row" in
         *"(!)"*) : > "$DRIFT_MARKER" ;;
     esac
@@ -169,24 +175,7 @@ fi
 
 # Real physical disk usage of the underlying filesystem (df on HOST_REPO_BASE
 # itself, not a client subdirectory) — this is the actual disk fill level,
-# independent of any individual client's quota.
-if [ -n "${HOST_REPO_BASE:-}" ] && [ -d "$HOST_REPO_BASE" ]; then
-    DISKLINE=$(df -kP "$HOST_REPO_BASE" 2>/dev/null | awk 'NR==2{print $2, $3, $4, $5}')
-    if [ -n "$DISKLINE" ]; then
-        d_size=$(echo "$DISKLINE" | cut -d' ' -f1)
-        d_used=$(echo "$DISKLINE" | cut -d' ' -f2)
-        d_avail=$(echo "$DISKLINE" | cut -d' ' -f3)
-        d_pct=$(echo "$DISKLINE" | cut -d' ' -f4)
-        echo "Disk usage:    $(quota_human "$d_used") of $(quota_human "$d_size") (${d_pct})"
-        # df's own Available figure, not size minus used: a filesystem can
-        # reserve blocks that are counted as neither, and what a client can
-        # still write is what df says is available.
-        echo "Disk free:     $(quota_human "$d_avail")"
-    else
-        echo "Disk usage:    unreadable"
-        echo "Disk free:     unreadable"
-    fi
-else
-    echo "Disk usage:    n/a (HOST_REPO_BASE not set or not accessible)"
-    echo "Disk free:     n/a (HOST_REPO_BASE not set or not accessible)"
-fi
+# independent of any individual client's quota. From config.sh, because the
+# quota preview in 00/02 ends on the same two lines and they have to be the
+# same two lines.
+quota_disk_lines
