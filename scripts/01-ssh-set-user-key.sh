@@ -76,5 +76,9 @@ fi
 mv "$TMP" "$TARGET"
 
 echo "[key] Public key saved in: $TARGET"
-echo "→ Please restart the container!"
+echo "→ Restart the container to activate this key:"
+echo "    ./scripts/92-container-restart.sh"
+echo "  authorized_keys is generated at container start and nowhere else, so"
+echo "  until then this key grants no access. The restart drops connections in"
+echo "  flight, including a backup in progress."
 

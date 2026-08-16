@@ -31,6 +31,9 @@ Disable the client's timer, or remove its key from `clients.conf` and restart th
 | Operator destroyed repository data on the host | [5](#5-operator-side-data-loss-on-the-server) | Depends — see section |
 | Storage volume lost entirely | [6](#6-total-loss-of-the-storage-volume) | Only from offsite |
 | Getting data back from the offsite mirror | [7](#7-recovering-from-the-offsite-mirror) | Not implemented yet |
+| Client cannot initialize — `DENY: no repository segments found` | — | Nothing lost — not a recovery case, see [Operations](OPERATIONS.md) Chapter 9.12 |
+
+The last row is a signpost rather than a section. An interrupted `borg init` leaves a repository directory the server refuses on every later attempt, but it holds no backup and nothing needs recovering — the repair is to clear the directory's contents, which Operations Chapter 9.12 describes step by step. It is listed here because that is not obvious from the client's report, and because clearing it the wrong way (removing the directory instead of its contents) silently drops the client's XFS project quota.
 
 ---
 

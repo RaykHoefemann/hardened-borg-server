@@ -481,11 +481,25 @@ borg init --encryption=keyfile-blake2 ssh://borgserver/repo/OWN/<client>
 Take custody of the key now ([Client Usage](CLIENTUSE.md) chapter 3) — it exists
 only on the client.
 
-**Fail** — `There is already something at /repo/...`: the repository directory
-is not empty, and `borg init` refuses it. Current sources render the client's
-info text under `/run/borg-info/` and remove the leftover from older releases at
-container start; if a file is still there, it was put there by something else,
-and [Recovery](RECOVERY.md) applies rather than a fresh init.
+**Fail** — two refusals, from opposite sides of the connection, and they are not
+the same problem.
+
+`There is already something at /repo/...` is borg's own: the repository
+directory is not empty, and `borg init` refuses it. Current sources render the
+client's info text under `/run/borg-info/` and remove the leftover from older
+releases at container start; if a file is still there, it was put there by
+something else, and [Recovery](RECOVERY.md) applies rather than a fresh init.
+
+`Remote: DENY: no repository segments found` is the **server's**, and it means
+the connection was refused before borg ran at all. The directory holds a
+`config` and a `README` but no segment — what an *interrupted* `borg init`
+leaves behind, because borg creates those on the server before it asks the
+client for a passphrase. A Ctrl-C at that prompt, a mistyped repeat or a run
+without a terminal is enough. The wrapper cannot tell that apart from a
+repository whose segments are gone, so it refuses both; this is the gate working
+as designed, and it is why retrying the init never clears it. The repair is
+operator-side and documented: [Operations](OPERATIONS.md) Chapter 9.12, which
+clears the directory's contents without disturbing its XFS project id.
 
 **What this does not show** — anything about what the client may do once
 connected. A working connection is the precondition for tests 1 through 10, not
@@ -496,6 +510,13 @@ are protected.
 > Verified: both failure modes above were reproduced against a container built
 > from this source, and both disappear with the fixes described. The run used
 > a Borg 1.2.8 client against the image's bundled 1.4.0.
+>
+> The third refusal was reproduced deterministically on both bench clients
+> (Borg 1.2.8 on Linux Mint 22.3, Borg 1.4.0 on Debian 13) against
+> `v0.1.0-beta.29`: an `init` ended at the passphrase prompt leaves the
+> skeleton, every later attempt is refused with `DENY: no repository segments
+> found`, and clearing the directory as Chapter 9.12 describes lets the same
+> client initialize normally and 0.5B pass (#26).
 
 ---
 
@@ -1009,17 +1030,36 @@ intended value with `02-change-user-quota.sh` (OPERATIONS Chapter 9.4).
 ssh borgserver info
 ```
 
-**Pass** — the info channel reports *your own* limit:
+**Pass** — the total in the `Used:` line is *your own* configured limit:
 
 ```
+quota (configured): 50G
 Used: 2.4 GiB of 50.0 GiB (5%)
 ```
 
-**Fail** — a second figure the size of the whole underlying disk rather than
-your configured quota. This is the single most common misconfiguration, and it
-is invisible until a client fills the volume. It is also the one failure a
-client can see without the operator: 5.5A says the same thing from the host
-side, in the `QUOTA` column.
+The channel prints two limits, and the criterion is deliberately about the
+second one. `quota (configured):` is the value `clients.conf` held when the
+container last rendered this text; the `Used:` total is read from the enforcing
+filesystem quota at the moment you ask, and **that is the figure in force**.
+They agree on a deployment that has not drifted, which is what a pass looks
+like.
+
+**Fail** — the two disagree, in either of two shapes:
+
+- The `Used:` total is **the size of the whole underlying disk**. Project-quota
+  enforcement is not active at all: this client is bounded by nothing but the
+  volume. The single most common misconfiguration, invisible until a client
+  fills the disk.
+- The `Used:` total is **some other figure** than `quota (configured):` — 20 GiB
+  against a recorded 50G, say. Enforcement works, but this client's project id
+  carries a limit nobody recorded. The enforced one is what holds; the recorded
+  one is what every document, preview and listing will keep claiming.
+
+Both are the operator's to repair (`02-change-user-quota.sh`, OPERATIONS Chapter
+9.4), and 5.5A is where the host side sees them — `none (!)` in the `QUOTA`
+column for the first, a marked `CONFIGURED` value for the second. What makes
+this check worth running separately is that it needs nobody on the host: it is
+the one failure of this kind a client can see for itself.
 
 One route into this state is closed by the tooling itself: `00-` and `02-`
 refuse a quota above 99% of the volume, because a limit at or above the volume
@@ -1040,11 +1080,23 @@ reports on its `Committed:` line and this test deliberately does not judge.
 > reported `Used: 1.9 GiB of 99.9 GiB` — the whole volume against a 50G quota,
 > which is this check's failure text word for word (#22).
 >
-> One narrower case remains unstaged, and it is the one 5.5A is really for: a
-> *single* client whose project id carries a wrong limit while the volume
+> **The narrower case is now staged too**, and it is the one 5.5A is really for:
+> a *single* client whose project id carries a wrong limit while the volume
 > enforces normally for everyone else. The measurement above takes enforcement
 > away from all clients at once, so it shows the listing reacting to a
-> disagreement, not that it localizes one.
+> disagreement, not that it localizes one. Drifting one client alone
+> (`sudo xfs_quota -x -c 'limit -p bhard=20g <projid>' <mount>`, leaving
+> `clients.conf` untouched) settles that: 5.5A marked `50G (!)` on exactly that
+> client, listed its enforced `20.0 GiB`, and left the other two unmarked;
+> `02-change-user-quota.sh <client> 50G` restored it (#28).
+>
+> 5.5B did **not** see that state as it was then written, and that is what its
+> criterion above was rewritten for. The client was shown `quota: 50G` beside
+> `Used: 1.1 MiB of 20.0 GiB` — two limits, neither of them the whole disk, so
+> the old failure text did not apply and the check read as a pass while the
+> client was held to a limit nobody had recorded. The recorded value is now
+> labelled `quota (configured):` at the source, and the criterion decides on the
+> `Used:` total (#28).
 
 ---
 
@@ -1146,13 +1198,23 @@ plaintext.
 exist yet. The rejection therefore happens on the **next** connection, not
 during init. This is expected behaviour, and the test is written around it.
 
-**Run** — using a throwaway repository path if your operator will provision
-one, otherwise understand that this leaves an unusable directory behind:
+**Run** — `<repo-repokey>` is a *separate* repository path from your `<repo>`,
+provisioned for this one test. Ask your operator for one; running this against
+your real repository is not possible anyway, since it already exists and
+`borg init` refuses a directory that is not empty.
 
 ```bash
-borg init --encryption=repokey <repo-test>     # succeeds — nothing to inspect yet
-borg list <repo-test>                          # must be refused
+borg init --encryption=repokey <repo-repokey>   # succeeds — nothing to inspect yet
+borg list <repo-repokey>                        # must be refused
 ```
+
+**This path is spent after the test.** Every later connection to it dies at the
+same gate, which is the result being demonstrated — so `<repo-repokey>` is not a
+scratch path that later tests can reuse, and no test below refers to it. Getting
+it back into a usable state is an operator-side repair: [Operations](OPERATIONS.md)
+Chapter 9.12, second row of its table. Note that clearing it destroys the
+repokey repository along with anything written into it, which is why nothing but
+throwaway data belongs in it.
 
 **Pass** — the second command fails with one of:
 
@@ -1249,23 +1311,65 @@ removing segments, which append-only forbids.
 **Why it matters** — an attacker who cannot delete archives one by one would
 otherwise simply delete the repository.
 
-**Run**
+**Run** — against `<repo>`, the client's own working keyfile repository, exactly
+as test 9 does:
 
 ```bash
-BORG_DELETE_I_KNOW_WHAT_I_AM_DOING=YES borg delete --force <repo-test>
+BORG_DELETE_I_KNOW_WHAT_I_AM_DOING=YES borg delete --force <repo>
 ```
 
-**Pass** — the command fails and the repository remains intact with all its
-segments. Verified against Borg 1.2.8: the same command against a repository
-without append-only destroys it completely.
+**This is a test with a stake in it.** It really does attempt the destruction:
+if append-only holds, nothing happens, and if it does not, the repository is
+gone. Run it against a repository whose loss you can afford — the bench client
+from [Test Environment](TESTENV.md), not a repository already holding backups
+you rely on. That is the price of measuring the claim instead of deducing it.
+
+**Pass** — the command fails, borg names the reason, and the repository remains
+intact with all its segments:
+
+```
+ValueError: /repo/OWN/<client> is in append-only mode
+```
+
+Verified against Borg 1.2.8: the same command against a repository without
+append-only destroys it completely.
+
+The message is the part that discriminates, which is why the criterion names it.
+A `DENY:` line instead means the connection was refused *before* append-only was
+ever consulted — most likely the repository aimed at was `<repo-repokey>` from
+test 8, which the encryption gate rejects on every connection. The command fails
+and the repository survives in that case too, so the outcome looks like a pass
+while nothing about append-only was measured (#27). Check which repository you
+addressed and run it again.
 
 **Fail** — a repository that actually disappears means append-only was not in
 effect for that connection. Return to test 3.
+
+**Read the traceback while you have it.** Borg prints the server's own command
+line beside the error:
+
+```
+Borg server: sys.argv: ['/usr/bin/borg', 'serve', '--restrict-to-path', '/repo/OWN/<client>', '--append-only']
+Borg server: SSH_ORIGINAL_COMMAND: 'borg serve'
+```
+
+The client sent `borg serve`; the server ran it with both flags of its own
+accord. That is the cheapest confirmation on this page that no client-supplied
+argument widened `--restrict-to-path` or `--append-only`, and it comes free with
+a correctly aimed test 10.
 
 **What this does not show** — protection against the operator. This is a
 statement about what a *client* can do; anyone with host access can remove the
 repository directory outright, which is why off-site copies and the mirror
 arrangement exist rather than being optional.
+
+> Verified, in both readings, against `v0.1.0-beta.29` with a Borg 1.2.8 client.
+> Against the client's own keyfile repository the command stops at
+> `ValueError: … is in append-only mode`, and `borg info` afterwards reports the
+> repository with its ID unchanged. Against the repokey path from test 8 it
+> stops at `DENY: repo stores key material server-side` instead. Both exit `2`
+> and both leave the repository standing — which is why this entry names the
+> message rather than the exit code (#27).
 
 ---
 

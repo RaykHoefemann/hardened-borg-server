@@ -19,10 +19,12 @@
 # way tests and scripted runs do: `printf 'y\n' | 02-change-user-quota.sh ...`.
 #
 # The enforced limit takes effect immediately (xfs_quota applies live). The
-# container must still be restarted to refresh the 'quota:' value shown in
-# the client's info text; the live 'Used: X of Y' figure in the info channel
-# (see README Chapter 7) reflects the new limit right away, since it reads
-# the XFS quota directly via statvfs().
+# container must still be restarted to refresh the 'quota (configured):' value
+# shown in the client's info text; the live 'Used: X of Y' figure in the info
+# channel (see README Chapter 7) reflects the new limit right away, since it
+# reads the XFS quota directly via statvfs(). Until the restart the client sees
+# the new limit as its 'Used:' total beside the previous recorded figure —
+# labelled as such, and the enforced one is correct throughout.
 #
 # Usage:
 #   ./scripts/02-change-user-quota.sh <username> <new-quota>
@@ -265,4 +267,10 @@ if [ "$OLD_QUOTA" = "$QUOTA" ]; then
 else
     echo "[quota] Quota for '$USERNAME' changed: ${OLD_QUOTA} → ${QUOTA} (enforced immediately)"
 fi
-echo "→ Restart the container to refresh the 'quota:' value in the client's info text."
+echo "→ Restart the container to refresh the 'quota (configured):' value in the"
+echo "  client's info text:"
+echo "    ./scripts/92-container-restart.sh"
+echo "  The limit itself needs no restart — it is enforced already, and the info"
+echo "  channel's live 'Used: X of Y' line reports it right now. Only the recorded"
+echo "  figure beside it is stale, so this restart is cosmetic and can wait for a"
+echo "  moment when no client is backing up."

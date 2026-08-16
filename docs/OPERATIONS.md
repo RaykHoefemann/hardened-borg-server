@@ -120,16 +120,18 @@ source: https://github.com/RaykHoefemann/hardened-borg-server
 
 [client]
 user: user1-os1-pc1
-quota: 50G
-
+quota (configured): 50G
 Used: 12.4 GiB of 50.0 GiB (24%)
 ```
+
+**Two limits, and only one of them binds.** `quota (configured):` is what `clients.conf` recorded when this text was last rendered. The total in the `Used:` line is what the filesystem enforces, read at query time. Normally they are the same number said twice. When they differ, **the `Used:` total is the one in force** — the label exists so that the pair cannot be read as a single claim, and so that a client can see the difference at all. The operator's side of that condition is verification check `5.5A` and Chapter 9.4; the client's is `5.5B`.
 
 - The text part is rendered automatically whenever `authorized_keys` is rebuilt (i.e. on every container start), based on `clients.conf` and `server_info.conf`. One file per client, under `/run/borg-info/` inside the container, mirroring the client's repository path — runtime state that lives and dies with the container, not data. Clients cannot read or modify it: the only thing that reaches them is the output above.
   - It deliberately does **not** live inside the client's repository directory, where earlier releases put it. `borg init` refuses to initialize a directory that is not empty, so a server-written file there made every new client's first command fail. A leftover from those releases is removed automatically at the next container start.
   - It is also not read from `/config` on demand: `clients.conf` describes *every* client, while the process serving a client runs unprivileged and must never be able to reach more than that client's own entry (see [Design](DESIGN.md) 2.2).
 - The `Used:` line is computed **live at query time** from the client's own repository directory via `statvfs()`. Because the repository sits under an enforcing XFS project quota (Chapter 1.1.3), `statvfs()` reports the quota's limit and current consumption directly, so no elevated privileges, quota tooling, or host-side helper are needed inside the container. The reported limit is the actual filesystem-enforced quota, not merely the configured `clients.conf` value.
   - *Diagnostic:* if this line reports the size of the whole underlying disk instead of the per-client limit, project-quota enforcement is not active on the repository mount (i.e. the mount is missing `prjquota` / is `pqnoenforce`).
+  - *Diagnostic:* if it disagrees with `quota (configured):` above it by any other figure, enforcement is fine but this client's project id carries a limit that `clients.conf` does not record. `09-show-all-users.sh` marks exactly that client with `(!)`, and `02-change-user-quota.sh <client> <quota>` re-applies the intended value (Chapter 9.4). Until then the client is held to the figure in the `Used:` line, not to the recorded one.
 - No interactive shell, TTY, or any command other than `info` and the normal Borg protocol is accepted; any other command is rejected.
 - See Chapter 2.4 for the privacy rationale behind what this channel does and does not expose.
 
@@ -232,6 +234,8 @@ there) for the operations that need `CAP_SYS_ADMIN`.
 ./scripts/00-ssh-create-user.sh user1-os1-pc1 OWN 50G
 ```
 
+It creates the client but does not authorize it: that takes the key (Chapter 9.3) and a container restart (Chapter 9.10), and the script closes by naming both. `authorized_keys` is generated at container start and nowhere else, and a client whose key file is still empty is skipped there — so restarting before the key is set authorizes nobody.
+
 ## 9.3. 01-ssh-set-user-key.sh
 
 Sets (or overwrites, with confirmation) the public SSH key for an existing client. Accepts either a path to a key file or the key string directly.
@@ -246,6 +250,8 @@ Sets (or overwrites, with confirmation) the public SSH key for an existing clien
 ./scripts/01-ssh-set-user-key.sh user1-os1-pc1 ~/.ssh/id_ed25519.pub
 ./scripts/01-ssh-set-user-key.sh user1-os1-pc1 "ssh-ed25519 AAAA… user1-os1-pc1"
 ```
+
+The key takes effect on the next container start, which is what regenerates `authorized_keys` — `./scripts/92-container-restart.sh` (Chapter 9.10). Until then the client is provisioned but has no access. The restart drops connections in flight, a backup in progress included, so it is worth timing rather than firing blind; a transfer cut short leaves segments that append-only cannot reclaim (Chapter 10.4).
 
 ## 9.4. 02-change-user-quota.sh
 
@@ -293,7 +299,7 @@ Two things follow from doing it in that order:
   ```
 - **Re-running with the current value repairs drift.** Asking for the quota a client already has is normally a no-op — but if the enforced limit disagrees with `clients.conf` (someone ran `xfs_quota` by hand, a limit was lost), the script says so and re-applies it instead of reporting "nothing to change". This is the command `09-show-all-users.sh` points at when it flags a mismatch.
 
-> The container still needs a restart to refresh the *displayed* `quota:` value in the client's info text (see Chapter 8) — the actual enforced limit and the live `Used: X of Y` figure update immediately regardless, since both are read straight from the filesystem quota.
+> The container still needs a restart — `./scripts/92-container-restart.sh` (Chapter 9.10) — to refresh the *displayed* `quota (configured):` value in the client's info text (see Chapter 8). The actual enforced limit and the live `Used: X of Y` figure update immediately regardless, since both are read straight from the filesystem quota. Until that restart the client's info text shows the new limit as its `Used:` total beside the previous recorded figure. That is the labelled, legitimate form of the disagreement described in Chapter 8, not a drift: the enforced number is correct throughout — which is why this one restart is cosmetic and can wait for a moment when no client is backing up.
 
 Run as the normal operator user, not as root — only the individual
 `xfs_quota` calls inside the script elevate via `sudo` (you'll be prompted
@@ -411,6 +417,8 @@ Restarts the container via the systemd user service. **Run this after any change
 ./scripts/92-container-restart.sh
 ```
 
+Because the unit runs `podman run --rm`, this is a teardown rather than a reload: every SSH session ends with it, including a backup in progress. A `borg create` cut off mid-transaction leaves segments that append-only cannot reclaim (Chapter 10.4), so a restart is worth timing rather than firing blind — and after `02-change-user-quota.sh` it is cosmetic to begin with, since the new limit is enforced immediately. Applying a configuration change *without* this restart is [Roadmap](../ROADMAP.md) 11.7.
+
 ## 9.11. 99-container-status.sh
 
 Shows a combined status view, opening with the release identity of this installation:
@@ -456,6 +464,60 @@ The journal appears once, in that section alone. The container's output is hande
 ```
 
 > Because the unit uses `--rm` (see Chapter 6.2.4), a stopped container is removed rather than left in an exited state — so `podman ps -a` normally shows nothing for it between runs. This is expected; the script accounts for it and falls back to reporting that the container may be running transiently under systemd.
+
+## 9.12. Clearing a client's repository directory — by hand
+
+> **The one operation in this chapter with no script.** It is also the only way out of two states the server refuses on purpose, and the repair a client is told to ask for in [Client Usage](CLIENTUSE.md) chapter 3.1. Read the whole chapter before running anything: the dangerous part is not the deletion, it is deciding that deletion is the right answer.
+
+**When it applies.** The client reports a `DENY:` line from the server and cannot get past it, no matter how often it retries. Two of those lines are cleared by this procedure, and they differ in what clearing costs:
+
+| The client reports | What is on the server | What clearing means |
+|---|---|---|
+| `DENY: no repository segments found` | `config`, `README` and an empty `data/` — the skeleton an **interrupted `borg init`** leaves behind (borg writes those three on the server *before* it asks the client for a passphrase — [Client Usage](CLIENTUSE.md) chapter 3.1) | **Harmless.** No backup exists yet; the client is being kept out of an empty shell |
+| `DENY: repo stores key material server-side (not keyfile mode)` or `DENY: not a keyfile repository (key type 0x…)` | a complete repository initialized in a **rejected encryption mode** | **Destructive.** It holds the client's archives, and this server will not serve them in any mode. Requires the client's explicit go-ahead — they lose whatever they backed up into it |
+
+A third refusal is **not** this procedure:
+
+```
+DENY: repo non-empty but config missing – needs manual admin review
+```
+
+Content without a `config` is not a state this server or borg produces on its own. Investigate before touching anything ([Recovery](RECOVERY.md)); clearing it destroys the evidence along with whatever is there.
+
+**Step 1 — look before you clear.**
+
+Run as **the same user that runs the container**, for the reason given in Chapter 9.2: the repository files belong to the container's `borg` user, and `podman unshare` resolves that mapping for *that user's* namespace only.
+
+```bash
+podman unshare ls -A   <HOST_REPO_BASE>/<group>/<client>
+podman unshare find    <HOST_REPO_BASE>/<group>/<client>/data -type f
+```
+
+- Exactly `README`, `config` and `data`, with the `find` printing **nothing** — the skeleton. This is the first row of the table, and clearing is safe.
+- Any file under `data/` — the directory holds client data. Clearing is the second row and needs the client's agreement first. If the client's report was `no repository segments found` while files *are* there, the two do not add up: stop and investigate rather than clear.
+
+**Step 2 — clear the contents, never the directory.**
+
+```bash
+podman unshare find <HOST_REPO_BASE>/<group>/<client> -mindepth 1 -delete
+podman unshare ls -A <HOST_REPO_BASE>/<group>/<client>          # must print nothing
+```
+
+`-mindepth 1` is the whole point: it empties the directory and leaves the directory itself standing. Verify with `ls -A` rather than `ls` — the wrapper's "is this repository fresh" test counts hidden entries too, so a single leftover dotfile keeps the client refused, and with a *different* message (`repo non-empty but config missing`) that sends the next reader to the wrong chapter.
+
+**Why the directory itself must survive.** The XFS project id lives on the directory (`00-ssh-create-user.sh` assigns it with `xfs_quota -x -c 'project -s -p …'`), and the quota is enforced against that id. Remove the directory and the id goes with it; the wrapper then recreates the path on the client's next connection with a plain `mkdir -p`, and the client is served from a directory that no quota applies to. It backs up normally, bounded by the volume rather than by its limit — the `none (!)` state `09-show-all-users.sh` reports and Chapter 10.2 counts against the whole disk. `02-change-user-quota.sh` will not repair it either; it stops at `has no valid XFS project id assigned`, and reassigning one is a manual `xfs_quota` call followed by re-applying the limit. Delete the contents rather than the directory and none of this can happen.
+
+**Step 3 — the client re-initializes.**
+
+Nothing in `/config` changed, so **no container restart is needed**: `authorized_keys`, the client's key and its info text are untouched. The client runs its own `borg init` again ([Client Usage](CLIENTUSE.md) chapter 3.1, which is also verification check `0.5B`) — with `--encryption=keyfile-blake2` or `keyfile`, and in the second row's case that correction is the reason the directory was cleared at all.
+
+Then confirm from the host:
+
+```bash
+./scripts/09-show-all-users.sh
+```
+
+An unmarked `QUOTA` and `CONFIGURED` for that client is what says the project id survived step 2. That check is verification `5.5A`, and running it here costs nothing.
 
 ---
 

@@ -141,8 +141,7 @@ source: https://github.com/RaykHoefemann/hardened-borg-server
 
 [client]
 user: user1-os1-pc1
-quota: 50G
-
+quota (configured): 50G
 Used: 0 KiB of 50.0 GiB (0%)
 ```
 
@@ -151,6 +150,14 @@ your key is installed, the forced command is in effect, and your quota is
 enforced at the filesystem level. If `Used:` reports the size of a whole disk
 rather than your quota, tell your operator — per-client limits are not active
 (see [Verification](VERIFICATION.md), check 5.5B).
+
+The last two lines name a limit each, and they are not the same statement.
+`quota (configured):` is what your operator recorded for you; the total in the
+`Used:` line is what the server's filesystem actually enforces, measured as you
+ask. **The `Used:` total is the one that stops your backup.** They normally
+agree. If they do not, you are being held to the `Used:` figure — worth a
+message to your operator either way, and urgently so if it is the smaller of
+the two.
 
 If instead you get a shell prompt, stop and report it. That is a serious
 misconfiguration, not a convenience.
@@ -183,7 +190,26 @@ DENY: not a keyfile repository (key type 0x03); only client-held keyfile encrypt
 
 If you see either, you initialized with the wrong mode. Ask your operator to
 clear the repository directory and start again — you cannot delete it
-yourself (Chapter 4).
+yourself (Chapter 4). Say plainly what is in there: clearing it destroys
+whatever you already backed up into that repository, and this server cannot
+serve it back to you in the mode it was created in.
+
+**An interrupted `init` ends the same way, from the other direction.** Borg
+creates `config`, `README` and an empty `data/` on the server *before* it asks
+you for a passphrase, so anything that ends the command at that prompt — Ctrl-C,
+a mistyped repeat, a script run without a terminal — leaves a directory that
+holds no backup and is no longer empty. Every attempt after that, including a
+perfectly correct one, is refused with:
+
+```
+DENY: no repository segments found
+```
+
+The server cannot tell an unfinished repository from one whose data went
+missing, so it refuses both. That is the safe answer and the reason retrying
+never clears it. Ask your operator to clear the directory, quote that line so
+they know which state they are looking at, and run `borg init` again afterwards
+— nothing is lost, because nothing was ever stored.
 
 ### 3.2. Export the key and store it offline — now, not later
 
@@ -417,5 +443,6 @@ monthly or quarterly is more realistic than nightly for a large repository.
 | Lost key or passphrase | **Nobody.** The backups are unrecoverable |
 | Accidental archive deletion | Operator, via rollback — act fast ([Recovery](RECOVERY.md) §1) |
 | Quota exhausted | Operator raises it; you stop the timer meanwhile |
-| Repository initialized with the wrong encryption mode | Operator clears the directory; you re-initialize |
+| Repository initialized with the wrong encryption mode | Operator clears the directory; you re-initialize — and lose what was in it (Chapter 3.1) |
+| Interrupted `borg init` — `DENY: no repository segments found` | Operator clears the directory; you re-initialize, losing nothing (Chapter 3.1) |
 | Verifying archive contents | **Only you** — the server has no key |

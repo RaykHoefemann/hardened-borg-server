@@ -172,8 +172,15 @@ assert "1.3 entry carries the client's own repo path and 'restrict'" $?
 
 INFO1="$INFOD/repo/OWN/user1.txt"
 
-[ -f "$INFO1" ] && grep -q 'quota: 50G' "$INFO1"
-assert "1.4 info text rendered with the client's quota" $?
+# Labelled, and the label is part of the assertion: the wrapper prints a live
+# 'Used: X of Y' line right after this text, whose Y is the enforced limit. An
+# unlabelled 'quota:' beside it reads as the same claim, which is how a client
+# can be shown two different limits at once (#28).
+[ -f "$INFO1" ] && grep -q 'quota (configured): 50G' "$INFO1"
+assert "1.4 info text rendered with the client's quota, labelled as configured" $?
+
+[ -f "$INFO1" ] && ! grep -qE '^quota: ' "$INFO1"
+assert "1.4b no bare 'quota:' line that could be read as the enforced limit" $?
 
 grep -q 'name: testserver' "$INFO1" 2>/dev/null
 assert "1.5 info text carries server_info.conf" $?

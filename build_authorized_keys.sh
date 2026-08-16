@@ -207,6 +207,16 @@ while IFS=":" read -r name group repo quota; do
     # at container start, before sshd exists — but it can also be run inside a
     # live container, where an 'info' request may read the file at the very
     # moment it is rewritten. A torn read would misreport an account.
+    #
+    # 'quota (configured)' is labelled, not bare. The wrapper prints a live
+    # 'Used: X of Y' line straight after this text, and that Y is the limit the
+    # filesystem actually enforces — read through statvfs() at query time. This
+    # value is the one clients.conf recorded when the file was last rendered.
+    # The two normally agree and can legitimately differ for a while (a quota
+    # changed by 02-change-user-quota.sh takes effect immediately but this text
+    # is only rewritten when the script runs again), so the client is told which
+    # is which rather than being shown two unlabelled numbers claiming to be the
+    # same thing. VERIFICATION 5.5B decides on the enforced one (#28).
     cat > "${INFO_FILE}.tmp" <<EOF
 [server]
 name: ${SERVER_NAME}
@@ -219,7 +229,7 @@ source: ${SOURCE_URL}
 
 [client]
 user: ${name}
-quota: ${quota}
+quota (configured): ${quota}
 EOF
 
     chown borg:borg "${INFO_FILE}.tmp"
