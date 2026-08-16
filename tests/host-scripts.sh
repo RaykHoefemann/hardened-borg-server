@@ -224,6 +224,44 @@ OUT="$(diff <(awk '/^```ini$/{f=1;next} f&&/^```$/{exit} f' "$ROOT/docs/DEPLOYME
 [ -z "$OUT" ]
 assert "0.7 the unit quoted in DEPLOYMENT.md is identical to the template" $?
 
+# --- the image's SSH daemon configuration ---------------------------------
+#
+# The daemon's own configuration is the lock behind the forced command: if a
+# key ever reaches authorized_keys without command= and restrict, these are
+# what still refuse a TTY, forwarding, password authentication and any account
+# but borg. VERIFICATION test 1.5 measures that on the running container, which
+# is the only proof that counts — and it needs a container, so it cannot run
+# here.
+#
+# What can run here is the guard against losing a directive while editing the
+# Dockerfile. Drop one and nothing breaks visibly: the runtime test keeps
+# passing against the image already pulled, and only starts failing after the
+# next rebuild — by which point nothing points at the commit that did it.
+#
+# Keep this list in step with test 1.5's pass criterion. The two describe the
+# same settings, one as written and one as sshd resolves it.
+RC=0
+SSHD_CONF="$(sed -n '/> \/etc\/ssh\/sshd_config/,/^EOF$/p' "$ROOT/Dockerfile")"
+SSHD_MISSING=""
+for directive in \
+    "PermitRootLogin no" \
+    "PasswordAuthentication no" \
+    "PermitEmptyPasswords no" \
+    "AllowUsers borg" \
+    "PermitTTY no" \
+    "AllowTcpForwarding no" \
+    "X11Forwarding no" \
+    "PermitTunnel no" \
+    "GatewayPorts no" \
+    "PubkeyAuthentication yes"; do
+    printf '%s\n' "$SSHD_CONF" | grep -qx "$directive" \
+        || SSHD_MISSING="${SSHD_MISSING}
+  ${directive}"
+done
+OUT="missing from the image's sshd_config:${SSHD_MISSING}"
+[ -z "$SSHD_MISSING" ]
+assert "0.8 the image's sshd_config still carries every hardening directive" $?
+
 # =========================================================================
 # 01-ssh-set-user-key.sh
 # =========================================================================

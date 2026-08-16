@@ -318,6 +318,79 @@ command is not in effect for this key. Stop and go to test 3.
 
 ---
 
+## 1.5. The SSH daemon permits nothing beyond the forced command ⚠️
+
+**Claim** — [Design](DESIGN.md) Chapter 1.2.2: the forced command is not the
+only thing standing between a client and a shell. Interactive TTYs, every form
+of forwarding, password authentication and root login are disabled in the
+daemon itself, and only the `borg` account may authenticate at all.
+
+**Why it matters** — test 1 shows that a client cannot get a shell *today*,
+with the forced command in place. This one shows what is left if that line is
+ever wrong. A key that reaches `authorized_keys` without `command=` and
+`restrict` — a hand edit, a restored backup, an operator experiment, a
+regression in the generator — still cannot open a TTY, forward a port, or
+authenticate as anyone but `borg`. It is the lock behind the lock, and the only
+one that does not depend on a file being generated correctly.
+
+Tests 1 and 3 examine what the generator produced. This one examines what the
+daemon will accept regardless.
+
+**Run** (on the host)
+
+```bash
+podman exec borg-server sshd -T | grep -Ei \
+  '^(permitrootlogin|passwordauthentication|permitemptypasswords|allowusers|permittty|allowtcpforwarding|x11forwarding|permittunnel|gatewayports|pubkeyauthentication) ' \
+  | sort
+```
+
+`sshd -T` prints the configuration the running daemon actually resolved — not
+the file it was meant to read. That distinction is the whole test: reading
+`/etc/ssh/sshd_config`, or the `Dockerfile` it was written from, proves what
+was *intended*. A configuration mounted over the image's own, an image rebuilt
+locally from a modified source, or a `Match` block narrowing none of this,
+would all leave those files looking correct and show up here.
+
+**Pass**
+
+```
+TBD — to be filled in from a real run against a live container.
+Expected, from the image's own sshd_config (Dockerfile):
+  allowtcpforwarding no
+  allowusers borg
+  gatewayports no
+  passwordauthentication no
+  permitemptypasswords no
+  permitrootlogin no
+  permittty no
+  permittunnel no
+  pubkeyauthentication yes
+  x11forwarding no
+```
+
+**Fail** — any other value on any of those lines. `permittty yes`, a missing or
+widened `allowusers`, or `passwordauthentication yes` each mean the daemon
+would permit what only the forced command is currently preventing — the second
+lock is open, and nothing but a generated file stands between a client and a
+shell. Re-pull the image and verify it (test 0); if the deployment mounts its
+own `sshd_config`, that file is now the thing to review, not the image.
+
+> **Also worth a look, but not part of the pass criterion:** the same command
+> without the filter shows `kexalgorithms`, `ciphers`, `macs` and
+> `hostkeyalgorithms`. The image pins modern ones (curve25519, ChaCha20-Poly1305
+> and AES-GCM, HMAC-SHA2-512-ETM, ed25519 host keys only). They are deliberately
+> left out of the criterion because their names shift between OpenSSH releases,
+> and a test that fails on a base-image upgrade teaches people to skip it.
+
+> Marked unverified: the procedure follows from `entrypoint.sh` (which runs
+> `sshd -D -e` as root inside the container, so `podman exec … sshd -T` has the
+> privileges it needs) and from the image's `sshd_config`, but it has not been
+> executed against a live container. Run it and the `Pass` block above can be
+> replaced with the measured output — see the note in test 0 about what a
+> procedure derived from source rather than from a run is worth.
+
+---
+
 ## 2. Default-deny on commands ⚠️
 
 **Claim** — `borg-wrapper.sh` gates on `$SSH_ORIGINAL_COMMAND` and permits

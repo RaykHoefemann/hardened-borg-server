@@ -325,12 +325,12 @@ It exists because those boundaries are otherwise scattered across five documents
 |---|---|---|
 | Compromised client deletes archives | Append-only, applied unconditionally to every connection (1.2.4) | Test 9 |
 | Compromised client destroys the whole repository | Same | Test 10 |
-| Client obtains a shell or runs arbitrary commands | Forced command + `restrict`, default-deny gating (1.2.1) | Tests 1, 2 |
+| Client obtains a shell or runs arbitrary commands | Forced command + `restrict`, default-deny gating (1.2.1), with the daemon itself permitting no TTY or forwarding (1.2.2) | Tests 1, 1.5, 2 |
 | Client reads another client's data or metadata | Fixed per-key repo path + `--restrict-to-path` (1.2.3, 2.2) | Test 7 |
 | Operator or server-side attacker reads backup contents | Client-held keyfile encryption, enforced at connection time (2.1.2) | Tests 6, 8 |
 | One client exhausts storage for the others | Enforcing XFS project quota (1.1.3) | Test 5 |
 | Undetected modification of stored data | Borg per-chunk authentication tags, verified on read (3.1) | — |
-| Password guessing, credential reuse | Key-only SSH; passwords and root login disabled (1.2.1) | Test 1 |
+| Password guessing, credential reuse | Key-only SSH; passwords and root login disabled (1.2.1) | Test 1.5 |
 
 The residual risk across this entire table is the same single point: every one of these properties depends on the client's key being bound to the forced command. One `authorized_keys` line without it voids all of them simultaneously, and nothing else in the system would look wrong. That is why Test 3 exists.
 
