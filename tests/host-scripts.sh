@@ -262,6 +262,17 @@ OUT="missing from the image's sshd_config:${SSHD_MISSING}"
 [ -z "$SSHD_MISSING" ]
 assert "0.8 the image's sshd_config still carries every hardening directive" $?
 
+# Present is not the same as in force. A Match block appended to the same
+# heredoc takes any of those directives back for the one account that can log
+# in, without removing a line — the check above stays green, and so did
+# VERIFICATION test 1.5 until #20, because sshd -T evaluates neither a Match
+# block (without -C) nor an Include it was never asked about. The image needs
+# neither directive, so here the requirement is simply that they do not appear.
+RC=0
+OUT="$(printf '%s\n' "$SSHD_CONF" | grep -nE '^[[:space:]]*(Match|Include)[[:space:]]')"
+[ -z "$OUT" ]
+assert "0.9 nothing in the image's sshd_config makes those directives conditional" $?
+
 # =========================================================================
 # 01-ssh-set-user-key.sh
 # =========================================================================

@@ -339,22 +339,47 @@ one that does not depend on a file being generated correctly.
 Tests 1 and 3 examine what the generator produced. This one examines what the
 daemon will accept regardless.
 
-**Run** (on the host)
+**Run** (on the host, in `bash` — the second command uses process substitution)
 
 ```bash
-podman exec borg-server sshd -T | grep -Ei \
-  '^(permitrootlogin|passwordauthentication|permitemptypasswords|allowusers|permittty|allowtcpforwarding|x11forwarding|permittunnel|gatewayports|pubkeyauthentication) ' \
-  | sort
+KEYS='^(permitrootlogin|passwordauthentication|permitemptypasswords|allowusers|permittty|allowtcpforwarding|x11forwarding|permittunnel|gatewayports|pubkeyauthentication) '
+
+podman exec borg-server sshd -T | grep -Ei "$KEYS" | sort
+
+diff <(podman exec borg-server sshd -T | grep -Ei "$KEYS" | sort) \
+     <(podman exec borg-server sshd -T -C user=borg,host=localhost,addr=127.0.0.1 \
+       | grep -Ei "$KEYS" | sort)
+
+podman exec borg-server grep -rnE '^[[:space:]]*(Match|Include)' \
+    /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null
 ```
 
 `sshd -T` prints the configuration the running daemon actually resolved — not
 the file it was meant to read. That distinction is the whole test: reading
 `/etc/ssh/sshd_config`, or the `Dockerfile` it was written from, proves what
-was *intended*. A configuration mounted over the image's own, an image rebuilt
-locally from a modified source, or a `Match` block narrowing none of this,
-would all leave those files looking correct and show up here.
+was *intended*. A configuration mounted over the image's own, or an image
+rebuilt locally from modified source, leaves both those files looking correct
+and shows up in the first command.
 
-**Pass**
+A `Match` block does not. **Without `-C`, `sshd -T` prints the global
+configuration and does not evaluate `Match` at all** — so a `Match User borg`
+that reopens TTY allocation, forwarding or password authentication for the one
+account `AllowUsers` permits stays invisible while the first command goes on
+printing ten correct lines. That is not hypothetical: staged on a bench, it
+produced a real interactive shell for a key the test was written to contain
+(#20). The second command asks the same daemon what applies to that account
+and requires the two answers to be identical; `sshd` derives group membership
+from `user=`, so a `Match Group` is covered by it too.
+
+A block keyed on the connection rather than the account — `Match Address`,
+`LocalPort`, `RDomain` — escapes any fixed connection spec, and the third
+command covers that from the other side: the image ships no `Match` and no
+`Include` at all, so any occurrence is something to account for, whoever put
+it there. `/etc/ssh/sshd_config.d/` need not exist; a missing directory is
+silenced by the redirect and is not a finding.
+
+**Pass** — the ten lines below from the first command, and **no output at all**
+from the other two:
 
 ```
 allowtcpforwarding no
@@ -370,17 +395,23 @@ x11forwarding no
 ```
 
 `sshd -T` prints every keyword it resolved, defaults included, so all ten lines
-appear on any daemon — what decides the test is the value on each.
+appear on any daemon — what decides the test is the value on each. An empty
+`diff` says the daemon applies the same hardening to `borg` that it applies
+globally; empty output from the last command says nothing in the configuration
+is in a position to make that conditional.
 
-**Fail** — any other value on any of those lines. `permittty yes`, a missing or
-widened `allowusers`, or `passwordauthentication yes` each mean the daemon
-would permit what only the forced command is currently preventing — the second
-lock is open, and nothing but a generated file stands between a client and a
-shell. Re-pull the image and verify it (test 0); if the deployment mounts its
-own `sshd_config`, that file is now the thing to review, not the image.
+**Fail** — any other value on any of those lines, any difference reported by
+the `diff`, or any line at all from the third command. `permittty yes`, a
+missing or widened `allowusers`, or `passwordauthentication yes` each mean the
+daemon would permit what only the forced command is currently preventing — the
+second lock is open, and nothing but a generated file stands between a client
+and a shell. A value that is correct globally and wrong under `-C user=borg`
+means precisely the same thing, reached by the one route the global output
+cannot show. Re-pull the image and verify it (test 0); if the deployment mounts
+its own `sshd_config`, that file is now the thing to review, not the image.
 
-> **Also worth a look, but not part of the pass criterion:** the same command
-> without the filter shows `kexalgorithms`, `ciphers`, `macs` and
+> **Also worth a look, but not part of the pass criterion:** the first command
+> without its filter shows `kexalgorithms`, `ciphers`, `macs` and
 > `hostkeyalgorithms`. The image pins modern ones (curve25519, ChaCha20-Poly1305
 > and AES-GCM, HMAC-SHA2-512-ETM, ed25519 host keys only). They are deliberately
 > left out of the criterion because their names shift between OpenSSH releases,
@@ -392,15 +423,15 @@ own `sshd_config`, that file is now the thing to review, not the image.
 > about — here it can be confirmed in the resolved configuration instead of
 > inferred from the symptom.
 
-> Marked unverified, although the procedure has now been run: against a live
-> `v0.1.0-beta.26` container it produced exactly the ten lines above, matching
-> the image's own `sshd_config` line for line. What is missing is the other
-> direction. The check has not been staged against a container with a widened
-> `sshd_config` mounted over the image's own — precisely the case it exists to
-> catch — so it has been shown to pass on a correct daemon, not to fail on a
-> tampered one. Test 0 carries the same caveat for the same reason. Until that
-> counter-check runs, treat an unexpected result here as a possible flaw in the
-> test as much as in the deployment.
+> Marked unverified, and both directions have now been run. Against a live
+> `v0.1.0-beta.26` container the first command produced exactly the ten lines
+> above. Staged against the same image with a widened `sshd_config` mounted
+> over its own, it reported five wrong values and failed as it should. Staged
+> once more with those same directives moved into a `Match User borg` block, it
+> reported ten correct lines — while a key without `command=` and `restrict`
+> opened an interactive shell on that container (#20). The `-C` run and the
+> `Match` check above exist because of that third case, and they have not
+> themselves been measured against it yet. The mark stays until they have.
 
 ---
 
