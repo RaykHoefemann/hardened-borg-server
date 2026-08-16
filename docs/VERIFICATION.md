@@ -357,19 +357,20 @@ would all leave those files looking correct and show up here.
 **Pass**
 
 ```
-TBD — to be filled in from a real run against a live container.
-Expected, from the image's own sshd_config (Dockerfile):
-  allowtcpforwarding no
-  allowusers borg
-  gatewayports no
-  passwordauthentication no
-  permitemptypasswords no
-  permitrootlogin no
-  permittty no
-  permittunnel no
-  pubkeyauthentication yes
-  x11forwarding no
+allowtcpforwarding no
+allowusers borg
+gatewayports no
+passwordauthentication no
+permitemptypasswords no
+permitrootlogin no
+permittty no
+permittunnel no
+pubkeyauthentication yes
+x11forwarding no
 ```
+
+`sshd -T` prints every keyword it resolved, defaults included, so all ten lines
+appear on any daemon — what decides the test is the value on each.
 
 **Fail** — any other value on any of those lines. `permittty yes`, a missing or
 widened `allowusers`, or `passwordauthentication yes` each mean the daemon
@@ -384,13 +385,22 @@ own `sshd_config`, that file is now the thing to review, not the image.
 > and AES-GCM, HMAC-SHA2-512-ETM, ed25519 host keys only). They are deliberately
 > left out of the criterion because their names shift between OpenSSH releases,
 > and a test that fails on a base-image upgrade teaches people to skip it.
+>
+> One line from the unfiltered output is worth reading whatever else you skip:
+> `maxauthtries 2`. It is the mechanism behind the "Too many authentication
+> failures" message that test 0.5 and [Client Usage](CLIENTUSE.md) both warn
+> about — here it can be confirmed in the resolved configuration instead of
+> inferred from the symptom.
 
-> Marked unverified: the procedure follows from `entrypoint.sh` (which runs
-> `sshd -D -e` as root inside the container, so `podman exec … sshd -T` has the
-> privileges it needs) and from the image's `sshd_config`, but it has not been
-> executed against a live container. Run it and the `Pass` block above can be
-> replaced with the measured output — see the note in test 0 about what a
-> procedure derived from source rather than from a run is worth.
+> Marked unverified, although the procedure has now been run: against a live
+> `v0.1.0-beta.26` container it produced exactly the ten lines above, matching
+> the image's own `sshd_config` line for line. What is missing is the other
+> direction. The check has not been staged against a container with a widened
+> `sshd_config` mounted over the image's own — precisely the case it exists to
+> catch — so it has been shown to pass on a correct daemon, not to fail on a
+> tampered one. Test 0 carries the same caveat for the same reason. Until that
+> counter-check runs, treat an unexpected result here as a possible flaw in the
+> test as much as in the deployment.
 
 ---
 
@@ -507,7 +517,7 @@ would be advisory fiction.
 
 ```bash
 findmnt -no OPTIONS /var/mnt/extern1 | tr ',' '\n' | grep -E 'prjquota|pqnoenforce'
-sudo xfs_quota -x -c 'state' /var/mnt/extern1 | grep -i enforce
+sudo xfs_quota -x -c 'state -p' /var/mnt/extern1 | grep -i enforce
 ```
 
 Then, for every client at once (on the host):
@@ -542,11 +552,15 @@ mean "look here"; only the ones in the columns are about whether quotas are
 **Fail** — if the second figure is the size of the whole underlying disk
 rather than your configured quota, project quota enforcement is not active
 for that repository. This is the single most common misconfiguration, and it
-is invisible until a client fills the volume. On the host side the same
-condition appears as `none (!)` in the `QUOTA` column; a marked value in
-`CONFIGURED` means a limit *is* enforced, but not the one `clients.conf`
-records — the `QUOTA` column is the one in force. Re-apply the intended value
-with `02-change-user-quota.sh` (OPERATIONS Chapter 9.4).
+is invisible until a client fills the volume. The host side says so twice:
+`state -p` reports `Enforcement: OFF` — a volume mounted `pqnoenforce` accounts
+without enforcing and looks exactly like this, which is why the mount option is
+read in the same step — and the listing shows `none (!)` in the `QUOTA` column.
+A marked value in `CONFIGURED` means a limit *is* enforced, but not the one
+`clients.conf` records — the `QUOTA` column is the one in force. Re-apply the
+intended value with `02-change-user-quota.sh` (OPERATIONS Chapter 9.4); a
+non-enforcing mount is a host matter and is fixed first, at the volume —
+[Server Installation](SERVERINSTALL.md) step 0.
 
 One route into this state is closed by the tooling itself: `00-` and `02-`
 refuse a quota above 99% of the volume, because a limit at or above the volume
