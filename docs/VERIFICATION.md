@@ -907,7 +907,7 @@ Both checks run on the host and describe the **volume**. Whether each client is
 then held to the limit `clients.conf` records is a different question with a
 different repair, and is test 5.5.
 
-### 5A — the mount enforces project quotas ⚠️
+### 5A — the mount enforces project quotas ✅
 
 **Run**
 
@@ -921,7 +921,7 @@ findmnt -no OPTIONS /var/mnt/extern1 | tr ',' '\n' | grep -E 'prjquota|pqnoenfor
 applied. No limit set anywhere above this line means anything until the mount is
 fixed — [Server Installation](SERVERINSTALL.md) step 0.
 
-### 5B — the filesystem reports project quota as enforcing ⚠️
+### 5B — the filesystem reports project quota as enforcing ✅
 
 **Run**
 
@@ -949,12 +949,18 @@ tells the two apart. Fix it at the volume, not at the client's quota.
 right one. A volume can enforce project quotas perfectly while a client's
 project id carries no limit at all, which is test 5.5.
 
-> Both checks stay unverified with one direction measured: on a real
-> installation, 5A reported `prjquota` without `pqnoenforce` and 5B reported
-> `Enforcement: ON` (#18). Neither has been run against a volume remounted
-> without enforcement — the recipe for that is the first row of the "Break this"
-> table in [Test Environment](TESTENV.md), and running it is what would lift
-> both marks.
+> **Both checks are verified, in both directions**, on Fedora CoreOS 44
+> (kernel 6.12) with an XFS volume mounted `prjquota`. Correct state: 5A
+> reported `prjquota` without `pqnoenforce`, 5B `Enforcement: ON` (#18). Broken
+> state, produced with `sudo xfs_quota -x -c 'disable -p' <mount>`: 5A reported
+> `pqnoenforce`, 5B `Enforcement: OFF`; both returned to passing after
+> `enable -p` (#22).
+>
+> **What does not produce that state is `mount -o remount,noquota`.** XFS does
+> not accept quota state changes on remount: the option is parsed, `mount` exits
+> 0, and enforcement stays on. This page nominated that recipe until beta.28,
+> which would have shown an operator every check still passing and taught them
+> the checks do not discriminate — the precise opposite of the exercise (#22).
 
 ---
 
@@ -970,7 +976,7 @@ limit that is enforced but *different* from the recorded one is worse than
 either: every document, preview and listing describes a number that is not the
 one holding.
 
-### 5.5A — the operator's listing agrees with `clients.conf` ⚠️
+### 5.5A — the operator's listing agrees with `clients.conf` ✅
 
 **Run** (on the host)
 
@@ -995,7 +1001,7 @@ value in `CONFIGURED` means a limit *is* enforced, but not the one
 `clients.conf` records — the `QUOTA` column is the one in force. Re-apply the
 intended value with `02-change-user-quota.sh` (OPERATIONS Chapter 9.4).
 
-### 5.5B — the client is told its own limit ⚠️
+### 5.5B — the client is told its own limit ✅
 
 **Run** — from the client:
 
@@ -1025,11 +1031,20 @@ for. Asking for one is a quick way to see that the refusal works.
 recorded quotas oversubscribe the volume is a capacity decision the listing
 reports on its `Committed:` line and this test deliberately does not judge.
 
-> Both checks stay unverified with one direction measured: on a deliberately
-> overcommitted installation with three clients at 50G/50G/10G, 5.5A listed
-> every `CONFIGURED` value unmarked and 5.5B reported each client its own limit
-> (#17). What has not been staged is a client whose enforced limit differs from
-> the recorded one — the case 5.5A exists to catch.
+> **Both checks are verified, in both directions.** Correct state: on a
+> deliberately overcommitted installation with three clients at 50G/50G/10G,
+> 5.5A listed every `CONFIGURED` value unmarked and 5.5B reported each client
+> its own limit (#17). Broken state, with enforcement switched off at the volume
+> (`sudo xfs_quota -x -c 'disable -p' <mount>`): 5.5A listed `none (!)` as the
+> enforced quota against a `CONFIGURED` of `50G (!)` for every client, and 5.5B
+> reported `Used: 1.9 GiB of 99.9 GiB` — the whole volume against a 50G quota,
+> which is this check's failure text word for word (#22).
+>
+> One narrower case remains unstaged, and it is the one 5.5A is really for: a
+> *single* client whose project id carries a wrong limit while the volume
+> enforces normally for everyone else. The measurement above takes enforcement
+> away from all clients at once, so it shows the listing reacting to a
+> disagreement, not that it localizes one.
 
 ---
 
@@ -1277,17 +1292,17 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 | 4A | Podman itself is rootless | ⚠️ | ☐ |
 | 4B | The container is a user service | ⚠️ | ☐ |
 | 4C | The container's processes belong to an unprivileged user | ⚠️ | ☐ |
-| 5A | The mount enforces project quotas | ⚠️ | ☐ |
-| 5B | The filesystem reports project quota as enforcing | ⚠️ | ☐ |
-| 5.5A | The operator's listing agrees with `clients.conf` | ⚠️ | ☐ |
-| 5.5B | The client is told its own limit | ⚠️ | ☐ |
+| 5A | The mount enforces project quotas | ✅ | ☐ |
+| 5B | The filesystem reports project quota as enforcing | ✅ | ☐ |
+| 5.5A | The operator's listing agrees with `clients.conf` | ✅ | ☐ |
+| 5.5B | The client is told its own limit | ✅ | ☐ |
 | 6 | No key material on the server | ⚠️ | ☐ |
 | 7 | Clients isolated from each other | ⚠️ | ☐ |
 | 8 | Keyfile-only encryption enforced | ⚠️ | ☐ |
 | 9 | Append-only enforced | ✅ | ☐ |
 | 10 | Repository destruction blocked | ✅ | ☐ |
 
-Six ✅ out of twenty-four. That ratio is the honest state of this page, and it
+Ten ✅ out of twenty-four. That ratio is the honest state of this page, and it
 is published rather than smoothed over: a ⚠️ here means the check has not been
 shown to fail when it should, which is a different and weaker statement than
 "your deployment is fine".

@@ -218,11 +218,21 @@ the test notices:
 
 | Break this | Expect |
 |---|---|
-| Remount the volume without `prjquota` (`sudo mount -o remount,noquota …`) | 5A and 5B fail at the volume; 5.5B fails at the client, where `info` reports the whole disk instead of the quota |
+| Switch enforcement off at the volume (`sudo xfs_quota -x -c 'disable -p' <mount>`) | 5A reports `pqnoenforce` and 5B `Enforcement: OFF`; 5.5A lists `none (!)` against a `CONFIGURED` of `50G (!)`, and 5.5B fails at the client, where `info` reports the whole disk instead of the quota. Restore with `enable -p` |
 | Append a line to the container's `authorized_keys` without the `command=` prefix | 3A counts it; drop only the `,restrict` from an otherwise correct line and it still does |
 | Initialize a repository with `--encryption=repokey` | Test 8 is refused on the next connection |
 | Mount an `sshd_config` over the image's own with a `Match User borg` block reopening `PermitTTY` | 1.5A still reports ten correct lines — 1.5B is what catches it |
 | Edit `IMAGE` in `config.sh` to a different digest and *do not* restart | 0C's two lines diverge. `99-container-status.sh` stays quiet if both digests carry the same version, which is the gap 0C exists to cover |
+
+> **The one that looks like it works and does not:** `sudo mount -o
+> remount,noquota <mount>`. XFS does not accept quota state changes on remount —
+> the option is parsed, `mount` exits 0, and the volume goes on enforcing
+> project quotas with `prjquota` still in `findmnt`. This table named that
+> recipe until beta.28, and it is the natural first thing to reach for, so it is
+> worth knowing that it is a no-op rather than a test that "everything still
+> passes" (#22). `xfs_quota ... disable -p` is also the kinder recipe: it needs
+> no unmount, so the bind mount into `/repo` stays in place and the container
+> never has to be touched.
 
 Restore the snapshot afterwards. This exercise is worth more than the passing
 run: it is the difference between "the tests are green" and "the tests would
