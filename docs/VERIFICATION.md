@@ -130,7 +130,10 @@ commit  : 293d1f1e06bb651435de7305e6731cbfee114c77
 
 Those five lines *are* the pass criterion, spelled out: the repository, the
 workflow, the tag and the commit that produced the image — and the subject
-digest, which is the index digest you pin below.
+digest, which is the index digest you pin below. The output above is the
+recorded run against `v0.1.0-beta.25`, kept as measured rather than updated
+with each release: it is evidence, not an example, and rewriting the tag in it
+would turn it into a claim nobody checked. Yours will name the tag you pulled.
 
 **It needs no registry credential, and a bad one will stop it.** The image is
 public, so the registry side of this command works anonymously. What `gh` does
