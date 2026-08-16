@@ -188,9 +188,9 @@ Retention should follow how long each failure class takes to notice — accident
 
 ## 11.6. Executable Verification Checks
 
-A runner that performs the host-side checks of [Verification](docs/VERIFICATION.md) as code — `tests/verify.sh 5B`, or all of them at once — so that an operator or a security researcher can obtain a machine-readable result without transcribing twenty-three commands by hand.
+A runner that performs the host-side checks of [Verification](docs/VERIFICATION.md) as code — `tests/verify.sh 5B`, or all of them at once — so that an operator or a security researcher can obtain a machine-readable result without transcribing twenty-four commands by hand.
 
-This became possible rather than merely desirable when the page moved to one criterion per check: `0A`, `0B`, `1.5A`–`1.5C`, `3A`, `3B`, `4A`–`4C`, `5A`, `5B` and `5.5A` each now name exactly one thing, have exactly one measurement, and have exactly one repair. A script per check is a transcription of that structure, not a reinterpretation of it.
+This became possible rather than merely desirable when the page moved to one criterion per check: `0A`–`0C`, `1.5A`–`1.5C`, `3A`, `3B`, `4A`–`4C`, `5A`, `5B` and `5.5A` each now name exactly one thing, have exactly one measurement, and have exactly one repair. A script per check is a transcription of that structure, not a reinterpretation of it.
 
 Scope is deliberately the **host side** only. The remaining checks — `0.5A`, `0.5B`, `1`, `2`, `5.5B`, `6`'s namespace entry, `7`, `8`, `9`, `10` — run from a client machine holding a provisioned key, write throwaway data into a real repository, and in the case of `9` leave roughly a megabyte behind permanently. Driving those from the host would mean the server holding a client key, which contradicts Chapter 2.1 outright. They stay manual, and the runner should say so rather than silently reporting a partial pass as a whole one.
 

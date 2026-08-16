@@ -222,6 +222,7 @@ the test notices:
 | Append a line to the container's `authorized_keys` without the `command=` prefix | 3A counts it; drop only the `,restrict` from an otherwise correct line and it still does |
 | Initialize a repository with `--encryption=repokey` | Test 8 is refused on the next connection |
 | Mount an `sshd_config` over the image's own with a `Match User borg` block reopening `PermitTTY` | 1.5A still reports ten correct lines — 1.5B is what catches it |
+| Edit `IMAGE` in `config.sh` to a different digest and *do not* restart | 0C's two lines diverge. `99-container-status.sh` stays quiet if both digests carry the same version, which is the gap 0C exists to cover |
 
 Restore the snapshot afterwards. This exercise is worth more than the passing
 run: it is the difference between "the tests are green" and "the tests would

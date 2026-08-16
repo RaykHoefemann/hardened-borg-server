@@ -137,10 +137,15 @@ client — the bench in [Test Environment](TESTENV.md) defines `borgA` and
 
 ## 0. The image was built from this source
 
-**Run this before the others.** Every test below examines the behaviour of a
-running container. If that container was not built from the source you
+**Run 0A and 0B before the others.** Every test below examines the behaviour of
+a running container. If that container was not built from the source you
 reviewed, all of them verify the wrong artifact — correctly, and pointlessly.
 This is the only test whose failure invalidates the entire rest of the page.
+
+`0C` is the exception to that order: it needs a running container, so it comes
+after installation. The three are one argument in sequence — this image was
+built here (`0A`), your configuration names that image (`0B`), and the process
+serving clients was started from it (`0C`).
 
 **Claim** — each published image carries a Sigstore build-provenance
 attestation, produced by this repository's own workflow
@@ -305,9 +310,8 @@ over time, and it makes every later upgrade a deliberate act.
 trustworthy. 0A proves the image was built by this repository's workflow from a
 named commit; whether that commit deserves your trust is a review question, and
 this page cannot answer it. Nor does either check say anything about the running
-container: an operator can verify an image and then run a different one, which
-is what 4C's `podman inspect` and the version reported by
-`99-container-status.sh` are for.
+container: an operator can verify an image, pin it, and still have a different
+one serving clients. That is 0C.
 
 > **0A is marked verified:** executed end to end against the published
 > `v0.1.0-beta.25` tag, signature check included, producing the five lines
@@ -340,6 +344,71 @@ is what 4C's `podman inspect` and the version reported by
 > remains untested is only the last step of the chain — that `podman image
 > inspect` on an *arm64 host* prints that host's manifest, as it demonstrably
 > does on amd64. The mark stays until someone runs it there.
+
+### 0C — the container is running the object you verified ⚠️
+
+0A and 0B are answered before a container exists; they are about an artifact in
+a registry. This is the return visit after installation, and it asks a
+different question: not what `config.sh` configures, but what the process
+serving clients right now was actually started from. Those two drift apart in
+one very ordinary way, and nothing else on this page notices.
+
+**Run** — on the host, as the service user, from `$INSTALL_PATH`:
+
+```bash
+podman inspect borg-server --format '{{.ImageName}}'
+grep '^IMAGE=' scripts/config.sh
+```
+
+**Pass** — both name the same `@sha256:` reference, and it is the digest 0A
+reported as `subject`:
+
+```
+ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest>
+IMAGE="ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest>"
+```
+
+With `IMAGE` pinned the way [Server Installation](SERVERINSTALL.md) step 3
+prescribes, this is a statement about *content*: a reference that names its
+object by hash cannot have been resolved to different bytes, so a container
+started from it is running what 0A verified.
+
+**Fail** — the two differ. The ordinary cause is an edit without a restart: an
+upgrade re-pinned `IMAGE` ([Deployment](DEPLOYMENT.md) 6.3 step 6) while the old
+container kept running, so the checkout, the unit and the configuration all
+describe a release that is not serving anyone. `92-container-restart.sh` is the
+repair. A `MISMATCH` line from `99-container-status.sh` reports the same
+situation when the two releases differ in version — but two *digests* of one
+version, which is what a rebuild produces, are invisible there and visible here.
+
+**Weaker when `IMAGE` carries a tag.** Then both sides can agree while the
+object underneath has been replaced, because a name is all either of them
+names. That is 0B's argument, seen from the running end.
+
+**Do not reach for `podman image inspect --format '{{.Digest}}'` to make this
+stricter.** It reports the per-architecture manifest, not the signed index, so
+it prints a digest that differs from the pinned one on a perfectly correct
+installation — the trap 0B describes, arriving this time from your own tooling
+rather than from the registry.
+
+**What this does not show** — that the image podman holds under that name is
+unmodified in local storage. This check reads podman's own record of what it
+started; it is not an independent hash of the bytes on disk. Nor does it say
+anything about the container's behaviour, which is every test below it.
+
+> **Unverified, and newer than the rest of the page.** The command is the one
+> `99-container-status.sh` already uses to print `Image:`, so its output form is
+> established, but the check has not been staged in the failing direction —
+> re-pinning without restarting and confirming that the two lines diverge. That
+> is a two-minute exercise on a test bench and it belongs in the "Break this"
+> table of [Test Environment](TESTENV.md).
+>
+> A stronger variant is being measured: reading the digest from podman's own
+> storage record (`RepoDigests`) rather than from the reference string, which
+> would also catch a re-pulled tag. It is not prescribed here until the output
+> has been observed on a real installation — including whether that field
+> carries the index digest or the per-architecture one, which is exactly the
+> distinction this check must not get wrong.
 
 ---
 
@@ -1195,6 +1264,7 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 |---|---|---|---|
 | 0A | Attestation verifies and names this repository (do this first) | ✅ | ☐ |
 | 0B | The verified index digest is the one pinned in `IMAGE` | ⚠️ | ☐ |
+| 0C | The running container was started from that digest | ⚠️ | ☐ |
 | 0.5A | The key authenticates and the info channel answers | ✅ | ☐ |
 | 0.5B | The client can initialize its repository | ✅ | ☐ |
 | 1 | No interactive shell | ⚠️ | ☐ |
@@ -1217,7 +1287,7 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 | 9 | Append-only enforced | ✅ | ☐ |
 | 10 | Repository destruction blocked | ✅ | ☐ |
 
-Six ✅ out of twenty-three. That ratio is the honest state of this page, and it
+Six ✅ out of twenty-four. That ratio is the honest state of this page, and it
 is published rather than smoothed over: a ⚠️ here means the check has not been
 shown to fail when it should, which is a different and weaker statement than
 "your deployment is fine".
