@@ -106,7 +106,7 @@ This works before your repository exists and confirms three things at once:
 your key is installed, the forced command is in effect, and your quota is
 enforced at the filesystem level. If `Used:` reports the size of a whole disk
 rather than your quota, tell your operator — per-client limits are not active
-(see [Verification](VERIFICATION.md), test 5).
+(see [Verification](VERIFICATION.md), check 5.5B).
 
 If instead you get a shell prompt, stop and report it. That is a serious
 misconfiguration, not a convenience.

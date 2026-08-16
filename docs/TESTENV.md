@@ -218,9 +218,10 @@ the test notices:
 
 | Break this | Expect |
 |---|---|
-| Remount the volume without `prjquota` (`sudo mount -o remount,noquota …`) | Test 5 fails: `info` reports the whole disk instead of the quota |
-| Append a line to the container's `authorized_keys` without the `command=` prefix | Test 3 counts it |
+| Remount the volume without `prjquota` (`sudo mount -o remount,noquota …`) | 5A and 5B fail at the volume; 5.5B fails at the client, where `info` reports the whole disk instead of the quota |
+| Append a line to the container's `authorized_keys` without the `command=` prefix | 3A counts it; drop only the `,restrict` from an otherwise correct line and it still does |
 | Initialize a repository with `--encryption=repokey` | Test 8 is refused on the next connection |
+| Mount an `sshd_config` over the image's own with a `Match User borg` block reopening `PermitTTY` | 1.5A still reports ten correct lines — 1.5B is what catches it |
 
 Restore the snapshot afterwards. This exercise is worth more than the passing
 run: it is the difference between "the tests are green" and "the tests would

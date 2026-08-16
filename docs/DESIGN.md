@@ -328,7 +328,7 @@ It exists because those boundaries are otherwise scattered across five documents
 | Client obtains a shell or runs arbitrary commands | Forced command + `restrict`, default-deny gating (1.2.1), with the daemon itself permitting no TTY or forwarding (1.2.2) | Tests 1, 1.5, 2 |
 | Client reads another client's data or metadata | Fixed per-key repo path + `--restrict-to-path` (1.2.3, 2.2) | Test 7 |
 | Operator or server-side attacker reads backup contents | Client-held keyfile encryption, enforced at connection time (2.1.2) | Tests 6, 8 |
-| One client exhausts storage for the others | Enforcing XFS project quota (1.1.3) | Test 5 |
+| One client exhausts storage for the others | Enforcing XFS project quota (1.1.3) | Tests 5, 5.5 |
 | Undetected modification of stored data | Borg per-chunk authentication tags, verified on read (3.1) | — |
 | Password guessing, credential reuse | Key-only SSH; passwords and root login disabled (1.2.1) | Test 1.5 |
 
