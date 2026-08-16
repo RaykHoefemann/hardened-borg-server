@@ -115,7 +115,7 @@ location: Frankfurt, DE
 contact: admin@example.com
 
 [software]
-version: 0.1.0-beta.29
+version: 0.1.0-beta.30
 source: https://github.com/RaykHoefemann/hardened-borg-server
 
 [client]
@@ -424,9 +424,9 @@ Because the unit runs `podman run --rm`, this is a teardown rather than a reload
 Shows a combined status view, opening with the release identity of this installation:
 
 ```
-Host scripts:     0.1.0-beta.29
+Host scripts:     0.1.0-beta.30
 Configured image: ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest>
-Running image:    0.1.0-beta.29
+Running image:    0.1.0-beta.30
 Bundled borg:     borg 1.4.0
 Base OS:          Debian 13.6
 Source:           https://github.com/RaykHoefemann/hardened-borg-server
