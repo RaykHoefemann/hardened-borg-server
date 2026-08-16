@@ -287,7 +287,17 @@ start, so restart after any change to `clients.conf` or a client's key:
 From the client machine (or any machine holding that client's private key):
 
 ```bash
-ssh -p 2222 borg@<server-host> info
+ssh borgserver info
+```
+
+`borgserver` is the `~/.ssh/config` alias from [CLIENTUSE.md](CLIENTUSE.md)
+chapter 1, and it is what tells ssh to offer the dedicated backup key —
+`borg@<server-host>` would offer the machine's default identities instead and
+fail with `Permission denied (publickey,…)` on a server where nothing is wrong.
+Without that block, name the key here:
+
+```bash
+ssh -i ~/.ssh/borg_backup -o IdentitiesOnly=yes -p 2222 borg@<server-host> info
 ```
 
 Expected output includes the server identity from step 7 and the client's own

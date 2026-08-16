@@ -252,7 +252,7 @@ Configured image: ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.28
 Running image:    0.1.0-beta.28
 ```
 
-A `MISMATCH` line here is the normal outcome of forgetting step 7 — the files on disk are new while the container still runs the old image. From a client, `ssh -p 2222 borg@<server> info` should now report the new version in its `[software]` section, since each client's info text is re-rendered at container start.
+A `MISMATCH` line here is the normal outcome of forgetting step 7 — the files on disk are new while the container still runs the old image. From a client, `ssh borgserver info` should now report the new version in its `[software]` section, since each client's info text is re-rendered at container start.
 
 ### What an upgrade does not touch
 

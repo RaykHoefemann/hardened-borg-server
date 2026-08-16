@@ -79,12 +79,59 @@ discriminate.
 Several tests leave roughly 1 MB behind permanently — under a correctly
 functioning server you cannot delete it, which is precisely the point.
 
-Throughout, replace `<server>` with your server host, `2222` with your
-configured `SSH_PORT`, and `<repo>` with the repository URL assigned to the
-client, e.g. `ssh://borg@<server>:2222/repo/OWN/user1-os1-pc1`. Host paths
-appear as this project's own example layout: `/var/mnt/extern1` is the mount
-point of the storage volume and `/var/mnt/extern1/borg-server` is
-`HOST_REPO_BASE` from `scripts/config.sh` — substitute your own.
+Throughout, replace `<server>` with your server host (a name or a bare IP),
+`2222` with your configured `SSH_PORT`, `<client>` with the client's name in
+`clients.conf`, and `<repo>` with the repository URL assigned to it, e.g.
+`ssh://borgserver/repo/OWN/user1-os1-pc1`. Host paths appear as this project's
+own example layout: `/var/mnt/extern1` is the mount point of the storage volume
+and `/var/mnt/extern1/borg-server` is `HOST_REPO_BASE` from `scripts/config.sh`
+— substitute your own.
+
+### How client-side commands are written here
+
+Commands run from a client use the `borgserver` alias established in
+[Client Usage](CLIENTUSE.md) chapter 1 — `ssh borgserver info`, and repository
+URLs as `ssh://borgserver/repo/OWN/<client>`. The alias carries the one thing
+these commands otherwise leave unsaid: **which key to offer**.
+
+A client that followed CLIENTUSE holds a *dedicated* key at
+`~/.ssh/borg_backup`, and that name is not among the identities ssh tries by
+itself (`id_rsa`, `id_ecdsa`, `id_ed25519`, …). Being dedicated is precisely
+what makes it invisible. Address the server as `borg@<server>` and ssh offers
+those defaults instead, the server rejects every one of them, and the answer is
+`Permission denied (publickey,keyboard-interactive)` — the same text 0.5A
+attributes to the locked-account bug, on a server where nothing is wrong (#24).
+
+Writing the expanded form does not merely lose the shorthand: `Host borgserver`
+in `~/.ssh/config` matches **the name you type**, not the machine you reach, so
+`borg@<server>` silently bypasses the block that would have named the key, even
+when its `HostName` is that very host.
+
+**No config block, or a server reachable only by IP.** Then name the key on the
+command line. Every client-side command on this page translates the same way:
+
+| This page writes | Equivalent without `~/.ssh/config` |
+|---|---|
+| `ssh borgserver <cmd>` | `ssh -i ~/.ssh/borg_backup -o IdentitiesOnly=yes -p 2222 borg@<server> <cmd>` |
+| `borg <cmd> ssh://borgserver/repo/OWN/<client>` | `BORG_RSH="ssh -i ~/.ssh/borg_backup -o IdentitiesOnly=yes" borg <cmd> ssh://borg@<server>:2222/repo/OWN/<client>` |
+
+Borg takes no `-i` of its own — `BORG_RSH` is where the key goes, because borg
+reaches the server by running ssh itself.
+
+`IdentitiesOnly=yes` is not decoration. Without it ssh offers the default
+identities and everything in the agent *in addition* to the key named by `-i`,
+and `MaxAuthTries 2` in the image cuts the connection after two rejections —
+often before the right key is ever tried. The failure then reads "Too many
+authentication failures", which points at the client's agent rather than at the
+missing key.
+
+Check 0.5A keeps the expanded form deliberately: it is the check that
+establishes whether the key works at all, and it must not depend on a
+configuration block being right.
+
+Where you hold more than one client identity, substitute your own alias per
+client — the bench in [Test Environment](TESTENV.md) defines `borgA` and
+`borgB` for exactly that, and test 7 is the one that needs both.
 
 ---
 
@@ -337,7 +384,7 @@ not an authorization one — resolve it before reading the case above into it.
 **Run** — from the same client:
 
 ```bash
-borg init --encryption=keyfile-blake2 ssh://borg@<server>:2222/repo/OWN/<client>
+borg init --encryption=keyfile-blake2 ssh://borgserver/repo/OWN/<client>
 ```
 
 **Pass** — the repository is created and Borg prints its key-custody warning.
@@ -373,7 +420,7 @@ in this document irrelevant.
 **Run**
 
 ```bash
-ssh -p 2222 borg@<server>
+ssh borgserver
 ```
 
 **Pass**
@@ -553,10 +600,10 @@ clients' repositories, alter quotas, or disable the wrapper itself.
 **Run**
 
 ```bash
-ssh -p 2222 borg@<server> "ls /"
-ssh -p 2222 borg@<server> "cat /etc/passwd"
-ssh -p 2222 borg@<server> "borg serve; rm -rf /"
-ssh -p 2222 borg@<server> info
+ssh borgserver "ls /"
+ssh borgserver "cat /etc/passwd"
+ssh borgserver "borg serve; rm -rf /"
+ssh borgserver info
 ```
 
 **Pass** — the first three produce:
@@ -863,7 +910,7 @@ intended value with `02-change-user-quota.sh` (OPERATIONS Chapter 9.4).
 **Run** — from the client:
 
 ```bash
-ssh -p 2222 borg@<server> info
+ssh borgserver info
 ```
 
 **Pass** — the info channel reports *your own* limit:
@@ -959,9 +1006,9 @@ between unrelated parties, including between `OWN` devices and external
 **Run** — from client A, aim at client B's repository path:
 
 ```bash
-borg list ssh://borg@<server>:2222/repo/OWN/<other-client>
-borg list ssh://borg@<server>:2222/repo/
-borg list ssh://borg@<server>:2222/etc/
+borg list ssh://borgserver/repo/OWN/<other-client>
+borg list ssh://borgserver/repo/
+borg list ssh://borgserver/etc/
 ```
 
 **Pass** — all three fail. The client's own repository remains accessible;
@@ -1046,13 +1093,13 @@ XFS project quota rather than Borg's own accounting.
 **Run**
 
 ```bash
-ssh -p 2222 borg@<server> info                      # note "Used:"
+ssh borgserver info        # note "Used:"
 head -c 1M /dev/urandom > /tmp/probe.bin
 borg create <repo>::verify-probe /tmp/probe.bin
-ssh -p 2222 borg@<server> info                      # must have grown
+ssh borgserver info        # must have grown
 borg delete <repo>::verify-probe
 borg compact <repo>
-ssh -p 2222 borg@<server> info                      # decisive
+ssh borgserver info        # decisive
 ```
 
 **Pass** — usage after the final step stays at the raised value, or is

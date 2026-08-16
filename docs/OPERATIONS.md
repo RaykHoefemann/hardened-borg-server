@@ -101,8 +101,10 @@ Strictly speaking this is not irreplaceable data. Everything in these files orig
 Each client can query basic server and account information over the same SSH connection used for backups — no additional service, port, or protocol is involved.
 
 ```bash
-ssh -p 2222 borg@<server-host> info
+ssh borgserver info
 ```
+
+`borgserver` is the client's `~/.ssh/config` alias from [Client Usage](CLIENTUSE.md) chapter 1; it is what selects the dedicated backup key. A client without that block writes `ssh -i ~/.ssh/borg_backup -o IdentitiesOnly=yes -p 2222 borg@<server-host> info` instead — the same command with the key named by hand.
 
 This returns two things: a small, read-only text describing the server and the client's account, followed by a single live line reporting current storage usage against the client's quota:
 
@@ -494,7 +496,7 @@ Live per-client usage for every client at once, plus total physical usage of the
 **The client**, over its normal SSH connection:
 
 ```bash
-ssh -p 2222 borg@<server-host> info
+ssh borgserver info
 ```
 
 Its own usage against its own quota (Chapter 8).

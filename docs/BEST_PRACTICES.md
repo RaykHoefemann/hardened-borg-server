@@ -61,7 +61,7 @@ Without these controls, application-level security guarantees are significantly 
   borg init --encryption=keyfile-blake2 <repo-url>
   ```
 
-  where `<repo-url>` is the client's assigned repository, e.g. `ssh://borg@<server-host>:2222/<assigned-repo-path>`.
+  where `<repo-url>` is the client's assigned repository, e.g. `ssh://borgserver/<assigned-repo-path>` using the `~/.ssh/config` alias from [Client Usage](CLIENTUSE.md) chapter 1 — that alias is what selects the client's dedicated backup key, which the expanded `ssh://borg@<server-host>:2222/...` form does not.
 
 - The key MUST NOT be stored on the server. Server-side or plaintext modes are **forbidden**: `repokey`/`repokey-blake2` (store the passphrase-wrapped key inside the repository on the server), `authenticated`/`authenticated-blake2` (store data in plaintext, integrity-protected only), and `none` (unencrypted).
 
@@ -155,7 +155,7 @@ It is a defense-in-depth option for operators with the means and requirement for
 - Run periodic `borg check` integrity validation
 - Audit backup execution behavior
 - Ensure backups are actually being created and not silently failing
-- Verify quota enforcement is active: `ssh -p 2222 borg@<server-host> info` must report the client's own limit (e.g. `of 50.0 GiB`), not the size of the whole underlying disk. A whole-disk figure indicates the repository mount is missing enforcing `prjquota` (see README, Chapter 7) — meaning per-client hard limits are not in effect
+- Verify quota enforcement is active: `ssh borgserver info` must report the client's own limit (e.g. `of 50.0 GiB`), not the size of the whole underlying disk. A whole-disk figure indicates the repository mount is missing enforcing `prjquota` (see README, Chapter 7) — meaning per-client hard limits are not in effect
 - The operator-side counterpart, for every client at once: `./scripts/09-show-all-users.sh`. It reports the limit the filesystem actually applies as each client's quota, with the configured value beside it in the `CONFIGURED` column, flagged where the two disagree or where no quota is in effect at all (see OPERATIONS Chapter 9.5). `00-ssh-create-user.sh` and `02-change-user-quota.sh` perform the same check on the limit they just set and refuse to record one that did not take effect
 
 ---

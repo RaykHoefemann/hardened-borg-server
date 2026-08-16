@@ -12,12 +12,17 @@
 Nothing from this project is installed on a client. A client needs only
 `borg` itself, an SSH key, and the repository URL its operator assigned.
 
-Throughout, replace `<server>` with your server's hostname, `2222` with the
-port your operator gave you, and `<repo>` with your assigned repository URL:
+Throughout, replace `<server>` with your server's hostname or IP, `2222` with
+the port your operator gave you, and `<repo>` with your assigned repository
+URL. Your operator hands that out in full:
 
 ```
 ssh://borg@<server>:2222/repo/OWN/user1-os1-pc1
 ```
+
+Chapter 1 shortens it to `ssh://borgserver/repo/OWN/user1-os1-pc1`, and that is
+the form used from there on — not for brevity, but because the short form is
+the one that selects your backup key.
 
 > **The one thing that cannot be undone:** if you lose your encryption key or
 > its passphrase, your backups are gone. Permanently, with no recourse — the
@@ -65,6 +70,45 @@ Host borgserver
 ```
 
 Your repository URL then shortens to `ssh://borgserver/repo/OWN/user1-os1-pc1`.
+Every command in this document, and every client-side command in
+[Verification](VERIFICATION.md), is written that way.
+
+`HostName` takes a bare IP just as well as a name, so an unnamed server is no
+reason to skip this block — `HostName 192.0.2.10` is a perfectly good entry.
+
+### If you do not want a config block
+
+Then you have to name the key on every command, because the alias is what was
+carrying it. This matters more than it looks: `~/.ssh/borg_backup` is a
+*dedicated* key, and dedicated means ssh does not find it by itself — it tries
+`id_rsa`, `id_ecdsa`, `id_ed25519` and the other stock names, none of which is
+yours. Addressing the server as `borg@<server>` therefore offers the wrong keys
+and fails with `Permission denied (publickey,keyboard-interactive)`, which
+looks like a server-side problem and is not.
+
+Note that a config block you *do* have is bypassed the same way: `Host
+borgserver` matches the name you type, not the machine you reach, so writing
+`borg@<server>` skips it even when the block's `HostName` is that exact host.
+
+For a plain SSH connection:
+
+```bash
+ssh -i ~/.ssh/borg_backup -o IdentitiesOnly=yes -p 2222 borg@<server> info
+```
+
+For Borg, which has no key option of its own — it runs ssh for you, and
+`BORG_RSH` is how you reach that ssh:
+
+```bash
+export BORG_RSH="ssh -i ~/.ssh/borg_backup -o IdentitiesOnly=yes"
+borg list ssh://borg@<server>:2222/repo/OWN/user1-os1-pc1
+```
+
+Keep `IdentitiesOnly=yes` in both. Without it, ssh offers your default keys and
+everything in your agent *in addition* to the one you named, and the server
+allows two attempts before closing the connection — so a machine with a couple
+of unrelated keys loaded fails before your backup key is ever tried, reporting
+`Too many authentication failures` instead of anything about this server.
 
 ### Verify the server's host key on first connection
 
