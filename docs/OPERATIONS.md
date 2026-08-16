@@ -115,7 +115,7 @@ location: Frankfurt, DE
 contact: admin@example.com
 
 [software]
-version: 0.1.0-beta.28
+version: 0.1.0-beta.29
 source: https://github.com/RaykHoefemann/hardened-borg-server
 
 [client]
@@ -416,9 +416,9 @@ Restarts the container via the systemd user service. **Run this after any change
 Shows a combined status view, opening with the release identity of this installation:
 
 ```
-Host scripts:     0.1.0-beta.28
+Host scripts:     0.1.0-beta.29
 Configured image: ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest>
-Running image:    0.1.0-beta.28
+Running image:    0.1.0-beta.29
 Bundled borg:     borg 1.4.0
 Base OS:          Debian 13.6
 Source:           https://github.com/RaykHoefemann/hardened-borg-server

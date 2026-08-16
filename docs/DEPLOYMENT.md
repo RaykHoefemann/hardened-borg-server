@@ -37,7 +37,7 @@ Architecture overview and how to run the server — from an ad-hoc test containe
 
 > **Beta phase note:** no stable release has been tagged yet, so the `:latest`
 > tag below does not exist on GHCR yet. Replace it with the exact pre-release
-> tag you want to test, e.g. `ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.28`
+> tag you want to test, e.g. `ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.29`
 > (see the [package's version list](https://github.com/RaykHoefemann/hardened-borg-server/pkgs/container/hardened-borg-server/versions)
 > for the current tags). This note will be removed once a stable release ships.
 
@@ -201,7 +201,7 @@ Run it outside a backup window: the restart interrupts any transfer in progress,
 
 ```bash
 cd "$INSTALL_PATH"
-NEW=v0.1.0-beta.28
+NEW=v0.1.0-beta.29
 
 # 1. Record where you are, so you can tell afterwards that something changed
 ./scripts/99-container-status.sh | head -8
@@ -249,9 +249,9 @@ The `diff` in step 6 is the point of the backup: it shows both your own settings
 `Host scripts` and `Running image` must both name the new release, and `Configured image` must carry the digest resolved in step 4:
 
 ```
-Host scripts:     0.1.0-beta.28
+Host scripts:     0.1.0-beta.29
 Configured image: ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest from step 4>
-Running image:    0.1.0-beta.28
+Running image:    0.1.0-beta.29
 ```
 
 A pinned `Configured image` deliberately cannot be read as a version — that is what the pin trades away, and why the two version figures are the ones compared against each other (see [Operations](OPERATIONS.md) Chapter 9.11). If it still shows the *old* digest, step 6 was skipped: the container then runs whatever that digest names, which is the previous release, no matter what the checkout says.
