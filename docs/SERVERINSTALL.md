@@ -100,8 +100,9 @@ stable release ships.
 
 Before trusting this image anywhere that matters, verify that it was built from
 this repository — it carries a build provenance attestation for exactly that
-purpose. See [Verification](VERIFICATION.md), Test 0, which also shows how to
-pin the resulting digest instead of a mutable tag.
+purpose. See [Verification](VERIFICATION.md), Test 0. Do it now rather than
+later: the digest that check reports is what step 3 pins, so the two steps are
+one operation split across a page break.
 
 ---
 
@@ -129,11 +130,34 @@ $EDITOR scripts/config.sh
   that error: on an unmounted volume that succeeds silently and puts client
   repositories on the root filesystem, with no project quotas at all.
 
-`IMAGE` already points at the image built from this same release — it is
-derived from the `VERSION` file copied in step 1, so there is nothing to edit
-unless you want to pin a digest instead of a tag ([Verification](VERIFICATION.md),
-Test 0). That is the stronger form and worth doing once you have verified the
-image.
+- `IMAGE` → replace the tag with the digest you verified in step 2
+
+  It arrives derived from the `VERSION` file copied in step 1, so it already
+  pulls the image built from this same release. Pin it anyway. Resolve the
+  digest:
+
+  ```bash
+  skopeo inspect --format '{{.Digest}}' \
+    docker://ghcr.io/raykhoefemann/hardened-borg-server:${RELEASE#v}
+  ```
+
+  and write that reference into `config.sh`, replacing `:tag` with `@sha256:`:
+
+  ```bash
+  IMAGE="ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest from the command above>"
+  ```
+
+  A tag is a name, and a name can be re-pointed at different content; the
+  attestation you checked in step 2 names an *object*. Pinning the digest is
+  what ties this installation to the image that was actually verified —
+  without it, the next `podman pull` can replace that image without a line of
+  configuration changing. This is verification check `0B`, and it fails on an
+  unpinned tag ([Verification](VERIFICATION.md), Test 0).
+
+  Take the digest from `skopeo`, not from `podman image inspect`: the published
+  artifact is a multi-architecture index, and `podman` reports the manifest for
+  the architecture it happens to run on — a different object, and not the one
+  the attestation covers. `0B` explains that trap in full.
 
 Leave everything else at its default unless you have a specific reason to
 change it (Operations Chapter 9.1 explains what each remaining value does).

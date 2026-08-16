@@ -115,7 +115,10 @@ automatic restart. For production, run it as a rootless systemd **user** service
 > **Before running it anywhere you care about,** verify that the image was
 > actually built from this repository — it carries a build provenance
 > attestation for exactly that purpose. One command, and it is the check every
-> other guarantee rests on: [Verification](docs/VERIFICATION.md), Test 0.
+> other guarantee rests on: [Verification](docs/VERIFICATION.md), Test 0. The
+> tag above is fine for the throwaway run; a real installation pins the digest
+> that check reports, which is what [Server Installation](docs/SERVERINSTALL.md)
+> step 3 does.
 
 ---
 

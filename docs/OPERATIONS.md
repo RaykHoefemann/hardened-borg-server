@@ -417,7 +417,7 @@ Shows a combined status view, opening with the release identity of this installa
 
 ```
 Host scripts:     0.1.0-beta.28
-Configured image: ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.28
+Configured image: ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest>
 Running image:    0.1.0-beta.28
 Bundled borg:     borg 1.4.0
 Base OS:          Debian 13.6
@@ -426,7 +426,9 @@ Source:           https://github.com/RaykHoefemann/hardened-borg-server
 
 The last four come from a single `podman exec` against the live container and are omitted when it is not running.
 
-`Running image` is read from the `VERSION` baked in at build time. It is the only one of these figures that survives a digest pin: with `IMAGE` set to a `sha256:` reference, the configured value says nothing about which release is actually serving clients.
+`Configured image` is shown pinned to a digest above, which is the state [Server Installation](SERVERINSTALL.md) step 3 leaves an installation in and what verification check `0B` requires. A tag there instead means the running image can be replaced by the next pull without any configuration changing.
+
+`Running image` is read from the `VERSION` baked in at build time, and it is the only one of these figures that survives that pin: a `sha256:` reference says nothing about which release is actually serving clients. This is also why the mismatch check below compares it against `Host scripts` rather than against `Configured image`.
 
 `Bundled borg` is worth checking after any base image change. The wrapper's encryption check reads the repository's on-disk manifest and is therefore version-sensitive; the note at the top of `borg-wrapper.sh` records which Borg versions a release was tested against, and this line is what is actually running. `Base OS` is there for judging whether a Debian advisory applies to this deployment.
 

@@ -103,9 +103,15 @@ SERVICE="container-borg-server.service"
 # phase (see .github/workflows/docker.yml: ":latest" is only published for tags
 # without a "-" suffix), so a fresh install could not pull anything at all.
 #
-# Override this to pin a digest instead of a tag once you have verified the
-# image — tags are mutable, digests are not. See docs/VERIFICATION.md, Test 0:
+# The tag below is the starting point, not the end state. SERVERINSTALL step 3
+# replaces it with the digest verified in step 2, and VERIFICATION check 0B
+# fails an installation that still carries a tag here — a name can be re-pointed
+# at other content, a digest cannot, so a tag leaves the next `podman pull` free
+# to replace the very image the attestation was checked against:
 #   IMAGE="ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest>"
+# Resolve it with skopeo, never with `podman image inspect`, which reports this
+# host's architecture manifest rather than the signed index (VERIFICATION 0B).
+# The tag stays the shipped default so that a fresh checkout can pull at all.
 IMAGE="ghcr.io/raykhoefemann/hardened-borg-server:${RELEASE_VERSION}"
 SSH_PORT=2222
 

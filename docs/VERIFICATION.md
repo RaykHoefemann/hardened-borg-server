@@ -272,6 +272,12 @@ digest `0A` reported as `subject`:
 IMAGE="ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest>"
 ```
 
+[Server Installation](SERVERINSTALL.md) step 3 sets `IMAGE` to exactly this, and
+[Deployment](DEPLOYMENT.md) Chapter 6.3 step 4 re-resolves it on every upgrade —
+a new release is a new image and therefore a new digest. An installation that
+followed those guides passes this check without further editing; if `IMAGE`
+still ends in `:<tag>`, that is the state this check exists to catch (#25).
+
 **Pin the index digest, not a platform manifest.** The published artifact is an
 OCI image index listing one manifest per architecture, and the attestation
 verified above names the index. `skopeo inspect` above returns that digest —
@@ -313,12 +319,27 @@ is what 4C's `podman inspect` and the version reported by
 > either it or the looser `--owner`, and `--owner` would accept an attestation
 > from any repository of that account.
 >
-> **0B is not.** The identity of the two digests was measured — for
-> `v0.1.0-beta.27`, `skopeo inspect` printed exactly the digest 0A reported as
-> `subject` — but the trap that makes this check worth having, `podman image
-> inspect` reporting a per-architecture manifest instead, has not been staged
-> against a multi-arch pull on both architectures. Until it has, the platform-
-> manifest warning above is reasoning from the OCI structure, not a measurement.
+> **0B is not, but the gap has narrowed.** The identity of the two digests was
+> measured — for `v0.1.0-beta.27`, `skopeo inspect` printed exactly the digest
+> 0A reported as `subject`. The trap the check exists for is now measured too,
+> on amd64: against `v0.1.0-beta.28` on Fedora CoreOS, `skopeo` and `podman
+> image inspect` printed **different** digests for the same tag on the same
+> host, and `gh attestation verify` named the `skopeo` one as `subject` (#25).
+> Reading the index directly shows why, and covers the other architecture:
+>
+> ```
+> mediaType: application/vnd.oci.image.index.v1+json
+>   linux/amd64      sha256:f645a463c78be951e6f…   ← what podman prints there
+>   linux/arm64      sha256:7fa27c87a8a9ad39957…   ← a third, different object
+>   unknown/unknown  sha256:6dfb4aca342db376b8f…   ← buildx provenance
+>   unknown/unknown  sha256:a9b74479c97edd49791…   ← buildx SBOM
+> ```
+>
+> against an index digest of `sha256:d2378b97…`. So the three digests are
+> distinct objects as a matter of measurement rather than of reasoning. What
+> remains untested is only the last step of the chain — that `podman image
+> inspect` on an *arm64 host* prints that host's manifest, as it demonstrably
+> does on amd64. The mark stays until someone runs it there.
 
 ---
 

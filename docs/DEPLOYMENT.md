@@ -190,7 +190,7 @@ A release has two halves and an upgrade moves both. The container image carries 
 
 Two files in an installation are yours, not the release's, and a careless upgrade overwrites both:
 
-- **`scripts/config.sh`** — holds `HOST_REPO_BASE`, and your digest pin if you set one. It is shipped code *and* per-host configuration in one file, which is why the procedure below backs it up and diffs rather than simply copying.
+- **`scripts/config.sh`** — holds `HOST_REPO_BASE` and your `IMAGE` digest pin. It is shipped code *and* per-host configuration in one file, which is why the procedure below backs it up and diffs rather than simply copying. Note that the pin is the one setting an upgrade must *not* carry over unchanged: a new release is a new image and therefore a new digest, so step 6 re-resolves it rather than restoring the old value.
 - **`config/server_info.conf`** — you edited it in SERVERINSTALL step 7; the repository ships it with placeholder values.
 
 > ⚠️ **Do not re-run SERVERINSTALL step 1 against an existing installation.** `cp -r` merges into existing directories and overwrites same-named files, so copying `config/` would replace your `server_info.conf` with the template, and copying `scripts/` would replace your `config.sh`. Your `clients.conf` and `config/keys/` survive only because the repository does not ship them.
@@ -217,9 +217,11 @@ git clone --branch "$NEW" --depth 1 \
 Verify the new image **before** pulling it — the provenance attestation is what makes the next step something other than trust ([Verification](VERIFICATION.md), Test 0). It needs no registry credential; if it reports that a token was denied access, that is a stored `ghcr.io` credential getting in the way rather than a permission you are missing, and Test 0 says what to do about it:
 
 ```bash
-# 4. Verify, then pull
+# 4. Verify, resolve the new digest, then pull
 gh attestation verify "oci://ghcr.io/raykhoefemann/hardened-borg-server:${NEW#v}" \
   --repo RaykHoefemann/hardened-borg-server
+skopeo inspect --format '{{.Digest}}' \
+  "docker://ghcr.io/raykhoefemann/hardened-borg-server:${NEW#v}"
 podman pull "ghcr.io/raykhoefemann/hardened-borg-server:${NEW#v}"
 
 # 5. Replace only the release's own files — note that config/ is NOT copied
@@ -229,7 +231,7 @@ rm -rf ~/tmp/upgrade
 
 # 6. Restore your settings into the new config.sh
 diff /tmp/config.sh.previous scripts/config.sh
-$EDITOR scripts/config.sh          # re-apply HOST_REPO_BASE, and a digest pin if you use one
+$EDITOR scripts/config.sh          # re-apply HOST_REPO_BASE; set IMAGE to the digest from step 4
 
 # 7. Re-render the unit from config.sh and restart
 ./scripts/50-service-install.sh
@@ -244,13 +246,15 @@ The `diff` in step 6 is the point of the backup: it shows both your own settings
 ./scripts/99-container-status.sh | head -8
 ```
 
-All three figures must agree:
+`Host scripts` and `Running image` must both name the new release, and `Configured image` must carry the digest resolved in step 4:
 
 ```
 Host scripts:     0.1.0-beta.28
-Configured image: ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.28
+Configured image: ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest from step 4>
 Running image:    0.1.0-beta.28
 ```
+
+A pinned `Configured image` deliberately cannot be read as a version — that is what the pin trades away, and why the two version figures are the ones compared against each other (see [Operations](OPERATIONS.md) Chapter 9.11). If it still shows the *old* digest, step 6 was skipped: the container then runs whatever that digest names, which is the previous release, no matter what the checkout says.
 
 A `MISMATCH` line here is the normal outcome of forgetting step 7 — the files on disk are new while the container still runs the old image. From a client, `ssh borgserver info` should now report the new version in its `[software]` section, since each client's info text is re-rendered at container start.
 
