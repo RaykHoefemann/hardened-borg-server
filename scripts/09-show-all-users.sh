@@ -153,7 +153,10 @@ $(quota_committed "$VOLUME_KIB")
 EOF
     COMMITTED_TOTAL=$(quota_committed_total "$COMMITTED_KIB" "$COMMITTED_UNBOUNDED" "$VOLUME_KIB")
     COMMITTED_MARK=""
-    quota_exceeds_pct "$COMMITTED_TOTAL" "$VOLUME_KIB" 99 && COMMITTED_MARK=" (!)"
+    quota_exceeds_pct "$COMMITTED_TOTAL" "$VOLUME_KIB" 99 && {
+        COMMITTED_MARK=" (!)"
+        OVERCOMMITTED=1
+    }
     echo "Committed:     $(quota_human "$COMMITTED_TOTAL") of $(quota_human "$VOLUME_KIB") volume ($(quota_pct "$COMMITTED_TOTAL" "$VOLUME_KIB")%)${COMMITTED_MARK} across $((COMMITTED_N + COMMITTED_UNBOUNDED)) client(s)"
     if [ "$COMMITTED_UNBOUNDED" -gt 0 ]; then
         if [ "$COMMITTED_UNBOUNDED" -eq 1 ]; then
@@ -179,3 +182,21 @@ fi
 # quota preview in 00/02 ends on the same two lines and they have to be the
 # same two lines.
 quota_disk_lines
+
+# Every (!) in this listing gets an explanation under it, and this one had
+# none: the marker on the Committed line was printed bare while the drift
+# marker in the columns has said what it means since it existed. An unexplained
+# marker in the output of a tool whose other marker decides VERIFICATION test 5
+# teaches the operator to wave both away (issue #17). 00 and 02 have printed
+# this text on the same condition all along; the listing was the one place that
+# stayed silent.
+#
+# Printed after the summary rather than inside it: Committed, Disk usage and
+# Disk free are read as one block, and a three-line paragraph in the middle of
+# them is a worse answer than one below.
+if [ -n "${OVERCOMMITTED:-}" ]; then
+    echo ""
+    echo "(!) The quotas in effect jointly reach the volume. Each client is still held"
+    echo "    to its own limit — but they cannot all be honoured at once: whoever fills"
+    echo "    up first takes the space the others were promised (Chapter 10.2)."
+fi

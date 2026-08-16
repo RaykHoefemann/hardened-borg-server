@@ -562,6 +562,33 @@ printf '%s' "$OUT" | grep -q 'Disk usage:    90.0 GiB of 100.0 GiB (95%)' \
     && printf '%s' "$OUT" | grep -q 'Disk free:     5.0 GiB'
 assert "9.22 reserved blocks count as full, not as free" $?
 
+# Every (!) the listing prints has to say what it means. This one said nothing
+# at all — 00 and 02 have explained it on the same condition all along, and the
+# listing was the one place that printed it bare. An unexplained marker in the
+# output of a tool whose other marker decides VERIFICATION test 5 teaches the
+# operator to wave both away (issue #17).
+setup_09
+df_stub "$T/repo:$((100 * GIB)):$((2 * GIB))" \
+    "$T/repo/OWN/user1:$((50 * GIB)):0" \
+    "$T/repo/OWN/user2:$((20 * GIB)):0" \
+    "$T/repo/MIRROR/friend1:$((200 * GIB)):0"
+run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
+printf '%s' "$OUT" | grep -q 'Committed:     270.0 GiB of 100.0 GiB volume (270%) (!)' \
+    && printf '%s' "$OUT" | grep -q 'they cannot all be honoured at once'
+assert "9.23 an overcommitted volume explains its own marker" $?
+
+# And says nothing when there is nothing to say. A marker that also appears on
+# a correct installation is one the operator stops reading, which is the whole
+# complaint behind the case above.
+setup_09
+df_stub "$T/repo:$((4000 * GIB)):$((2 * GIB))" \
+    "$T/repo/OWN/user1:$((50 * GIB)):0" \
+    "$T/repo/OWN/user2:$((20 * GIB)):0" \
+    "$T/repo/MIRROR/friend1:$((200 * GIB)):0"
+run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
+printf '%s' "$OUT" | grep -q '(!)'
+[ $? -ne 0 ]; assert "9.24 ... and a listing with nothing wrong carries no marker at all" $?
+
 # =========================================================================
 # 10. 00-ssh-create-user.sh — creating a client
 # =========================================================================

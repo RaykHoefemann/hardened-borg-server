@@ -350,7 +350,14 @@ Counting it any other way would make the figure look *better* the more dangerous
 - `none (!)` in `QUOTA` — no project quota governs that directory at all (`df` reports the whole volume), so the client is bounded by nothing. Typically a directory that predates quota enforcement or lost its project id.
 - `n/a` — nothing could be read, e.g. the repository directory is missing (`clients.conf` and the filesystem have drifted apart).
 
-Any `(!)` also prints a hint under the listing. This matters for the sizing invariant in Chapter 10.2, which is about **enforced** limits: reading the configured ones would report a volume that is safe on paper while the disk fills.
+`(!)` always means the same thing — **look here, something needs a decision** — and always prints an explanation under the listing. What differs is the line it sits on, and that is what tells you which kind of problem it is:
+
+- **in the `QUOTA` or `CONFIGURED` column** — intention and reality disagree for that client. `clients.conf` records one limit and the kernel applies another, or none at all. Only the kernel stops anyone from writing, so the column is what counts; repair it with Chapter 9.4.
+- **on the `Committed:` line** — the limits in effect jointly reach the volume. Every client is still held to its own limit; what cannot be honoured is all of them at once. Nothing is broken and nothing is misconfigured — it is a capacity decision, and Chapter 10.2 is where it is decided.
+
+The first is a fault. The second is a choice you should know you have made.
+
+The distinction matters for the sizing invariant in Chapter 10.2, which is about **enforced** limits: reading the configured ones would report a volume that is safe on paper while the disk fills.
 
 **The percentages in this listing answer two different questions and are rounded accordingly.** `% OF VOL` and `Committed` are *shares* — what a client was promised, what all of them jointly claim — and are truncated, so half a volume reads as `50%` and an overcommitment is never printed larger than it is. `USED` and `Disk usage` are *fill levels*, and those round **up**, against what can still be written rather than against the size printed beside them. That is what lets them reach `100%`: a volume that will reject the next write says so, even where reserved blocks keep the used figure below the size. It is also df's own rule, and therefore exactly the number a client is shown through its own `info` channel (Chapter 10.3) — the host and the client report one measurement, not two opinions about it. The rounding errs towards *fuller*, which is the direction that prompts a look rather than a shrug.
 

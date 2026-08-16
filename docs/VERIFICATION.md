@@ -448,12 +448,20 @@ ssh -p 2222 borg@<server> info
 
 **Pass** — the mount reports `prjquota` and **not** `pqnoenforce`;
 `xfs_quota` reports project quota enforcement as ON; every client's
-`CONFIGURED` column repeats each client's `clients.conf` value unmarked,
-with no `(!)` anywhere and no drift hint under the listing; and the info channel reports *your own* limit:
+`CONFIGURED` column repeats each client's `clients.conf` value unmarked, with
+no `(!)` in the `QUOTA` or `CONFIGURED` columns and no drift hint under the
+listing; and the info channel reports *your own* limit:
 
 ```
 Used: 2.4 GiB of 50.0 GiB (5%)
 ```
+
+A `(!)` on the `Committed:` line is a different statement and does not decide
+this test. It reports that the quotas jointly reach the volume (OPERATIONS
+Chapter 10.2) — a capacity decision, and a legitimate one: three clients at
+50G/50G/10G on a 100 GB volume are each enforced to the byte. Both markers
+mean "look here"; only the ones in the columns are about whether quotas are
+*enforcing*.
 
 **Fail** — if the second figure is the size of the whole underlying disk
 rather than your configured quota, project quota enforcement is not active
