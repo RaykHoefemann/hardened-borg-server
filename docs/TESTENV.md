@@ -223,6 +223,9 @@ the test notices:
 | Initialize a repository with `--encryption=repokey` | Test 8 is refused on the next connection |
 | Mount an `sshd_config` over the image's own with a `Match User borg` block reopening `PermitTTY` | 1.5A still reports ten correct lines — 1.5B is what catches it |
 | Edit `IMAGE` in `config.sh` to a different digest and *do not* restart | 0C's two lines diverge, and `99-container-status.sh` reports it as `PIN MISMATCH` — whatever versions the two digests carry. Its `MISMATCH` line stays quiet, because that one compares the host scripts against the running container and an edited pin moves neither (#31). Repair with `50-service-install.sh` *then* `92-container-restart.sh`; a restart alone starts the old image again |
+| Delete one client's repository directory (`podman unshare rm -rf <HOST_REPO_BASE>/<group>/<client>`) | 5.5A fails: the client reads `n/a (!)` … `MISSING on host`, with the explanation under the listing. From that client, the next connection is refused with `DENY: repository directory missing – needs operator action` rather than being served from a directory the server made itself. `03-provision-client.sh <client>` is the way back — and it brings back an empty repository, so run it on a client whose archives you are willing to lose |
+| Delete a **group** directory (`podman unshare rm -rf <HOST_REPO_BASE>/MIRROR`) | Every client under it reads `MISSING on host` and meets the same refusal. Worth doing once for what it *no longer* does: until beta.30 the wrapper recreated the path here — its parent `/repo` belongs to `borg`, so the `mkdir` succeeded — and served the client from a directory with no project id, bounded by the volume rather than by its limit. That is 5.5B's first failure shape, produced by the server itself, and it needed no mistake inside a client directory at all (#29) |
+| Take the search bit off a group directory (`podman unshare chmod 750 <HOST_REPO_BASE>/OWN`) | 5.5A fails with `n/a (!)` … `unreadable` for every client under it, and the hint points at the group directories and the mount. `statfs()` needs search permission on the *parents*, not on the target, so tightening a client's own directory does **not** produce this — there `02-change-user-quota.sh` breaks instead, on `lsattr`. Note that the container's `borg` user is "other" on that directory too, so this takes the clients down with the report rather than blinding the report alone. Restore with `chmod 755` |
 
 > **The one that looks like it works and does not:** `sudo mount -o
 > remount,noquota <mount>`. XFS does not accept quota state changes on remount —
@@ -233,6 +236,14 @@ the test notices:
 > passes" (#22). `xfs_quota ... disable -p` is also the kinder recipe: it needs
 > no unmount, so the bind mount into `/repo` stays in place and the container
 > never has to be touched.
+
+> **The last four rows are owed measurements, and that is why they are here.**
+> The `PIN MISMATCH` line and the `(!)` markers for `MISSING on host` and
+> `unreadable` are newer than the bench runs that prompted them.
+> [Verification](VERIFICATION.md) records them as unverified against a
+> deployment — `tests/host-scripts.sh` covers the code, which is a different
+> statement from the one that page makes. Running these four rows is what closes
+> that gap, and the notes under `0C` and `5.5A` say where each one stands.
 
 Restore the snapshot afterwards. This exercise is worth more than the passing
 run: it is the difference between "the tests are green" and "the tests would
