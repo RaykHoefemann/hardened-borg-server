@@ -394,6 +394,44 @@ generate
 [ ! -f "$CFG/clients.conf" ]
 assert "8.10 nothing is created in a /config that failed the canary check" $?
 
+# --- 9. repository directories are the host's to create ---------------------
+#
+# This script used to `mkdir -p` a client's repository directory when it found
+# one missing, and it could not do that job: it runs as root inside the
+# container, so the directory came out root-owned — unwritable by the 'borg'
+# user the client is served as — and carried no XFS project id, so no quota
+# applied to it. Creating one correctly needs `podman unshare` for the
+# ownership and `sudo xfs_quota` for the project id, neither of which exists in
+# here.
+#
+# The damage was not only that the directory was wrong. It made the state
+# unstable: a client whose directory had been deleted read as MISSING on host
+# until the next container start, and as an unquotaed client afterwards — the
+# same incident wearing two different faults (issues #29, #30).
+
+new_fixture
+echo 'user1:OWN:/repo/OWN/user1:50G' > "$CFG/clients.conf"
+add_key user1
+rm -rf "$REPOD/OWN"
+generate
+[ ! -d "$REPOD/OWN/user1" ]
+assert "9.1 a missing repository directory is not created by the generator" $?
+
+# Still authorized, deliberately. The wrapper answers such a connection with
+# 'DENY: repository directory missing – needs operator action', which names the
+# problem; dropping the key line would produce an anonymous SSH rejection
+# instead and tell the client nothing.
+[ "$(key_lines)" -eq 1 ]
+assert "9.2 ... and the client is still authorized, to be refused with a reason" $?
+
+grep -q 'Repository directory .* is missing' "$LOGD/build_authorized_keys.log"
+assert "9.3 ... and the missing directory is reported in the log" $?
+
+# The info text lives under /run and is this script's to write, so that mkdir
+# stays: it is container-owned state, not host-owned state.
+[ -f "$INFOD/repo/OWN/user1.txt" ]
+assert "9.4 the info text is still rendered for that client" $?
+
 # --- summary ----------------------------------------------------------------
 
 echo

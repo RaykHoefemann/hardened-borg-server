@@ -105,7 +105,32 @@ case "${SSH_ORIGINAL_COMMAND:-}" in
         ;;
 esac
 
-# Case 1: directory does not exist or is empty
+# Case 0: the repository directory is not there at all
+# -> refused, and never created here
+#
+# This is provisioning, not serving. A directory created at this point would be
+# made by the 'borg' user, with no XFS project id, so the client would be served
+# from a directory no quota applies to — bounded by the volume rather than by
+# its limit, which is the single failure this server's storage guarantee cannot
+# absorb (VERIFICATION 5.5B, OPERATIONS 10.2). Only the host can create one
+# correctly: the ownership needs `podman unshare` and the project id needs
+# `sudo xfs_quota`.
+#
+# A plain `mkdir -p "$REPO"` used to stand in Case 1 below, where it was a no-op
+# for every client 00-ssh-create-user.sh had provisioned — the directory was
+# already there. It did something only when it should not have: after the
+# group directory (/repo/OWN, /repo/MIRROR) had been deleted, where its parent
+# /repo belongs to 'borg' and the mkdir therefore succeeded, silently producing
+# exactly the unquotaed client described above.
+#
+# Refusing is the safe direction and the honest one: the state is reported by
+# 09-show-all-users.sh as MISSING on host and repaired on the host.
+if [ ! -d "$REPO" ]; then
+    echo "DENY: repository directory missing – needs operator action" >&2
+    exit 1
+fi
+
+# Case 1: directory is empty
 # -> never initialized yet, client is allowed to run "borg init"
 #
 # The test is strict: anything at all in the directory means this is not a
@@ -122,7 +147,6 @@ repo_entries=("$REPO"/*)
 shopt -u nullglob dotglob
 
 if [ "${#repo_entries[@]}" -eq 0 ]; then
-    mkdir -p "$REPO"
     exec borg serve --restrict-to-path "$REPO" --append-only
 fi
 

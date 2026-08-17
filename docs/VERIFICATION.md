@@ -448,7 +448,7 @@ anything about the container's behaviour, which is every test below it.
 
 > **Tests 1, 2 and 8 are also checked automatically.** `tests/wrapper-gating.sh`
 > drives `borg-wrapper.sh` directly against real Borg repositories and runs on
-> every push — 31 cases covering path validation, default-deny gating,
+> every push — 32 cases covering path validation, default-deny gating,
 > injected commands, and the keyfile-only encryption policy. It asserts, among
 > other things, that the exec line is *exactly* the wrapper's own invocation,
 > so no client-supplied argument can widen `--restrict-to-path` or disable

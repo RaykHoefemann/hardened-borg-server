@@ -196,10 +196,30 @@ while IFS=":" read -r name group repo quota; do
     log "[INFO] Added key for '$name' with repo '$repo' (quota: $quota)"
     count=$((count + 1))
 
+    # A missing repository directory is reported, never created.
+    #
+    # This used to be a `mkdir -p "$repo"`, and it could not do the job: the
+    # generator runs as root inside the container, so the directory it made was
+    # root-owned — unwritable by the 'borg' user the client is served as — and
+    # carried no XFS project id, so no quota applied to it. Creating a
+    # repository directory correctly needs `podman unshare` for the ownership
+    # and `sudo xfs_quota` for the project id, and neither exists in here. Only
+    # the host can do it (00-ssh-create-user.sh does exactly those three steps).
+    #
+    # It also made the state unstable. A client whose directory had been deleted
+    # showed up as MISSING on host until the next container start, at which
+    # point this line quietly turned it into an unquotaed, root-owned directory
+    # that looked like a different fault with a different cause. Reporting it
+    # leaves one state with one repair.
+    if [ ! -d "$repo" ]; then
+        log "[WARN] Repository directory '$repo' is missing for '$name'."
+        log "[WARN] This client cannot be served until the host recreates it —"
+        log "[WARN] see docs/OPERATIONS.md chapter 9.5 (MISSING on host)."
+    fi
+
     # ---------------------------------------------------------
     # Render this client's info text (see $INFO_DIR at the top)
     # ---------------------------------------------------------
-    mkdir -p "$repo"
     INFO_FILE="${INFO_DIR}${repo}.txt"
     mkdir -p "$(dirname "$INFO_FILE")"
 

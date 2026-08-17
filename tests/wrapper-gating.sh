@@ -226,8 +226,15 @@ assert_ok_contains "C5 'info' still answers when no text is rendered" "Used:"
 
 # --- D. repository state ----------------------------------------------------
 
+# A path with no directory behind it is provisioning, not serving, and the
+# wrapper does not provision. It used to `mkdir -p` here, which could only ever
+# produce a directory owned by 'borg' and covered by no XFS project id — a
+# client bounded by the volume instead of by its limit, created by the server
+# itself. Only the host can make one correctly, because the ownership needs
+# `podman unshare` and the project id needs `sudo xfs_quota`. D5 below is the
+# state a provisioned client actually reaches.
 run "$WORK/does_not_exist_yet" "borg serve"
-assert_serves_exactly "D1 uninitialized repo allowed (borg init path)" "$WORK/does_not_exist_yet"
+assert_deny "D1 a missing repository directory is refused" "DENY: repository directory missing"
 
 run "$WORK/nocfg" "borg serve"
 assert_deny "D2 non-empty repo without config denied" "DENY: repo non-empty but config missing"
@@ -254,6 +261,13 @@ assert_deny "D4 a hidden file does not pass as an empty repo" "DENY: repo non-em
 mkdir -p "$WORK/freshdir"
 run "$WORK/freshdir" "borg serve"
 assert_serves_exactly "D5 an empty repo directory is allowed (borg init path)" "$WORK/freshdir"
+
+# Belongs with D1 and is appended here rather than renumbered in: refusing is
+# only half the requirement, the other half is that the refused path is still
+# not there afterwards. A wrapper that created the directory and then denied
+# would pass D1 and still have produced the unquotaed directory D1 exists to
+# prevent — the next connection would find it and be served from it.
+assert_not_executed "D6 ... and the refusal created nothing" "$WORK/does_not_exist_yet"
 
 # --- E. encryption policy: client-held keyfile only -------------------------
 
