@@ -145,8 +145,11 @@ if [ ! -d "$HOST_REPO" ]; then
     exit 1
 fi
 
-# Resolve the XFS mount and the repo's existing project id.
-XFS_MOUNT=$(df -P "$HOST_REPO" | awk 'NR==2 {print $6}')
+# Resolve the XFS mount and the repo's existing project id, through the same
+# repo_* helpers 00-ssh-create-user.sh writes with (config.sh). This script
+# only ever changes a limit: the directory and the project id must already be
+# there, and it refuses rather than creating either.
+XFS_MOUNT=$(repo_xfs_mount "$HOST_REPO")
 if [ -z "$XFS_MOUNT" ]; then
     echo "ERROR: could not resolve filesystem mount for '$HOST_REPO'."
     exit 1
@@ -204,19 +207,13 @@ if ! quota_confirm "Apply this change?"; then
     exit 0
 fi
 
-# The limit currently on the project id, read from xfs_quota rather than from
-# df: df reports the volume size when no limit applies, so restoring what df
-# says would write a limit in volume size and make the very state this script
-# exists to prevent permanent. Empty when it cannot be read, which the rollback
-# below treats as "do not guess".
-PREV_BHARD_KIB=$(sudo xfs_quota -x -c "report -p -N -b" "$XFS_MOUNT" 2>/dev/null \
-    | awk -v p="#${PROJID}" '$1 == p { print $4; exit }')
-case "$PREV_BHARD_KIB" in
-    ''|*[!0-9]*) PREV_BHARD_KIB="" ;;
-esac
+# What the rollback below would have to put back. Empty when it cannot be read,
+# which that rollback treats as "do not guess" (repo_limit_current says why it
+# is read from xfs_quota rather than from df).
+PREV_BHARD_KIB=$(repo_limit_current "$XFS_MOUNT" "$PROJID") || PREV_BHARD_KIB=""
 
 echo "[quota] Applying new hard limit on host: project id $PROJID -> $QUOTA"
-sudo xfs_quota -x -c "limit -p bhard=${QUOTA} ${PROJID}" "$XFS_MOUNT"
+repo_limit_apply "$XFS_MOUNT" "$PROJID" "$QUOTA"
 
 # Read the new limit back from the directory itself instead of trusting the
 # exit status above: xfs_quota also reports success for a limit set on a
@@ -230,7 +227,7 @@ if ! quota_verify "$HOST_REPO" "$QUOTA"; then
     # promises. Put the previous limit back, so the abort is true.
     if [ -n "$PREV_BHARD_KIB" ]; then
         echo "[quota] Restoring the previous hard limit on project id $PROJID."
-        if sudo xfs_quota -x -c "limit -p bhard=${PREV_BHARD_KIB}k ${PROJID}" "$XFS_MOUNT"; then
+        if repo_limit_apply "$XFS_MOUNT" "$PROJID" "${PREV_BHARD_KIB}k"; then
             NOW_KIB=$(quota_enforced_kib "$HOST_REPO")
             if [ "$NOW_KIB" = "$BEFORE_KIB" ]; then
                 echo "[quota] Restored: $(quota_human "$NOW_KIB") is enforced again."

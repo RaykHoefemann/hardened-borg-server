@@ -174,7 +174,14 @@ Helper scripts under `scripts/` manage the server's clients, quotas, the systemd
 - `PROJID_BASE` — the floor for auto-allocated XFS project IDs (Chapter 9.2 scans existing repos and starts above this).
 - `BORG_UID`, `BORG_GID` — the `borg` user's UID/GID **inside the container image**, fixed at build time in the Dockerfile. These must match the image you are actually running; only change them if you rebuilt the image with different values yourself. Used by `00-ssh-create-user.sh` to set correct host-side ownership via `podman unshare`.
 
-The file ends with a small set of **quota helper functions** (`quota_kib`, `quota_human`, `quota_enforced_kib`, `quota_used_kib`, `quota_verify`) rather than values. They are shared by `00`, `02` and `09` so that "the enforced quota" is defined once for all of them: the limit the kernel reports for a client's repository directory, which is the same figure the client sees through the `info` channel (Chapter 8). All are read-only and need no privileges; nothing there is meant to be edited.
+**`config.sh` holds values only.** Its last line sources `scripts/lib.sh`, which holds the shell functions the scripts share — so a script still sources exactly one file, while the file an operator edits stays about a hundred lines. That separation is what keeps the upgrade procedure's `diff` of `config.sh` readable ([Deployment](DEPLOYMENT.md) Chapter 6.3, step 6): it shows settings, not helper churn. `lib.sh` is shipped code, is replaced wholesale by an upgrade, and is not meant to be edited.
+
+`lib.sh` has two halves, and the line between them is what each is allowed to do:
+
+- The **read helpers** (`clients_lines`, `volume_kib`, `quota_kib`, `quota_human`, `quota_enforced_kib`, `quota_used_kib`, `quota_verify` and the reporting helpers around them) are shared by `00`, `02` and `09` so that "the enforced quota" is defined once for all of them: the limit the kernel reports for a client's repository directory, which is the same figure the client sees through the `info` channel (Chapter 8). Pure, no privileges, safe in any script.
+- The **`repo_*` write helpers** are the only place in the project that creates a repository directory, allocates or assigns an XFS project id, or sets a hard limit. `00` and `02` both go through them, so a client's filesystem state has one implementation rather than one per script. These need privileges, and the two they need are exactly why the work cannot happen anywhere else: `podman unshare` for the ownership and `sudo xfs_quota` for the project id and the limit. Neither exists inside the container, which is why `borg-wrapper.sh` and `build_authorized_keys.sh` report a missing repository directory instead of creating one (Chapter 9.12).
+
+Nothing in either half runs while sourcing — they are definitions — so a read-only script such as `09-show-all-users.sh` brings them into scope and executes none of them, and the generated `EnvironmentFile` is unaffected.
 
 ## 9.2. 00-ssh-create-user.sh
 

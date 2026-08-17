@@ -190,7 +190,7 @@ A release has two halves and an upgrade moves both. The container image carries 
 
 Two files in an installation are yours, not the release's, and a careless upgrade overwrites both:
 
-- **`scripts/config.sh`** — holds `HOST_REPO_BASE` and your `IMAGE` digest pin. It is shipped code *and* per-host configuration in one file, which is why the procedure below backs it up and diffs rather than simply copying. Note that the pin is the one setting an upgrade must *not* carry over unchanged: a new release is a new image and therefore a new digest, so step 6 re-resolves it rather than restoring the old value.
+- **`scripts/config.sh`** — holds `HOST_REPO_BASE` and your `IMAGE` digest pin. It is shipped code *and* per-host configuration in one file, which is why the procedure below backs it up and diffs rather than simply copying. It holds values only — the shared shell functions live in `scripts/lib.sh`, which is release code with nothing of yours in it, so the diff in step 6 stays about your settings. Note that the pin is the one setting an upgrade must *not* carry over unchanged: a new release is a new image and therefore a new digest, so step 6 re-resolves it rather than restoring the old value.
 - **`config/server_info.conf`** — you edited it in SERVERINSTALL step 7; the repository ships it with placeholder values.
 
 > ⚠️ **Do not re-run SERVERINSTALL step 1 against an existing installation.** `cp -r` merges into existing directories and overwrites same-named files, so copying `config/` would replace your `server_info.conf` with the template, and copying `scripts/` would replace your `config.sh`. Your `clients.conf` and `config/keys/` survive only because the repository does not ship them.

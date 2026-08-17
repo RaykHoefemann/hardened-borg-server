@@ -123,38 +123,11 @@ if ! command -v podman >/dev/null 2>&1; then
     exit 1
 fi
 
-# Whose user namespace is this, and does it match the container's?
-#
-# `podman unshare` resolves the mapping of whoever runs it. Run by the wrong
-# user it still succeeds — it just creates the directory under a mapping the
-# container does not share, and the failure surfaces much later as a client
-# whose backups cannot be written. So ask the question directly: inside this
-# user's namespace, who owns the repository base?
-#
-#   BORG_UID  the container has taken ownership of it, i.e. the server has run
-#             at least once, and this user's mapping is the container's
-#   0         nobody has taken it yet — a fresh installation whose server has
-#             not started, where the base is still plainly operator-owned
-#
-# Anything else means the base belongs to a mapping that is not this user's,
-# and the most likely reason is that the container runs as somebody else.
-BASE_NS_UID="$(podman unshare stat -c %u "$HOST_REPO_BASE" 2>/dev/null || true)"
-case "$BASE_NS_UID" in
-    0|"$BORG_UID") ;;
-    ''|*[!0-9]*)
-        echo "ERROR: could not read '$HOST_REPO_BASE' inside this user's container"
-        echo "namespace. Check that rootless podman works for this user"
-        echo "(podman info) and that the path is the one bind-mounted as /repo."
-        exit 1
-        ;;
-    *)
-        echo "ERROR: inside this user's container namespace, '$HOST_REPO_BASE'"
-        echo "belongs to uid $BASE_NS_UID — neither this user (0) nor the"
-        echo "container's borg user ($BORG_UID)."
-        echo "Run this script as the same user that runs the container."
-        exit 1
-        ;;
-esac
+# Whose user namespace is this, and does it match the container's? Asked before
+# anything is created, because the wrong answer produces a directory the
+# container cannot use and the failure would otherwise surface much later, as a
+# client whose backups cannot be written (repo_ns_uid_ok in config.sh).
+repo_ns_uid_ok "$HOST_REPO_BASE" || exit 1
 
 mkdir -p "$(dirname "$CONF")"
 touch "$CONF"
@@ -235,84 +208,38 @@ if ! quota_confirm "Create client '$USERNAME' with this quota?"; then
     exit 0
 fi
 
-# Created and owned inside the container's user namespace, not on the host.
-#
-# entrypoint.sh takes ownership of the bind-mounted repository base at every
-# container start (chown borg:borg /repo). Under rootless podman that lands on
-# the host as the mapped subuid — container 1111 becomes host 524288+1110 or
-# whatever the operator's subuid range makes of it — so from the host side the
-# base belongs to a user that does not exist, and a plain mkdir here fails with
-# "Permission denied" on every installation that has ever started its server.
-#
-# `podman unshare` enters exactly that mapping, where this operator is root and
-# BORG_UID/BORG_GID mean what they mean inside the container. Creating the
-# directory there, and handing it to 'borg' in the same namespace, is what
-# config.sh has always documented these two values to be for.
-#
-# The mode is deliberately left at the default (755, minus umask): the host
-# scripts read these directories back — 02 reads the project id with lsattr,
-# 09 reads the quota through df — and they run as the operator, who is not the
-# owner. A tighter mode would make those reads fail silently.
-echo "[create] Creating repository directory: $HOST_REPO"
-podman unshare mkdir -p "$HOST_REPO"
-echo "[create] Setting container-side ownership: ${BORG_UID}:${BORG_GID}"
-podman unshare chown "${BORG_UID}:${BORG_GID}" "$HOST_REPO"
+# From here on the filesystem is written, and every step of it goes through the
+# repo_* helpers in config.sh — the same ones 02-change-user-quota.sh uses, so
+# a client's directory, its project id and its limit are produced in exactly
+# one place. Each failure below undoes what this run created before exiting:
+# nothing is in clients.conf yet, so an abort has to leave no directory and no
+# limit behind either.
+repo_dir_create "$HOST_REPO"
 
-# Resolve the XFS mount that actually holds the repo (must be enforcing prjquota).
-XFS_MOUNT=$(df -P "$HOST_REPO" | awk 'NR==2 {print $6}')
+XFS_MOUNT=$(repo_xfs_mount "$HOST_REPO")
 if [ -z "$XFS_MOUNT" ]; then
     echo "ERROR: could not resolve filesystem mount for '$HOST_REPO'."
-    podman unshare rmdir "$HOST_REPO" 2>/dev/null
+    repo_dir_remove "$HOST_REPO"
     exit 1
 fi
 
-# Verify the mount is enforcing project quotas before we rely on it.
-if ! sudo xfs_quota -x -c 'state -p' "$XFS_MOUNT" 2>/dev/null | grep -qE '^[[:space:]]*Enforcement:[[:space:]]*ON'; then
-    echo "ERROR: '$XFS_MOUNT' does not have enforcing XFS project quotas (prjquota)."
-    echo "This is a mandatory host requirement (see BEST_PRACTICES.md Chapter 1)."
-    podman unshare rmdir "$HOST_REPO" 2>/dev/null
+if ! repo_quota_enforcing "$XFS_MOUNT"; then
+    repo_dir_remove "$HOST_REPO"
     exit 1
 fi
 
-# Allocate the next free project id: scan existing repo dirs under
-# HOST_REPO_BASE for their current projid (via lsattr -p) and take max+1,
-# starting from PROJID_BASE. This needs no separate id registry/database.
-#
-# A directory whose id cannot be read is an ERROR, not something to skip: the
-# scan would then hand out an id that is already in use, and two clients would
-# share one quota — each seeing the other's consumption, neither limited to
-# what it was promised. Silence is the wrong answer to "I could not read the
-# thing this decision depends on". These directories belong to the container's
-# mapped uid, so the operator reads them by mode, not ownership; anything that
-# tightens that mode surfaces here rather than in a quota that quietly stops
-# separating clients.
-PROJID=$((${PROJID_BASE:-1000} - 1))
-for d in "$HOST_REPO_BASE"/*/*; do
-    [ -d "$d" ] || continue
-    # The directory created moments ago has no id of its own yet — it inherits
-    # the parent's, which says nothing about what is in use. It is the one
-    # entry whose unreadability would mean nothing, so it is not consulted.
-    [ "$d" = "$HOST_REPO" ] && continue
-    pid=$(lsattr -p -d "$d" 2>/dev/null | awk '{print $1}')
-    case "$pid" in
-        ''|*[!0-9]*)
-            echo "ERROR: cannot read the XFS project id of '$d'."
-            echo "Allocating an id without it risks reusing one that is already in"
-            echo "use, which would put two clients under a single shared quota."
-            echo "Check that the directory is readable (mode 755) and on the XFS mount."
-            podman unshare rmdir "$HOST_REPO" 2>/dev/null
-            exit 1
-            ;;
-    esac
-    [ "$pid" -gt "$PROJID" ] && PROJID="$pid"
-done
-PROJID=$((PROJID + 1))
+# The directory created moments ago is skipped by the scan: it has no id of its
+# own yet and inherits the parent's, which says nothing about what is in use.
+PROJID=$(repo_projid_next "$HOST_REPO") || {
+    repo_dir_remove "$HOST_REPO"
+    exit 1
+}
 
 echo "[create] Assigning XFS project id $PROJID to $HOST_REPO"
-sudo xfs_quota -x -c "project -s -p $HOST_REPO $PROJID" "$XFS_MOUNT" >/dev/null
+repo_projid_assign "$XFS_MOUNT" "$HOST_REPO" "$PROJID"
 
 echo "[create] Setting hard quota: $QUOTA"
-sudo xfs_quota -x -c "limit -p bhard=${QUOTA} ${PROJID}" "$XFS_MOUNT"
+repo_limit_apply "$XFS_MOUNT" "$PROJID" "$QUOTA"
 
 # Read the limit back from the directory itself instead of trusting the exit
 # status above: xfs_quota reports success for a limit set on a project id that
@@ -321,14 +248,11 @@ sudo xfs_quota -x -c "limit -p bhard=${QUOTA} ${PROJID}" "$XFS_MOUNT"
 # volume runs full. Verify before the client exists in clients.conf at all.
 if ! quota_verify "$HOST_REPO" "$QUOTA"; then
     # The directory goes, and so does the limit that was just set on the
-    # project id — bhard=0 is XFS for "no limit", which is what this id had
-    # before this run. The id is handed out again by the next create (max+1
-    # over the directories that exist), and leaving a limit on it would make
-    # that client inherit a number nobody chose for it.
+    # project id (repo_limit_clear says why bhard=0 is the right value).
     echo "ERROR: aborting — no client was created."
-    sudo xfs_quota -x -c "limit -p bhard=0 ${PROJID}" "$XFS_MOUNT" 2>/dev/null || \
+    repo_limit_clear "$XFS_MOUNT" "$PROJID" 2>/dev/null || \
         echo "WARNING: the limit set on project id $PROJID could not be cleared."
-    podman unshare rmdir "$HOST_REPO" 2>/dev/null
+    repo_dir_remove "$HOST_REPO"
     exit 1
 fi
 
