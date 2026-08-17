@@ -950,7 +950,20 @@ esac
 STUB
 cat > "$STATUS_STUB/podman" <<'STUB'
 #!/bin/sh
-case "$1" in ps) echo "CONTAINER ID  IMAGE  STATUS  NAMES" ;; *) exit 1 ;; esac
+# An unset PODMAN_* variable stands for "nothing is running", which is what
+# podman itself reports by failing rather than by printing an empty answer.
+case "$1" in
+    ps) echo "CONTAINER ID  IMAGE  STATUS  NAMES" ;;
+    inspect)
+        [ -n "${PODMAN_IMAGE_NAME:-}" ] || exit 125
+        echo "$PODMAN_IMAGE_NAME"
+        ;;
+    exec)
+        [ -n "${PODMAN_RUNNING_VERSION:-}" ] || exit 125
+        printf 'version=%s\nborg=borg 1.4.0\ndebian=13.6\n' "$PODMAN_RUNNING_VERSION"
+        ;;
+    *) exit 1 ;;
+esac
 STUB
 cat > "$STATUS_STUB/journalctl" <<'STUB'
 #!/bin/sh
@@ -996,6 +1009,63 @@ run_status
 printf '%s' "$OUT" | grep -q 'not installed for this user' \
     && printf '%s' "$OUT" | grep -q '50-service-install.sh'
 assert "11.5 an uninstalled unit says so and names the script that installs it" $?
+
+# The release-identity block, which asks two questions and needs both answers
+# on screen. `Host scripts` against `Running version` is which release is
+# installed and which one is serving; `Configured image` against `Running
+# image` is which object is configured and which one the container was
+# actually started from. Only the second can see an edited pin, and until #31
+# the report made only the first — while its own text claimed to cover both.
+PIN_A="ghcr.io/raykhoefemann/hardened-borg-server@sha256:aaaa000000000000"
+PIN_B="ghcr.io/raykhoefemann/hardened-borg-server@sha256:bbbb111111111111"
+
+run_identity() { # <configured IMAGE> <running reference> <running VERSION> <host VERSION>
+    new_tree
+    sed -i "s|^IMAGE=.*|IMAGE=\"$1\"|" "$T/scripts/config.sh"
+    [ -n "$4" ] && printf '%s\n' "$4" > "$T/VERSION"
+    OUT="$(PODMAN_IMAGE_NAME="$2" PODMAN_RUNNING_VERSION="$3" \
+        PATH="$STATUS_STUB:$PATH" "$WORK/sh" "$T/scripts/99-container-status.sh" 2>&1)"; RC=$?
+}
+
+unit_state 'LoadState=loaded' 'UnitFileState=enabled' 'ActiveState=active' \
+    'SubState=running' 'Result=success' 'NRestarts=0' \
+    'ExecMainStartTimestamp=Fri 2026-08-15 16:00:13 CEST' 'ExecMainStatus=0'
+
+run_identity "$PIN_A" "$PIN_B" 0.1.0-beta.30 0.1.0-beta.30
+printf '%s' "$OUT" | grep -q '→ PIN MISMATCH' \
+    && printf '%s' "$OUT" | grep -qE "^Configured image: +$PIN_A\$" \
+    && printf '%s' "$OUT" | grep -qE "^Running image: +$PIN_B\$"
+assert "11.6 an edited pin is reported, with both references on screen" $?
+
+# The case the report was written for and could not see: two digests of one
+# release. Every version in play is identical, so the version comparison is
+# silent and must stay silent — a PIN MISMATCH is the only true statement here.
+printf '%s' "$OUT" | grep -q '→ MISMATCH'
+[ $? -ne 0 ]; assert "11.7 ... without claiming the releases differ, because they do not" $?
+
+printf '%s' "$OUT" | grep -q '50-service-install.sh' \
+    && printf '%s' "$OUT" | grep -q '92-container-restart.sh'
+assert "11.8 ... and the repair names both halves of the upgrade step" $?
+
+run_identity "$PIN_A" "$PIN_A" 0.1.0-beta.30 0.1.0-beta.30
+printf '%s' "$OUT" | grep -q 'MISMATCH'
+[ $? -ne 0 ]; assert "11.9 a container started from the configured pin is passed in silence" $?
+
+# A pin that agrees with the running container while the checkout does not:
+# a restart would start the same object again, so the version line has to name
+# IMAGE itself rather than a missing restart. Matched on the arrow, because the
+# version line's own text mentions PIN MISMATCH to tell the two causes apart.
+run_identity "$PIN_A" "$PIN_A" 0.1.0-beta.29 0.1.0-beta.30
+printf '%s' "$OUT" | grep -q '→ MISMATCH' \
+    && ! printf '%s' "$OUT" | grep -q '→ PIN MISMATCH'
+assert "11.10 a stale checkout is a version mismatch and not a pin mismatch" $?
+
+# Nothing running is not a disagreement. podman fails rather than answering,
+# and a report that treated that as a differing reference would raise an alarm
+# on every stopped service.
+run_identity "$PIN_A" "" "" 0.1.0-beta.30
+printf '%s' "$OUT" | grep -q 'MISMATCH'
+[ $? -ne 0 ]; assert "11.11 a stopped container is not reported as a mismatch" $?
 
 # =========================================================================
 # 12. 02-change-user-quota.sh — changing a quota

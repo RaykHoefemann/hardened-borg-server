@@ -19,18 +19,28 @@ set -e
 echo "------------------------------------------------------------"
 echo "[status] Installed Release"
 echo "------------------------------------------------------------"
-# The host half of a release is these scripts, which the container image does
-# not carry — so the image tag alone never answers "what is installed here".
+# Two questions, two pairs of lines, each pair printed together so that the
+# comparison the report makes below can also be made by eye:
+#
+#   Host scripts / Running version — which RELEASE is installed and which one is
+#                    serving. The host half of a release is these scripts, which
+#                    the container image does not carry, so neither figure
+#                    answers it alone.
+#   Configured image / Running image — which OBJECT is configured and which one
+#                    the running container was actually started from. A digest
+#                    pin makes these two the only figures that speak about
+#                    content: a version cannot distinguish two builds of one
+#                    release, and cannot see an edited pin at all until
+#                    something restarts.
+#
+# The second pair used to be a reference on one side and a version on the other,
+# which is why nothing here noticed an edited pin — see the note under check 0C
+# in docs/VERIFICATION.md.
 echo "Host scripts:     ${RELEASE_VERSION}"
-echo "Configured image: ${IMAGE}"
 
 # What the RUNNING container reports about itself. One exec rather than three,
 # and empty throughout if the container is not running.
 #
-#   Running image  — from the VERSION baked in at build time. The only figure
-#                    that survives a digest pin: with IMAGE set to a sha256
-#                    reference, the configured value says nothing about which
-#                    release is actually serving clients.
 #   Bundled borg   — the wrapper's encryption check reads the repository's
 #                    on-disk manifest and is therefore version-sensitive. The
 #                    note at the top of borg-wrapper.sh records which versions
@@ -48,10 +58,45 @@ RUNNING_VERSION="$(printf '%s\n' "$RUNTIME_INFO" | sed -n 's/^version=//p')"
 RUNNING_BORG="$(printf '%s\n' "$RUNTIME_INFO" | sed -n 's/^borg=//p')"
 RUNNING_DEBIAN="$(printf '%s\n' "$RUNTIME_INFO" | sed -n 's/^debian=//p')"
 
-[ -n "$RUNNING_VERSION" ] && echo "Running image:    ${RUNNING_VERSION}"
-[ -n "$RUNNING_BORG" ]    && echo "Bundled borg:     ${RUNNING_BORG}"
-[ -n "$RUNNING_DEBIAN" ]  && echo "Base OS:          Debian ${RUNNING_DEBIAN}"
+# podman's own record of the reference the container was given — not something
+# the image reports about itself, and the only value here that survives a digest
+# pin as a statement about content. `--rm` in the unit (OPERATIONS.md chapter
+# 9.11) removes a stopped container rather than leaving it in an exited state,
+# so this is empty for the same reason RUNNING_VERSION is: nothing is running.
+RUNNING_IMAGE_REF="$(podman inspect "$CONTAINER" --format '{{.ImageName}}' 2>/dev/null || true)"
+
+[ -n "$RUNNING_VERSION" ]   && echo "Running version:  ${RUNNING_VERSION}"
+echo "Configured image: ${IMAGE}"
+[ -n "$RUNNING_IMAGE_REF" ] && echo "Running image:    ${RUNNING_IMAGE_REF}"
+[ -n "$RUNNING_BORG" ]      && echo "Bundled borg:     ${RUNNING_BORG}"
+[ -n "$RUNNING_DEBIAN" ]    && echo "Base OS:          Debian ${RUNNING_DEBIAN}"
 echo "Source:           ${SOURCE_URL}"
+
+# IMAGE is what the NEXT start would use; ImageName is what this one did use.
+# The two part company in one very ordinary way — IMAGE edited, nothing
+# restarted — and no comparison of *versions* can see it. The check below leaves
+# both of its operands untouched in that state: the container has not changed,
+# and neither has the VERSION file in the checkout. A rebuild of a single
+# release makes it worse still, carrying the same VERSION under a different
+# digest. So this compares references, which is what verification check 0C does
+# by hand (docs/VERIFICATION.md) and the only comparison that answers "is the
+# object serving clients the one this installation configures".
+#
+# With a tag in IMAGE the comparison still runs and still catches a pending
+# restart, but agreement proves much less than it looks: both sides then name a
+# name, and a name can be re-pointed at other content (check 0B).
+if [ -n "$RUNNING_IMAGE_REF" ] && [ "$RUNNING_IMAGE_REF" != "$IMAGE" ]; then
+    echo
+    echo "→ PIN MISMATCH: the running container was not started from IMAGE."
+    echo "  The two image lines above name different objects, so the checkout,"
+    echo "  the unit and this configuration all describe an image that is not"
+    echo "  serving anyone. Re-render the unit, then restart:"
+    echo "      ./scripts/50-service-install.sh"
+    echo "      ./scripts/92-container-restart.sh"
+    echo "  Both steps, in that order: the unit reads IMAGE from the environment"
+    echo "  file the install script generates, so restarting on its own starts"
+    echo "  the old image again (DEPLOYMENT.md chapter 6.3, step 7)."
+fi
 
 if [ "$RELEASE_VERSION" = "unknown" ]; then
     echo
@@ -61,8 +106,9 @@ elif [ -n "$RUNNING_VERSION" ] && [ "$RUNNING_VERSION" != "$RELEASE_VERSION" ]; 
     echo
     echo "→ MISMATCH: host scripts are ${RELEASE_VERSION}, the running container"
     echo "  is ${RUNNING_VERSION}. The two halves of a release are meant to match."
-    echo "  Either the image was not restarted after an upgrade, or IMAGE points"
-    echo "  at a different release than the checkout these scripts came from."
+    echo "  With a PIN MISMATCH above, the restart is what is missing. Without"
+    echo "  one, the container is running the configured image and IMAGE itself"
+    echo "  names a different release than the checkout these scripts came from."
 fi
 
 echo

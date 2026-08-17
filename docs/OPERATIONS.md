@@ -432,24 +432,51 @@ Shows a combined status view, opening with the release identity of this installa
 
 ```
 Host scripts:     0.1.0-beta.30
+Running version:  0.1.0-beta.30
 Configured image: ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest>
-Running image:    0.1.0-beta.30
+Running image:    ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest>
 Bundled borg:     borg 1.4.0
 Base OS:          Debian 13.6
 Source:           https://github.com/RaykHoefemann/hardened-borg-server
 ```
 
-The last four come from a single `podman exec` against the live container and are omitted when it is not running.
+Each line and where it is read from:
 
-`Configured image` is shown pinned to a digest above, which is the state [Server Installation](SERVERINSTALL.md) step 3 leaves an installation in and what verification check `0B` requires. A tag there instead means the running image can be replaced by the next pull without any configuration changing.
+| Line | Read from | What it answers |
+|---|---|---|
+| `Host scripts` | the `VERSION` file at the installation root | Which release the **host half** is — `scripts/`, the systemd unit, `config.sh` |
+| `Running version` | `/VERSION` inside the running container | Which release the **container half** is — the one serving clients right now |
+| `Configured image` | `IMAGE` in `config.sh` | Which **object** the *next* start would use |
+| `Running image` | podman's record of the reference the container was given | Which **object** the running container was *actually* started from |
+| `Bundled borg` | `borg --version` inside the container | Which Borg version the wrapper's encryption check is running against |
+| `Base OS` | `/etc/debian_version` inside the container | Whether a Debian advisory applies to this deployment |
+| `Source` | `SOURCE_URL` in `config.sh` | Where this software comes from; clients are told the same constant (Chapter 8) |
 
-`Running image` is read from the `VERSION` baked in at build time, and it is the only one of these figures that survives that pin: a `sha256:` reference says nothing about which release is actually serving clients. This is also why the mismatch check below compares it against `Host scripts` rather than against `Configured image`.
+`Host scripts`, `Configured image` and `Source` are read on the host and always appear. The other four need a container to ask and are omitted when none is running — `Running version`, `Bundled borg` and `Base OS` come from a single `podman exec`, `Running image` from `podman inspect`.
 
-`Bundled borg` is worth checking after any base image change. The wrapper's encryption check reads the repository's on-disk manifest and is therefore version-sensitive; the note at the top of `borg-wrapper.sh` records which Borg versions a release was tested against, and this line is what is actually running. `Base OS` is there for judging whether a Debian advisory applies to this deployment.
+**The first four lines form two pairs, and each pair is one question.** They are printed adjacently so that the comparison the report makes can also be made by eye. `Bundled borg` and `Base OS` belong to no pair; they are read, not compared:
+
+- **`Host scripts` against `Running version`** — which release is *installed* and which one is *serving*. The host half of a release is these scripts, which the image does not carry; the container half is the `VERSION` baked in at build time. A difference is reported as a `MISMATCH` line.
+- **`Configured image` against `Running image`** — which object this installation *configures* and which one the running container was actually *started from*. Both sides are references rather than versions, which is what lets them speak about content at all. A difference is reported as a `PIN MISMATCH` line, and this pair is verification check `0C` ([Verification](VERIFICATION.md)).
+
+`Configured image` is shown pinned to a digest above, which is the state [Server Installation](SERVERINSTALL.md) step 3 leaves an installation in and what verification check `0B` requires. A tag there instead means the running image can be replaced by the next pull without any configuration changing — and it weakens the second pair to the same degree, since two agreeing names say nothing about the bytes underneath.
+
+**One pair cannot answer the other's question**, which is why both are printed. A pinned `Configured image` deliberately cannot be read as a version — that is exactly what the pin trades away — so the version pair is the only one that names releases. In the other direction, a version comparison cannot see an object change at all: an `IMAGE` edited without a restart leaves *both* versions untouched, and a rebuild of a single release carries the same `VERSION` under a different digest. This report used to print a reference on one side and a version on the other, with no second pair at all, and an edited pin was therefore invisible here — including to the `MISMATCH` line, whose own text claimed otherwise (#31).
+
+`Bundled borg` is the line to read after any base image change. The wrapper's encryption check reads the repository's on-disk manifest and is therefore version-sensitive; the note at the top of `borg-wrapper.sh` records which Borg versions a release was tested against, and this line is what is actually running against them.
 
 These are operator diagnostics and deliberately do **not** appear in the client `info` channel, which stays limited to what a client needs in order to verify the server (Chapter 2.4).
 
-A difference between `Host scripts` and `Running image` is reported explicitly — the two halves of a release are meant to match, and they drift when an image is not restarted after an upgrade, or when `IMAGE` points at a different release than the checkout the scripts came from.
+**The two reported differences distinguish two causes**, which neither could do alone. A `PIN MISMATCH` means the running container predates the current `IMAGE`: something has to restart. A `MISMATCH` *without* a `PIN MISMATCH` means the container is running the configured image and `IMAGE` itself names a different release than the checkout the scripts came from — a restart would change nothing, because it would start the same object again. Both lines together are the ordinary shape of an upgrade whose step 7 was skipped ([Deployment](DEPLOYMENT.md) Chapter 6.3).
+
+The repair a `PIN MISMATCH` names is **both halves** of that step 7, in order:
+
+```bash
+./scripts/50-service-install.sh
+./scripts/92-container-restart.sh
+```
+
+Restarting alone does not do it, and this is the one thing about the repair worth remembering: the unit takes `IMAGE` from the `EnvironmentFile` that `50-service-install.sh` generates (Chapter 6.2 of [Deployment](DEPLOYMENT.md)), not from `config.sh` directly. A restart without the install step re-reads the *old* value and starts the old image again, leaving the report saying exactly what it said before.
 
 After that: the systemd service state, `podman ps` output, a detailed `podman inspect` (image, PID, network, mounts) if the container is currently registered with Podman, and the last 20 lines of the service's journal log.
 

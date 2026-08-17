@@ -345,13 +345,14 @@ one serving clients. That is 0C.
 > inspect` on an *arm64 host* prints that host's manifest, as it demonstrably
 > does on amd64. The mark stays until someone runs it there.
 
-### 0C — the container is running the object you verified ⚠️
+### 0C — the container is running the object you verified ✅
 
 0A and 0B are answered before a container exists; they are about an artifact in
 a registry. This is the return visit after installation, and it asks a
 different question: not what `config.sh` configures, but what the process
 serving clients right now was actually started from. Those two drift apart in
-one very ordinary way, and nothing else on this page notices.
+one very ordinary way that no comparison of *versions* can detect, which is why
+this check reads references rather than release numbers.
 
 **Run** — on the host, as the service user, from `$INSTALL_PATH`:
 
@@ -376,10 +377,28 @@ started from it is running what 0A verified.
 **Fail** — the two differ. The ordinary cause is an edit without a restart: an
 upgrade re-pinned `IMAGE` ([Deployment](DEPLOYMENT.md) 6.3 step 6) while the old
 container kept running, so the checkout, the unit and the configuration all
-describe a release that is not serving anyone. `92-container-restart.sh` is the
-repair. A `MISMATCH` line from `99-container-status.sh` reports the same
-situation when the two releases differ in version — but two *digests* of one
-version, which is what a rebuild produces, are invisible there and visible here.
+describe a release that is not serving anyone.
+
+The repair is both halves of [Deployment](DEPLOYMENT.md) 6.3 step 7, in that
+order:
+
+```bash
+./scripts/50-service-install.sh
+./scripts/92-container-restart.sh
+```
+
+Restarting alone does not do it. The unit takes `IMAGE` from the
+`EnvironmentFile` that `50-service-install.sh` generates, not from `config.sh`
+directly, so a restart without the install step re-reads the *old* value and
+starts the old image again — leaving this check failing exactly as it was.
+
+`99-container-status.sh` reports the same disagreement as a `PIN MISMATCH` line
+(OPERATIONS Chapter 9.11), and reads the same two references to do it. That is
+the operational echo of this check; running it here is the deliberate one, and
+it is the only form available if the report itself is what you doubt. What the
+status script's *other* line — `MISMATCH` — compares is something else entirely:
+the host scripts' `VERSION` against the running container's, neither of which an
+edited pin changes.
 
 **Weaker when `IMAGE` carries a tag.** Then both sides can agree while the
 object underneath has been replaced, because a name is all either of them
@@ -396,12 +415,27 @@ unmodified in local storage. This check reads podman's own record of what it
 started; it is not an independent hash of the bytes on disk. Nor does it say
 anything about the container's behaviour, which is every test below it.
 
-> **Unverified, and newer than the rest of the page.** The command is the one
-> `99-container-status.sh` already uses to print `Image:`, so its output form is
-> established, but the check has not been staged in the failing direction —
-> re-pinning without restarting and confirming that the two lines diverge. That
-> is a two-minute exercise on a test bench and it belongs in the "Break this"
-> table of [Test Environment](TESTENV.md).
+> **Verified in both directions.** Correct state: on an installation pinned and
+> restarted the way [Server Installation](SERVERINSTALL.md) step 3 prescribes,
+> both commands print the same `@sha256:` reference. Broken state, staged from
+> the "Break this" table of [Test Environment](TESTENV.md): with `v0.1.0-beta.30`
+> running and `IMAGE` re-pinned to the `beta.29` index digest without a restart,
+> the two lines diverged on exactly that difference (#31).
+>
+> **What that measurement also settled** is why this check reads references.
+> `99-container-status.sh` stayed silent throughout — its `MISMATCH` line
+> compared the host scripts against the running container, and an edited pin
+> moves neither. The page claimed here, and in TESTENV, that the status script
+> covered the cross-version case and left only same-version rebuilds to `0C`; it
+> covered neither. The `PIN MISMATCH` line described above was written in
+> response and compares the two references directly, so both cases are now
+> reported without being run for. **That line is itself unverified against a
+> deployment.** `tests/host-scripts.sh` asserts it across four states — a pin
+> edited to a second digest of the same release, a stale checkout with a
+> matching pin, a pin the container was started from, and a stopped container —
+> but that is the suite testing the code, which is a different statement from
+> the one this page makes. No bench has yet been left in the failing state with
+> the new script in place.
 >
 > A stronger variant is being measured: reading the digest from podman's own
 > storage record (`RepoDigests`) rather than from the reference string, which
@@ -1383,7 +1417,7 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 |---|---|---|---|
 | 0A | Attestation verifies and names this repository (do this first) | ✅ | ☐ |
 | 0B | The verified index digest is the one pinned in `IMAGE` | ⚠️ | ☐ |
-| 0C | The running container was started from that digest | ⚠️ | ☐ |
+| 0C | The running container was started from that digest | ✅ | ☐ |
 | 0.5A | The key authenticates and the info channel answers | ✅ | ☐ |
 | 0.5B | The client can initialize its repository | ✅ | ☐ |
 | 1 | No interactive shell | ⚠️ | ☐ |
@@ -1406,7 +1440,7 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 | 9 | Append-only enforced | ✅ | ☐ |
 | 10 | Repository destruction blocked | ✅ | ☐ |
 
-Ten ✅ out of twenty-four. That ratio is the honest state of this page, and it
+Eleven ✅ out of twenty-four. That ratio is the honest state of this page, and it
 is published rather than smoothed over: a ⚠️ here means the check has not been
 shown to fail when it should, which is a different and weaker statement than
 "your deployment is fine".

@@ -204,7 +204,7 @@ cd "$INSTALL_PATH"
 NEW=v0.1.0-beta.30
 
 # 1. Record where you are, so you can tell afterwards that something changed
-./scripts/99-container-status.sh | head -8
+./scripts/99-container-status.sh | head -10
 
 # 2. Keep what is yours
 cp scripts/config.sh /tmp/config.sh.previous
@@ -243,20 +243,23 @@ The `diff` in step 6 is the point of the backup: it shows both your own settings
 ### Confirm the upgrade actually landed
 
 ```bash
-./scripts/99-container-status.sh | head -8
+./scripts/99-container-status.sh | head -10
 ```
 
-`Host scripts` and `Running image` must both name the new release, and `Configured image` must carry the digest resolved in step 4:
+The report opens with two pairs, and an upgrade has to move both ([Operations](OPERATIONS.md) Chapter 9.11). `Host scripts` and `Running version` must both name the new release; `Configured image` and `Running image` must both carry the digest resolved in step 4:
 
 ```
 Host scripts:     0.1.0-beta.30
+Running version:  0.1.0-beta.30
 Configured image: ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest from step 4>
-Running image:    0.1.0-beta.30
+Running image:    ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest from step 4>
 ```
 
-A pinned `Configured image` deliberately cannot be read as a version — that is what the pin trades away, and why the two version figures are the ones compared against each other (see [Operations](OPERATIONS.md) Chapter 9.11). If it still shows the *old* digest, step 6 was skipped: the container then runs whatever that digest names, which is the previous release, no matter what the checkout says.
+A pinned image deliberately cannot be read as a version — that is what the pin trades away, and why the versions are compared against each other and the references against each other rather than across. If `Configured image` still shows the *old* digest, step 6 was skipped: the container then runs whatever that digest names, which is the previous release, no matter what the checkout says.
 
-A `MISMATCH` line here is the normal outcome of forgetting step 7 — the files on disk are new while the container still runs the old image. From a client, `ssh borgserver info` should now report the new version in its `[software]` section, since each client's info text is re-rendered at container start.
+Forgetting step 7 produces both reported differences at once — a `PIN MISMATCH` because the container was started from the old digest, and a `MISMATCH` because the files on disk are new while that old image is still serving. Note that the two halves of step 7 are not interchangeable: `92-container-restart.sh` on its own restarts the unit against the `EnvironmentFile` as `50-service-install.sh` last generated it, so an upgrade that skips the install step restarts straight back into the old image, with the report unchanged.
+
+From a client, `ssh borgserver info` should now report the new version in its `[software]` section, since each client's info text is re-rendered at container start.
 
 ### What an upgrade does not touch
 

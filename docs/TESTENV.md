@@ -222,7 +222,7 @@ the test notices:
 | Append a line to the container's `authorized_keys` without the `command=` prefix | 3A counts it; drop only the `,restrict` from an otherwise correct line and it still does |
 | Initialize a repository with `--encryption=repokey` | Test 8 is refused on the next connection |
 | Mount an `sshd_config` over the image's own with a `Match User borg` block reopening `PermitTTY` | 1.5A still reports ten correct lines — 1.5B is what catches it |
-| Edit `IMAGE` in `config.sh` to a different digest and *do not* restart | 0C's two lines diverge. `99-container-status.sh` stays quiet if both digests carry the same version, which is the gap 0C exists to cover |
+| Edit `IMAGE` in `config.sh` to a different digest and *do not* restart | 0C's two lines diverge, and `99-container-status.sh` reports it as `PIN MISMATCH` — whatever versions the two digests carry. Its `MISMATCH` line stays quiet, because that one compares the host scripts against the running container and an edited pin moves neither (#31). Repair with `50-service-install.sh` *then* `92-container-restart.sh`; a restart alone starts the old image again |
 
 > **The one that looks like it works and does not:** `sudo mount -o
 > remount,noquota <mount>`. XFS does not accept quota state changes on remount —
