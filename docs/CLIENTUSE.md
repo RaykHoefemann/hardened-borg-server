@@ -445,4 +445,5 @@ monthly or quarterly is more realistic than nightly for a large repository.
 | Quota exhausted | Operator raises it; you stop the timer meanwhile |
 | Repository initialized with the wrong encryption mode | Operator clears the directory; you re-initialize — and lose what was in it (Chapter 3.1) |
 | Interrupted `borg init` — `DENY: no repository segments found` | Operator clears the directory; you re-initialize, losing nothing (Chapter 3.1) |
+| `DENY: repository directory missing – needs operator action` | **Operator only**, and they have a script for it. Your repository directory is not on the server; nothing you retry will change that, and the server will not create one on its own — doing so would leave you with no storage quota at all. Report the message. What the repair restores is your *access*: whatever was in the repository went with the directory, so you will be initializing a fresh one (Chapter 3.1) |
 | Verifying archive contents | **Only you** — the server has no key |

@@ -141,7 +141,11 @@ HOST_REPO="${HOST_REPO_BASE}/${GROUP}/${USERNAME}"
 
 if [ ! -d "$HOST_REPO" ]; then
     echo "ERROR: repository directory '$HOST_REPO' not found on host."
-    echo "clients.conf and the filesystem are out of sync — needs manual review."
+    echo "clients.conf and the filesystem are out of sync. There is nothing here"
+    echo "to change a quota on; recreating the directory, its ownership and its"
+    echo "project id is provisioning, not a quota change:"
+    echo "    ./scripts/03-provision-client.sh $USERNAME"
+    echo "Find out where the directory went first — a recreated one is empty."
     exit 1
 fi
 
@@ -155,20 +159,17 @@ if [ -z "$XFS_MOUNT" ]; then
     exit 1
 fi
 
-if ! sudo xfs_quota -x -c 'state -p' "$XFS_MOUNT" 2>/dev/null | grep -qE '^[[:space:]]*Enforcement:[[:space:]]*ON'; then
-    echo "ERROR: '$XFS_MOUNT' does not have enforcing XFS project quotas (prjquota)."
-    echo "This is a mandatory host requirement (see BEST_PRACTICES.md Chapter 1)."
-    exit 1
-fi
+repo_quota_enforcing "$XFS_MOUNT" || exit 1
 
-PROJID=$(lsattr -p -d "$HOST_REPO" 2>/dev/null | awk '{print $1}')
-case "$PROJID" in
-    ''|*[!0-9]*|0)
-        echo "ERROR: '$HOST_REPO' has no valid XFS project id assigned."
-        echo "It may predate project-quota enforcement; assign one manually first."
-        exit 1
-        ;;
-esac
+PROJID=$(repo_projid "$HOST_REPO") || {
+    echo "ERROR: '$HOST_REPO' has no valid XFS project id assigned."
+    echo "It may predate project-quota enforcement, or have been restored from a"
+    echo "backup that did not carry one. Without an id there is nothing to set a"
+    echo "limit on, which is provisioning rather than a change:"
+    echo "    ./scripts/03-provision-client.sh $USERNAME"
+    echo "That assigns an id and applies the quota clients.conf already records."
+    exit 1
+}
 
 # Show what is in effect BEFORE the change, so the operator sees the actual
 # starting point rather than only the clients.conf value — the two drift apart

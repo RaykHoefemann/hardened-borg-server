@@ -106,6 +106,16 @@ size=0; used=0; avail=""
 while IFS=: read -r path s u av; do
     [ "$path" = "$p" ] && { size="$s"; used="$u"; avail="$av"; }
 done < "$DF_STUB_DATA"
+# A size of "!" stands for a df that cannot answer for this path. Real df then
+# writes its diagnostic to stderr and prints no table at all — measured against
+# a directory whose parent has no search bit, which is the way this state is
+# actually reached (statfs needs search permission on the prefix, not on the
+# target). The callers see an empty read, which is the only thing that tells
+# them: the pipeline's own exit status is awk's, and awk succeeds on nothing.
+if [ "$size" = "!" ]; then
+    echo "df: $p: Permission denied" >&2
+    exit 1
+fi
 [ -n "$avail" ] || avail=$((size - used))
 echo "Filesystem 1024-blocks Used Available Capacity Mounted on"
 echo "/dev/stub $size $used $avail 99% /stub"
@@ -638,6 +648,54 @@ run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
 printf '%s' "$OUT" | grep -q '(!)'
 [ $? -ne 0 ]; assert "9.24 ... and a listing with nothing wrong carries no marker at all" $?
 
+# The same rule applied to the state 9.6 covers. A client in clients.conf whose
+# repository directory is gone cannot connect at all, and the row said so in
+# its USED cell while leaving QUOTA and CONFIGURED clean — so a listing holding
+# one read as a pass to VERIFICATION check 5.5A, which decides on those two
+# columns (#30). These belong with 9.6 and are appended here rather than
+# renumbered in.
+setup_09
+rm -rf "$T/repo/OWN/user2"
+df_stub "$T/repo:$((4000 * GIB)):$((100 * GIB))" \
+    "$T/repo/OWN/user1:$((50 * GIB)):$((5 * GIB))" \
+    "$T/repo/MIRROR/friend1:$((200 * GIB)):$((10 * GIB))"
+run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
+printf '%s' "$OUT" | grep -qE '^user2 +n/a \(!\) +n/a +20G +MISSING on host'
+assert "9.25 a missing repository is marked in the column the check reads" $?
+
+printf '%s' "$OUT" | grep -q 'has no repository directory on' \
+    && printf '%s' "$OUT" | grep -q '03-provision-client.sh'
+assert "9.26 ... and the marker is explained, with the script that repairs it" $?
+
+# Not the drift hint: 02-change-user-quota.sh is the repair for drift and
+# refuses this state outright, so naming it here would send the operator to a
+# script that cannot help.
+printf '%s' "$OUT" | grep -q 'does not match clients.conf'
+[ $? -ne 0 ]; assert "9.27 ... without being reported as a quota drift" $?
+
+# The third unmeasurable state, and the weakest claim of the three: the
+# directory is there and df still reported nothing for it. Every (!) in this
+# listing means the same thing — this needs attention, something is not right —
+# and a figure that could not be read qualifies. Leaving it unmarked let 5.5A
+# pass on a row whose measurement had failed, which is #30 one cause further on.
+setup_09
+df_stub "$T/repo:$((4000 * GIB)):$((100 * GIB))" \
+    "$T/repo/OWN/user1:$((50 * GIB)):$((5 * GIB))" \
+    "$T/repo/OWN/user2:!" \
+    "$T/repo/MIRROR/friend1:$((200 * GIB)):$((10 * GIB))"
+run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
+printf '%s' "$OUT" | grep -qE '^user2 +n/a \(!\) +n/a +20G +unreadable'
+assert "9.28 a client whose figures cannot be read is marked" $?
+
+printf '%s' "$OUT" | grep -q "could not be read" \
+    && printf '%s' "$OUT" | grep -q 'still mounted'
+assert "9.29 ... and the marker says what to look at" $?
+
+# Distinct from both other hints: nothing is known to be missing and nothing is
+# known to have drifted — that is the point of the state.
+printf '%s' "$OUT" | grep -q 'no repository directory on'
+[ $? -ne 0 ]; assert "9.30 ... and is neither reported as missing nor as drift" $?
+
 # =========================================================================
 # 10. 00-ssh-create-user.sh — creating a client
 # =========================================================================
@@ -696,6 +754,9 @@ cat > "$STUB/xfs_quota" <<'XSTUB'
 #              "<projid>:<kib>" lines in $XFS_REPORT_DATA
 #   limit -p   appended to $XFS_LOG, so a test can see what was applied and in
 #              which order — which is how a rollback is observed at all
+#   project -s appended to the same log. A limit is set on an id; whether that
+#              id governs the client's directory is a separate write, and the
+#              two together are the whole mechanism a quota rests on
 for a in "$@"; do
     case "$a" in
         "state -p")
@@ -708,7 +769,7 @@ for a in "$@"; do
                 done < "$XFS_REPORT_DATA"
             fi
             ;;
-        limit*)
+        limit*|project*)
             [ -n "${XFS_LOG:-}" ] && echo "$a" >> "$XFS_LOG"
             ;;
     esac
@@ -1317,6 +1378,134 @@ run sh "$T/scripts/50-service-install.sh"
 [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'is a mount point' \
     && printf '%s' "$OUT" | grep -q "mkdir -p /dev/shm/borg-repo-test-$$"
 assert "13.4 a missing subdirectory of a mounted volume names the mkdir to run" $?
+
+# =========================================================================
+# 14. 03-provision-client.sh — provisioning what clients.conf already declares
+# =========================================================================
+#
+# The half of a client that had no reconciler. clients.conf plus config/keys is
+# rendered afresh at every container start, so the SSH half repairs itself; the
+# filesystem half was applied inline by 00 and nowhere else, which left a
+# deleted repository directory with no way back — 02 refuses a directory it
+# cannot find, 00 refuses a name clients.conf already holds, and 02's own error
+# told the operator to assign a project id "manually first" (issues #29, #30).
+#
+# Same stubs as sections 10 and 12: this script reaches outside itself through
+# exactly the same four commands, because it calls the same repo_* helpers.
+
+setup_03() {
+    new_tree
+    {
+      clients_conf_header
+      echo 'user1:OWN:/repo/OWN/user1:10G'
+      echo 'user2:OWN:/repo/OWN/user2:20G'
+    } > "$T/config/clients.conf"
+    mkdir -p "$T/repo/OWN/user1" "$T/repo/OWN/user2"
+    lsattr_stub "$T/repo/OWN/user1:1000" "$T/repo/OWN/user2:1001"
+    XFS_LOG="$WORK/xfs.log"; : > "$XFS_LOG"; export XFS_LOG
+    printf '1000:%s\n1001:%s\n' "$((10 * GIB))" "$((20 * GIB))" > "$WORK/xfs.report"
+    export XFS_REPORT_DATA="$WORK/xfs.report"
+    df_stub "$T/repo:$((100 * GIB)):$((2 * GIB))" \
+            "$T/repo/OWN/user1:$((10 * GIB)):$((1 * GIB))" \
+            "$T/repo/OWN/user2:$((20 * GIB)):0"
+}
+
+run_provision() { # run_provision <args...> — 03-provision-client.sh under all stubs
+    export PODMAN_LOG="$WORK/podman.log"
+    : > "$PODMAN_LOG"
+    OUT="$(printf '%s\n' "$CONFIRM_INPUT" \
+        | PATH="$STUB:$DF_BIN:$PATH" "$T/scripts/03-provision-client.sh" "$@" 2>&1)"
+    RC=$?
+}
+
+# --- what it refuses to be ------------------------------------------------
+
+setup_03
+run_provision nosuchclient
+[ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'does not exist in clients.conf' \
+    && printf '%s' "$OUT" | grep -q '00-ssh-create-user.sh'
+assert "14.1 a client that was never declared is sent to 00, not created here" $?
+
+# The dividing line with 02. Directory and project id are both in place, so
+# whatever is wrong with the limit is drift — the state 02 exists for, with a
+# preview and a rollback this script does not reimplement.
+setup_03
+printf '1000:%s\n1001:%s\n' "$((5 * GIB))" "$((20 * GIB))" > "$WORK/xfs.report"
+df_stub "$T/repo:$((100 * GIB)):$((2 * GIB))" \
+        "$T/repo/OWN/user1:$((5 * GIB)):$((1 * GIB))" \
+        "$T/repo/OWN/user2:$((20 * GIB)):0"
+run_provision user1
+[ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q '02-change-user-quota.sh user1 10G' \
+    && [ ! -s "$XFS_LOG" ]
+assert "14.2 a limit that merely differs is 02's job and nothing is written" $?
+
+# Re-running on a healthy client is a result, not an error.
+setup_03
+run_provision user1
+[ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'Nothing to do' \
+    && [ ! -s "$XFS_LOG" ]
+assert "14.3 a client that is already correct is reported and left alone" $?
+
+# --- MISSING on host: the state that had no repair ------------------------
+
+setup_03
+rm -rf "$T/repo/OWN/user1"
+CONFIRM_INPUT="n"
+run_provision user1
+CONFIRM_INPUT="y"
+[ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'MISSING on host' \
+    && printf '%s' "$OUT" | grep -q 'NOT coming back'
+assert "14.4 a missing directory is named, and so is the cost of recreating it" $?
+
+[ ! -d "$T/repo/OWN/user1" ] && [ ! -s "$XFS_LOG" ]
+assert "14.5 declining the prompt creates nothing at all" $?
+
+setup_03
+rm -rf "$T/repo/OWN/user1"
+run_provision user1
+[ "$RC" -eq 0 ] && [ -d "$T/repo/OWN/user1" ]
+assert "14.6 a confirmed run recreates the repository directory" $?
+
+# The new id is max+1 over the directories that exist, which is 1001 here —
+# user2's — and it has to be assigned to this client's directory, not merely
+# allocated: a limit on an id that governs nothing is the failure quota_verify
+# exists to catch. The ownership goes through podman unshare, not a plain chown.
+grep -q "project -s -p $T/repo/OWN/user1 1002" "$XFS_LOG" \
+    && grep -q "unshare chown 1111:1111 $T/repo/OWN/user1" "$PODMAN_LOG"
+assert "14.7 ... with a fresh project id and container-side ownership" $?
+
+grep -q 'limit -p bhard=10G 1002' "$XFS_LOG"
+assert "14.8 ... and the limit clients.conf records, not one that was typed" $?
+
+# The invariant that keeps this script honest: it is not an editor.
+grep -q '^user1:OWN:/repo/OWN/user1:10G$' "$T/config/clients.conf"
+assert "14.9 ... while clients.conf is left exactly as it was" $?
+
+# --- a directory that lost its project id ---------------------------------
+#
+# The other reachable half-state: the directory is there, with data in it, but
+# nothing associates it with a quota. Reached by restoring a backup, moving a
+# volume, or an installation older than project-quota enforcement — which is
+# the case 02's "assign one manually first" was written for.
+
+setup_03
+lsattr_stub "$T/repo/OWN/user2:1001"
+: > "$T/repo/OWN/user1/some-existing-data"
+df_stub "$T/repo:$((100 * GIB)):$((2 * GIB))" \
+        "$T/repo/OWN/user1:$((100 * GIB)):$((1 * GIB))" \
+        "$T/repo/OWN/user2:$((20 * GIB)):0"
+run_provision user1
+# The data warning belongs to the missing-directory case alone. Negated with a
+# leading `!` rather than `grep -qv`, which asks whether ANY line fails to match
+# and is therefore true of almost any output.
+printf '%s' "$OUT" | grep -q 'no XFS project id' \
+    && ! printf '%s' "$OUT" | grep -q 'NOT coming back'
+assert "14.10 a directory without a project id is provisioned with no data warning" $?
+
+# Whatever was in the directory is still in it: this path creates nothing and
+# removes nothing, it only assigns an id and a limit.
+[ -f "$T/repo/OWN/user1/some-existing-data" ]
+assert "14.11 ... and the data that was there is untouched" $?
 
 # --- summary -------------------------------------------------------------
 

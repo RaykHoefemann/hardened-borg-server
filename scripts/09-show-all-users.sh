@@ -62,13 +62,22 @@ if [ -n "${HOST_REPO_BASE:-}" ] && [ -d "$HOST_REPO_BASE" ]; then
     VOLUME_KIB=$(quota_enforced_kib "$HOST_REPO_BASE")
 fi
 
-# Any client whose enforced limit disagrees with clients.conf touches this
-# file. The per-client loop below runs inside a pipeline, i.e. in a subshell
-# on every POSIX shell, so a variable set there would not survive — a file is
-# the one signal that does.
+# Any client whose enforced limit disagrees with clients.conf touches the first
+# file; any client with no repository directory at all touches the second. The
+# per-client loop below runs inside a pipeline, i.e. in a subshell on every
+# POSIX shell, so a variable set there would not survive — a file is the one
+# signal that does.
+#
+# Two markers rather than one because the two states need different advice:
+# drift is corrected with 02-change-user-quota.sh, and a missing directory is
+# precisely what that script refuses — it has nothing to set a limit on. That
+# one goes to 03-provision-client.sh. One hint covering both would send half its
+# readers to a script that cannot help them.
 DRIFT_DIR=$(mktemp -d) || exit 1
 trap 'rm -rf "$DRIFT_DIR"' EXIT INT TERM
 DRIFT_MARKER="${DRIFT_DIR}/drift"
+MISSING_MARKER="${DRIFT_DIR}/missing"
+UNREADABLE_MARKER="${DRIFT_DIR}/unreadable"
 
 # The four cells describing one client, pipe-separated:
 # "<quota>|<% of volume>|<configured>|<used>". Short markers stand in for any
@@ -76,23 +85,63 @@ DRIFT_MARKER="${DRIFT_DIR}/drift"
 report_for() {
     grp="$1"; user="$2"; want="$3"
     if [ -z "${HOST_REPO_BASE:-}" ]; then
-        echo "n/a|n/a|${want}|n/a (HOST_REPO_BASE not set)"
+        # Marked like the two states below — nothing here is measurable, which
+        # is something being wrong rather than something being absent. No hint
+        # under the listing for this one: the cell names its own cause, and the
+        # condition is global, so every row would be repeating the same
+        # sentence that the paragraph underneath would then repeat again.
+        echo "n/a (!)|n/a|${want}|n/a (HOST_REPO_BASE not set)"
         return
     fi
     d="${HOST_REPO_BASE}/${grp}/${user}"
     if [ ! -d "$d" ]; then
-        echo "n/a|n/a|${want}|MISSING on host"
+        # Marked, because this is the state OPERATIONS Chapter 9.5 describes a
+        # (!) as meaning: intention and reality disagree for this client.
+        # clients.conf records a quota, the filesystem holds nothing to apply it
+        # to, and the client cannot connect at all — the wrapper refuses a
+        # repository directory that is not there rather than creating one it
+        # could not give a project id. The row said all of this in its USED cell
+        # and left the marked columns clean, so a listing containing it read as
+        # a pass to VERIFICATION check 5.5A, whose criterion reads those
+        # columns (#30).
+        #
+        # 'n/a' rather than 'none': none (!) means a directory that is served
+        # with no limit on it, which is a different and less obvious failure —
+        # 5.5B's first shape. Nothing is served here at all.
+        : > "$MISSING_MARKER"
+        echo "n/a (!)|n/a|${want}|MISSING on host"
         return
     fi
     # Available as well as size and used: the USED percentage is a fill level
     # taken from df's own two figures, which is exactly what the client is told
     # through the info channel (borg-wrapper.sh). Deriving it from the limit
     # here instead would be a second opinion on the same measurement.
-    line=$(df -kP "$d" 2>/dev/null | awk 'NR==2{print $2, $3, $4}') || { echo "n/a|n/a|${want}|unreadable"; return; }
+    #
+    # A failure here is caught by the emptiness of $line, and only by that.
+    # This used to carry a `|| { ...unreadable...; return; }` as well, which
+    # could not fire: the exit status of a pipeline is the status of its last
+    # command, and awk succeeds on empty input however badly df did. POSIX sh
+    # has no pipefail to change that, so the guard below is the real one and
+    # the redundant branch has been removed rather than left to look load-
+    # bearing.
+    line=$(df -kP "$d" 2>/dev/null | awk 'NR==2{print $2, $3, $4}')
     size_kib=$(echo "$line" | cut -d' ' -f1)
     used_kib=$(echo "$line" | cut -d' ' -f2)
     avail_kib=$(echo "$line" | cut -d' ' -f3)
-    case "$size_kib" in ''|*[!0-9]*) echo "n/a|n/a|${want}|unreadable"; return ;; esac
+    # Marked, for the same reason as MISSING above but on a weaker claim. The
+    # directory is there — `-d` passed — and df still reported nothing for it.
+    # statfs() needs search permission on every parent, not on the target, so
+    # this is a group directory or HOST_REPO_BASE the operator can no longer
+    # traverse, or a volume that is no longer mounted. Where MISSING says "this
+    # client is broken", this says "nothing is known about this client", and a
+    # check that reads these columns must not call that a pass either.
+    case "$size_kib" in
+        ''|*[!0-9]*)
+            : > "$UNREADABLE_MARKER"
+            echo "n/a (!)|n/a|${want}|unreadable"
+            return
+            ;;
+    esac
     case "$used_kib" in ''|*[!0-9]*) used_kib=0 ;; esac
     case "$avail_kib" in ''|*[!0-9]*) avail_kib="" ;; esac
 
@@ -133,10 +182,42 @@ EOF
     echo ""
 done
 
+# Printed before the drift hint: a client that cannot connect at all outranks
+# one that connects under the wrong limit.
+if [ -e "$MISSING_MARKER" ]; then
+    echo "(!) At least one client in clients.conf has no repository directory on"
+    echo "    the host. Nothing is enforced for it and nothing serves it: its next"
+    echo "    connection is refused with 'DENY: repository directory missing'."
+    echo "    Only the host can create one — the ownership needs 'podman unshare'"
+    echo "    and the quota an XFS project id:"
+    echo ""
+    echo "        ./scripts/03-provision-client.sh <user>"
+    echo ""
+    echo "    A recreated directory is empty: it restores the client's access, not"
+    echo "    its archives. Find out where the directory went before recreating it"
+    echo "    (OPERATIONS.md chapter 9.4.1)."
+    echo ""
+fi
+
 if [ -e "$DRIFT_MARKER" ]; then
     echo "(!) The enforced limit does not match clients.conf for at least one"
     echo "    client — the filesystem is what actually applies. Re-apply the"
     echo "    intended value with ./scripts/02-change-user-quota.sh <user> <quota>."
+    echo ""
+fi
+
+# Last of the three: the other two name a fault, this one names a blind spot.
+if [ -e "$UNREADABLE_MARKER" ]; then
+    echo "(!) At least one client's quota could not be read. Its repository"
+    echo "    directory exists, but df reported nothing for it — usually a"
+    echo "    directory in the path that can no longer be traversed, or a storage"
+    echo "    volume that is no longer mounted. Check the group directories under"
+    echo ""
+    echo "        ${HOST_REPO_BASE%/}"
+    echo ""
+    echo "    and that the volume is still mounted. Until then this listing is"
+    echo "    incomplete: nothing is known about that client's limit in either"
+    echo "    direction."
     echo ""
 fi
 

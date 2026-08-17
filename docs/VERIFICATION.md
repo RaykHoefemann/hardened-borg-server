@@ -1041,7 +1041,9 @@ one holding.
 
 **Pass** — every client's `CONFIGURED` column repeats that client's
 `clients.conf` value unmarked, with no `(!)` in the `QUOTA` or `CONFIGURED`
-columns and no drift hint under the listing.
+columns and no hint under the listing. Every client `clients.conf` names
+appears with a repository on disk: `MISSING on host` in the `USED` column is a
+failure, not an empty value.
 
 A `(!)` on the `Committed:` line is a different statement and does not decide
 this check. It reports that the quotas jointly reach the volume (OPERATIONS
@@ -1055,6 +1057,31 @@ client; with 5B passing, the volume is fine and the project id is not. A marked
 value in `CONFIGURED` means a limit *is* enforced, but not the one
 `clients.conf` records — the `QUOTA` column is the one in force. Re-apply the
 intended value with `02-change-user-quota.sh` (OPERATIONS Chapter 9.4).
+
+**Fail** — `n/a (!)` beside `MISSING on host` means the repository directory
+`clients.conf` names does not exist. That client is not under the wrong limit;
+it cannot connect at all: the wrapper answers `DENY: repository directory
+missing – needs operator action` rather than creating a directory it could give
+neither the right owner nor an XFS project id. `03-provision-client.sh` provisions
+it again (OPERATIONS Chapter 9.4.1) — the directory, its ownership and its
+project id, from what `clients.conf` still records. What it restores is the
+client's access, not its archives: those went with the directory, so establish
+where the directory went before running it.
+
+Such a client also drops out of the `Committed:` sum, which is correct — no
+directory means no enforced quota to add — but it leaves `Total clients:` and
+the count on the `Committed:` line disagreeing. That disagreement is a second
+tell for the same condition, and worth knowing about before it looks like an
+arithmetic bug.
+
+**Fail** — `n/a (!)` beside `unreadable` means the directory is there and `df`
+reported nothing for it. This check cannot be answered for that client in
+either direction, which is why it fails rather than passes: a measurement that
+did not happen is not agreement. `statfs()` needs search permission on every
+*parent* of the path, so look at the group directories and `HOST_REPO_BASE`
+rather than at the client's own directory — and at whether the volume is still
+mounted. A `(!)` on the `Disk usage:` or `Disk free:` line says the same thing
+about the volume as a whole, and then no row of the listing is trustworthy.
 
 ### 5.5B — the client is told its own limit ✅
 
@@ -1131,6 +1158,26 @@ reports on its `Committed:` line and this test deliberately does not judge.
 > client was held to a limit nobody had recorded. The recorded value is now
 > labelled `quota (configured):` at the source, and the criterion decides on the
 > `Used:` total (#28).
+>
+> **A third state was staged afterwards and 5.5A did not see it either**:
+> a client whose repository directory had been deleted outright
+> (`podman unshare rm -rf <HOST_REPO_BASE>/OWN/<client>`). The listing reported
+> it honestly as `MISSING on host`, but in the `USED` column only — `QUOTA` read
+> `n/a`, `CONFIGURED` was unmarked, and nothing had drifted, so all three
+> clauses of the criterion above were satisfied by a client that could not
+> connect at all (#30). `09-show-all-users.sh` now marks that row `n/a (!)` and
+> explains it under the listing, which is what makes the criterion decide it.
+> **That marker is unverified against a deployment** — the state it reports was
+> measured on the bench, the marker itself has only `tests/host-scripts.sh`
+> behind it so far.
+>
+> The same reasoning was then applied to the other states this listing cannot
+> measure — `unreadable`, and a `HOST_REPO_BASE` that names nothing — which are
+> now marked as well. `(!)` means one thing everywhere in that report: this
+> needs attention, something here is not right. A figure that could not be read
+> qualifies, because a criterion deciding on those columns would otherwise call
+> a failed measurement an agreement. Neither of those two has been staged on a
+> bench either.
 
 ---
 

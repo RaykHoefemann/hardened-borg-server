@@ -322,6 +322,45 @@ there) for the operations that need `CAP_SYS_ADMIN`.
 ./scripts/02-change-user-quota.sh user1-os1-pc1 100G
 ```
 
+## 9.4.1. 03-provision-client.sh
+
+Provisions the **filesystem** side of a client `clients.conf` already declares: the repository directory, its container-side ownership, its XFS project id and its hard limit. Everything `00-ssh-create-user.sh` does for a *new* client, for one that already exists on paper.
+
+```bash
+./scripts/03-provision-client.sh <username>
+```
+
+> **It is called *provision* and not *repair* for a reason.** It creates what is missing and nothing else. It does not bring back what was in the directory, it does not change a limit that is merely wrong, and it does not correct a group directory it did not create. A name promising more than that would be read as a promise in exactly the situation where the reader is in a hurry.
+
+**Why this needs a script of its own.** A client has two halves and they are applied by different mechanisms. The SSH half — `clients.conf` plus `config/keys/*.pub` — is rendered from scratch by `build_authorized_keys.sh` at every container start, so it re-applies itself: put a key file back, restart, and the client is authorized again. The filesystem half was applied inline by `00-ssh-create-user.sh` and nowhere else, so there was no way to apply it a second time. A repository directory deleted by hand therefore left a client that nothing could put right: the server refuses it (`DENY: repository directory missing`), `02-change-user-quota.sh` refuses a directory it cannot find, and `00-ssh-create-user.sh` refuses a name `clients.conf` already holds. `02`'s own error even told the operator to assign a project id "manually first" — a step no script performed.
+
+**What it provisions**, in increasing order of what is missing:
+
+| State, as `09-show-all-users.sh` reports it | What this script does |
+|---|---|
+| `n/a (!)` … `MISSING on host` | creates the directory, gives it container-side ownership, allocates and assigns a project id, applies the recorded limit |
+| `none (!)` in `QUOTA` — the directory is there, nothing associates it with a quota | allocates and assigns a project id, applies the recorded limit |
+| a project id that carries no limit yet | applies the recorded limit |
+
+**What it deliberately does not do:**
+
+- **It never writes to `clients.conf`.** That file is the declaration; this script makes the filesystem agree with it, never the other way round. Where they disagree in the other direction — directory and project id both present, but the limit differs — that is drift rather than damage, and Chapter 9.4 is the script for it. This one says so and stops:
+
+    ```
+    [provision] Nothing missing here: the directory and its project id are
+             both in place, so this is a quota that differs rather than one
+             that is absent. Changing it is what 02-change-user-quota.sh is for:
+
+                 ./scripts/02-change-user-quota.sh user1-os1-pc1 50G
+    ```
+
+- **It adds what is missing and changes nothing else.** A group directory (`<HOST_REPO_BASE>/OWN`, `/MIRROR`) that exists with unexpected ownership is reported, not corrected.
+- **It brings back no archives.** What it restores is the client's *access*. A recreated directory is empty; everything the client stored went with the deleted one, and the client has to run `borg init` again ([Client Usage](CLIENTUSE.md) chapter 3.1). The script says so before asking, because it is the one consequence an operator must not discover afterwards.
+
+Like `00` and `02` it previews the change as a share of the volume and asks before writing anything, refuses a recorded quota above 99% of the volume, and needs no container restart afterwards — nothing under `/config` changes. Run it as **the same user that runs the container**, for the reason in Chapter 9.2.
+
+Re-running it on a client that is already correct is a no-op that says so, which makes it safe to reach for when the listing shows something and the cause is not yet clear.
+
 ## 9.5. 09-show-all-users.sh
 
 Prints an overview of every configured client, grouped by `OWN`/`MIRROR`, with each client's configured quota, the quota **actually enforced** for it, and its **live** storage usage — the latter two read the same way the client `info` channel reads them (directly from the enforcing XFS project quota via `df`, see Chapter 8), not from the static `clients.conf` value. Also reports the physical usage and free space of the underlying storage volume. Read-only, does not require root.
@@ -335,7 +374,7 @@ Prints an overview of every configured client, grouped by `OWN`/`MIRROR`, with e
 USERNAME                 QUOTA        % OF VOL  CONFIGURED   USED
 user1-os1-pc1            50.0 GiB     1%        50G          31.4 GiB of 50.0 GiB (63%)
 user2-os1-pc1            10.0 GiB     0%        20G (!)      8.1 GiB of 10.0 GiB (81%)
-user3-os1-pc1            n/a          n/a       30G          MISSING on host
+user3-os1-pc1            n/a (!)      n/a       30G          MISSING on host
 
 Total clients: 3
 Committed:     60.0 GiB of 3.6 TiB volume (1%) across 2 client(s)
@@ -363,14 +402,31 @@ Counting it any other way would make the figure look *better* the more dangerous
 - plain (e.g. `50G`) — the filesystem enforces what was configured; nothing to do.
 - `20G (!)` — it does not. The client is bound by the `QUOTA` column, whatever the file says. Re-apply the intended value with Chapter 9.4.
 - `none (!)` in `QUOTA` — no project quota governs that directory at all (`df` reports the whole volume), so the client is bounded by nothing. Typically a directory that predates quota enforcement or lost its project id.
-- `n/a` — nothing could be read, e.g. the repository directory is missing (`clients.conf` and the filesystem have drifted apart).
+- `n/a (!)` in `QUOTA`, beside `MISSING on host` in `USED` — the repository directory named in `clients.conf` does not exist. Nothing is enforced for that client, and nothing serves it either: its next connection is refused with `DENY: repository directory missing – needs operator action`. Neither the wrapper nor the container's key generator will create one, deliberately — a directory made in there is owned by the wrong user and carries no XFS project id, so it would serve the client with no quota at all. Provisioned again on the host with `03-provision-client.sh` (Chapter 9.4.1), which recreates the directory but not what was in it.
+- `n/a (!)` in `QUOTA`, beside `unreadable` in `USED` — the directory exists and `df` reported nothing for it. Typically a directory in the path that can no longer be traversed — `statfs()` needs search permission on every *parent*, not on the target, so this is a group directory or `HOST_REPO_BASE` rather than the client's own — or a volume that is no longer mounted. Nothing is known about that client's limit in either direction, which is why it is marked: a figure that could not be measured is not a figure that agrees.
+- `n/a (!)` in `QUOTA`, beside `n/a (HOST_REPO_BASE not set)` in `USED` — `config.sh` carries no repository base, so nothing could be measured for any client.
 
-`(!)` always means the same thing — **look here, something needs a decision** — and always prints an explanation under the listing. What differs is the line it sits on, and that is what tells you which kind of problem it is:
+`(!)` always means the same thing — **this needs attention, something here is not right** — and always comes with an explanation, either in the cell itself or in a paragraph under the listing. What differs is the line it sits on, and that is what tells you which kind of problem it is:
 
-- **in the `QUOTA` or `CONFIGURED` column** — intention and reality disagree for that client. `clients.conf` records one limit and the kernel applies another, or none at all. Only the kernel stops anyone from writing, so the column is what counts; repair it with Chapter 9.4.
-- **on the `Committed:` line** — the limits in effect jointly reach the volume. Every client is still held to its own limit; what cannot be honoured is all of them at once. Nothing is broken and nothing is misconfigured — it is a capacity decision, and Chapter 10.2 is where it is decided.
+- **in the `QUOTA` or `CONFIGURED` column** — intention and reality disagree for that client, or reality could not be read at all. `clients.conf` records one limit and the kernel applies another, or none, or nothing could be measured. Only the kernel stops anyone from writing, so the column is what counts; where a limit *is* in force and simply differs, Chapter 9.4 repairs it. The three unmeasurable states are not repaired there and say so under the listing — `MISSING on host` has no directory for a quota to apply to and Chapter 9.4 refuses it accordingly:
 
-The first is a fault. The second is a choice you should know you have made.
+    ```
+    (!) At least one client in clients.conf has no repository directory on
+        the host. Nothing is enforced for it and nothing serves it: its next
+        connection is refused with 'DENY: repository directory missing'.
+        Only the host can create one — the ownership needs 'podman unshare'
+        and the quota an XFS project id:
+
+            ./scripts/03-provision-client.sh <user>
+
+        A recreated directory is empty: it restores the client's access, not
+        its archives. Find out where the directory went before recreating it
+        (OPERATIONS.md chapter 9.4.1).
+    ```
+- **on the `Committed:` line** — the limits in effect jointly reach the volume. Every client is still held to its own limit; what cannot be honoured is all of them at once. Nothing is *misconfigured* — it is a capacity decision, and Chapter 10.2 is where it is decided.
+- **on `Disk usage:` or `Disk free:`** — the volume's own figures could not be read, or `HOST_REPO_BASE` names nothing reachable. Every per-client figure in the listing comes off the same volume, so this one invalidates the rest of the report rather than one row of it.
+
+The difference between them is not whether something is wrong — where a `(!)` is printed, something always is. It is whether the answer is a repair, a decision, or a look at the host: the first and third want repairing, the second is a risk you should know you have chosen to carry.
 
 The distinction matters for the sizing invariant in Chapter 10.2, which is about **enforced** limits: reading the configured ones would report a volume that is safe on paper while the disk fills.
 
@@ -539,7 +595,17 @@ podman unshare ls -A <HOST_REPO_BASE>/<group>/<client>          # must print not
 
 `-mindepth 1` is the whole point: it empties the directory and leaves the directory itself standing. Verify with `ls -A` rather than `ls` — the wrapper's "is this repository fresh" test counts hidden entries too, so a single leftover dotfile keeps the client refused, and with a *different* message (`repo non-empty but config missing`) that sends the next reader to the wrong chapter.
 
-**Why the directory itself must survive.** The XFS project id lives on the directory (`00-ssh-create-user.sh` assigns it with `xfs_quota -x -c 'project -s -p …'`), and the quota is enforced against that id. Remove the directory and the id goes with it; the wrapper then recreates the path on the client's next connection with a plain `mkdir -p`, and the client is served from a directory that no quota applies to. It backs up normally, bounded by the volume rather than by its limit — the `none (!)` state `09-show-all-users.sh` reports and Chapter 10.2 counts against the whole disk. `02-change-user-quota.sh` will not repair it either; it stops at `has no valid XFS project id assigned`, and reassigning one is a manual `xfs_quota` call followed by re-applying the limit. Delete the contents rather than the directory and none of this can happen.
+**Why the directory itself must survive.** The XFS project id lives on the directory (`00-ssh-create-user.sh` assigns it with `xfs_quota -x -c 'project -s -p …'`), and the quota is enforced against that id. Remove the directory and the id goes with it — and nothing inside the container can put either back. Creating a repository directory correctly takes three steps and two privileges the container does not have: `podman unshare mkdir`, `podman unshare chown` to the `borg` user, and `sudo xfs_quota` for the project id. So the server refuses instead of improvising:
+
+- the client's next connection is answered with `DENY: repository directory missing – needs operator action`;
+- `09-show-all-users.sh` lists the client as `n/a (!)` … `MISSING on host` and explains it under the listing (Chapter 9.5);
+- `02-change-user-quota.sh` stops at `repository directory '…' not found on host … needs manual review`, and `00-ssh-create-user.sh` refuses to re-provision a name `clients.conf` already holds.
+
+The way back is `03-provision-client.sh` (Chapter 9.4.1), which provisions the directory, its ownership and its project id again from what `clients.conf` still records. What it cannot recreate is the contents: the archives went with the directory. That is the cost of deleting the directory rather than emptying it, and it is why this chapter is about `-mindepth 1`.
+
+> **Earlier releases were worse here, and the reason is worth knowing.** Both the wrapper and the container's key generator used to `mkdir -p` a missing repository directory. Neither could finish the job — a directory created in the container carries no project id and the wrong owner — so the deletion produced a client that was *served with no quota at all*, bounded by the volume rather than by its limit, which is the first failure shape of verification check `5.5B`. It also made the state unstable: `MISSING on host` until the next container start, then silently something else. Both `mkdir` calls are gone; the refusals above are what replaced them.
+
+**A deletion this chapter is not about, and which is worse.** Everything above concerns the *client's own* directory. Removing a **group** directory — `<HOST_REPO_BASE>/OWN` or `/MIRROR` — takes every client under it with it, and each of them then meets the same refusal. `03-provision-client.sh` recreates the group directory as a side effect of recreating the first client under it, but it has to be run once per client, and each of them comes back empty. There is no `-mindepth 1` version of that mistake to fall back on, which is the one good reason to keep the deletion command narrow enough to name a single client.
 
 **Step 3 — the client re-initializes.**
 
