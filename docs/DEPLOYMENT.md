@@ -37,7 +37,7 @@ Architecture overview and how to run the server — from an ad-hoc test containe
 
 > **Beta phase note:** no stable release has been tagged yet, so the `:latest`
 > tag below does not exist on GHCR yet. Replace it with the exact pre-release
-> tag you want to test, e.g. `ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.30`
+> tag you want to test, e.g. `ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.31`
 > (see the [package's version list](https://github.com/RaykHoefemann/hardened-borg-server/pkgs/container/hardened-borg-server/versions)
 > for the current tags). This note will be removed once a stable release ships.
 
@@ -201,7 +201,7 @@ Run it outside a backup window: the restart interrupts any transfer in progress,
 
 ```bash
 cd "$INSTALL_PATH"
-NEW=v0.1.0-beta.30
+NEW=v0.1.0-beta.31
 
 # 1. Record where you are, so you can tell afterwards that something changed
 ./scripts/99-container-status.sh | head -10
@@ -249,8 +249,8 @@ The `diff` in step 6 is the point of the backup: it shows both your own settings
 The report opens with two pairs, and an upgrade has to move both ([Operations](OPERATIONS.md) Chapter 9.11). `Host scripts` and `Running version` must both name the new release; `Configured image` and `Running image` must both carry the digest resolved in step 4:
 
 ```
-Host scripts:     0.1.0-beta.30
-Running version:  0.1.0-beta.30
+Host scripts:     0.1.0-beta.31
+Running version:  0.1.0-beta.31
 Configured image: ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest from step 4>
 Running image:    ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest from step 4>
 ```

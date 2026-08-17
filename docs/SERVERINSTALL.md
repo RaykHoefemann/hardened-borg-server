@@ -55,7 +55,7 @@ host actually needs: `config`, `scripts`, `systemd`.
 
 ```bash
 INSTALL_PATH=~/containers/borg-server
-RELEASE=v0.1.0-beta.30
+RELEASE=v0.1.0-beta.31
 mkdir -p "$INSTALL_PATH"
 
 git clone --branch "$RELEASE" --depth 1 \
