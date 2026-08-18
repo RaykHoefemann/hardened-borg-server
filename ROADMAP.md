@@ -240,3 +240,24 @@ That last point shapes how the tool must be written. An apply command that quiet
 The `podman` stub in `tests/host-scripts.sh` records every non-`unshare` invocation and returns 0, so both halves are cheap to assert: that the apply script issues its exec against `$CONTAINER`, and that a stopped or missing container produces a named fallback rather than a silent success. The generator's own behaviour is already covered by `tests/authorized-keys-generation.sh`, which runs the real script against fixtures.
 
 This is orthogonal to the Quadlet migration (11.4): the apply path is about the running container, not about how the unit that starts it is written, and either order of implementation works.
+
+## 11.8. Negative-Test Coverage for the Remaining Verification Checks
+
+`docs/VERIFICATION.md` now names, per check, whether a deliberately broken deployment has ever been staged and shown to trip that check's own **Fail** criterion (see its "How to read a test" section and the **Negative test** field under each of the 24 checks). As of `v0.1.0-beta.31`, roughly half still read **not yet staged**:
+
+- **0B** — pinning `IMAGE` to a plausible-but-wrong digest and confirming this check's own `Fail` text fires. The adjacent wrong-tool trap (`podman image inspect` vs `skopeo`) is staged (#25); the check's own criterion is not.
+- **1** — pairing 3A's "key without `command=`" recipe with an actual `ssh borgserver` attempt and confirming a shell opens.
+- **1.5B / 1.5C** — a recipe exists in [Test Environment](docs/TESTENV.md)'s "Break this" table, drawn from the incident that created these checks (#20), but `VERIFICATION.md` itself says the checks have not been re-run against it. That is a discrepancy between the two documents worth resolving first — confirm which one is right — before treating either check as closed.
+- **2** — deliberately disabling or bypassing `borg-wrapper.sh` on a live deployment and confirming a forbidden command actually executes.
+- **3B** — pointing one client's forced command at another client's `clients.conf` path and confirming the comparison catches it.
+- **4A / 4B / 4C** — a rootful Podman install, a container stopped or run by hand outside systemd, and a deliberately rootful container, each confirmed to produce this check's documented `Fail` output.
+- **6** — a repokey or plaintext repository left in place (bypassing test 8) and confirmed to be found by this check's `grep`/`find`.
+- **7** — the same cross-client path recipe as 3B, run from the client side, confirming `borg list` actually succeeds against it.
+
+None of these are hard to build individually — most are one more `podman unshare`, `sudo xfs_quota`, or a stopped unit away, the same shape as the recipes already in [Test Environment](docs/TESTENV.md). They are listed here rather than written directly into `VERIFICATION.md` for the same reason the rest of that page is careful: a "how to break this" procedure that was invented rather than run would repeat the exact failure mode (#17–#31) this project's whole beta series has been about eliminating. Each item above needs to actually be staged on a bench, with the observed output recorded, before it is written down as fact.
+
+**Constraints to preserve**, matching `VERIFICATION.md`'s own rules:
+
+- **The recipe must target the property, not a proxy for it.** The `mount -o remount,noquota` non-recipe (#22) is the cautionary example: it looked like it broke enforcement and did not.
+- **Destructive recipes are marked as such and use throwaway state** — a bench client or repository, never one holding real backups (the same rule test 10 already follows).
+- **A check moves to ✅ only once both directions have been observed on a real deployment.** Passing the equivalent case against the code alone (`tests/*.sh`) is not sufficient — see 11.6 above, on why "the ⚠️ marks stay attached to the checks... a runner cannot resolve it."
