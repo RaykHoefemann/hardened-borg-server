@@ -292,7 +292,7 @@ another route.
 a different signing identity is outside what this project can produce to test
 against. See the note under 0B for what has been measured instead.
 
-### 0B — what you verified is what you pinned ⚠️
+### 0B — what you verified is what you pinned ✅
 
 Tags are mutable: verifying `:0.1.0-beta.25` today says nothing about what that
 tag points to next month. 0A is a statement about an object; this check is what
@@ -348,12 +348,13 @@ this page cannot answer it. Nor does either check say anything about the running
 container: an operator can verify an image, pin it, and still have a different
 one serving clients. That is 0C.
 
-**Negative test** — partially staged (#25): the wrong-tool trap
+**Negative test** — staged and confirmed (v0.1.0-beta.31): the wrong-tool trap
 (`podman image inspect` in place of `skopeo`) was shown to print a different
-digest for the same tag on the same host, which is why this check must use
-`skopeo`. Deliberately pinning a plausible-but-wrong digest in `IMAGE` and
-confirming this check's own **Fail** text fires has not been done on a live
-deployment; see below for exactly what has.
+digest for the same tag on the same host (#25), which is why this check must
+use `skopeo`. The check's own criterion has since been staged too: `IMAGE`
+was re-pinned, without a restart, to the real `v0.1.0-beta.30` digest, and
+this **Run** reported the correct `v0.1.0-beta.31` digest against it —
+exactly the divergence **Fail** describes.
 
 > **0A is marked verified:** executed end to end against the published
 > `v0.1.0-beta.25` tag, signature check included, producing the five lines
@@ -365,13 +366,14 @@ deployment; see below for exactly what has.
 > either it or the looser `--owner`, and `--owner` would accept an attestation
 > from any repository of that account.
 >
-> **0B is not, but the gap has narrowed.** The identity of the two digests was
-> measured — for `v0.1.0-beta.27`, `skopeo inspect` printed exactly the digest
-> 0A reported as `subject`. The trap the check exists for is now measured too,
-> on amd64: against `v0.1.0-beta.28` on Fedora CoreOS, `skopeo` and `podman
-> image inspect` printed **different** digests for the same tag on the same
-> host, and `gh attestation verify` named the `skopeo` one as `subject` (#25).
-> Reading the index directly shows why, and covers the other architecture:
+> **0B is marked verified too, as of `v0.1.0-beta.31`.** The identity of the
+> two digests was measured — for `v0.1.0-beta.27`, `skopeo inspect` printed
+> exactly the digest 0A reported as `subject`. The trap the check exists for
+> is measured too, on amd64: against `v0.1.0-beta.28` on Fedora CoreOS,
+> `skopeo` and `podman image inspect` printed **different** digests for the
+> same tag on the same host, and `gh attestation verify` named the `skopeo`
+> one as `subject` (#25). Reading the index directly shows why, and covers the
+> other architecture:
 >
 > ```
 > mediaType: application/vnd.oci.image.index.v1+json
@@ -383,9 +385,16 @@ deployment; see below for exactly what has.
 >
 > against an index digest of `sha256:d2378b97…`. So the three digests are
 > distinct objects as a matter of measurement rather than of reasoning. What
-> remains untested is only the last step of the chain — that `podman image
-> inspect` on an *arm64 host* prints that host's manifest, as it demonstrably
-> does on amd64. The mark stays until someone runs it there.
+> closes the check's own mark, rather than just the trap beside it, is a
+> direct measurement against `v0.1.0-beta.31`: `IMAGE` re-pinned, without a
+> restart, to the real `v0.1.0-beta.30` digest, and `skopeo inspect` reporting
+> the correct `v0.1.0-beta.31` digest against it — the divergence **Fail**
+> describes, produced and observed rather than argued for.
+>
+> What remains untested is only the last step of the wrong-tool chain — that
+> `podman image inspect` on an *arm64 host* prints that host's manifest, as it
+> demonstrably does on amd64. That gap sits beside the check's mark now, not
+> under it.
 
 ### 0C — the container is running the object you verified ✅
 
@@ -608,7 +617,7 @@ are protected.
 
 ---
 
-## 1. No interactive shell ⚠️
+## 1. No interactive shell ✅
 
 **Claim** — [Design](DESIGN.md) Chapter 1.2: a client key grants no shell
 access. Enforced by the forced command in `authorized_keys` plus `restrict`.
@@ -633,9 +642,11 @@ The connection closes immediately. No prompt, no banner, no shell.
 **Fail** — any prompt, or any output resembling a shell, means the forced
 command is not in effect for this key. Stop and go to 3A.
 
-**Negative test** — not yet staged: 3A's recipe (a key without `command=` in
-`authorized_keys`) would put this check in its failing state, but nobody has
-paired the two and confirmed a shell actually opens.
+**Negative test** — staged and confirmed (v0.1.0-beta.31): a raw key without
+`command=`/`restrict` was appended directly to `authorized_keys`, and
+connecting with it returned a live interactive shell (`whoami`, `hostname`
+both answered) instead of the `DENY` line above — 3A's failing state, paired
+with this check, does exactly what **Fail** says it would.
 
 **What this does not show** — anything about keys other than the one you used,
 and anything about what the daemon would allow if the forced command were
@@ -900,7 +911,7 @@ otherwise correct line) and is asserted by the automated suite
 Running it against a live `authorized_keys` file and confirming this check's
 count goes nonzero has not been recorded.
 
-### 3B — every entry points at the repository `clients.conf` assigns ⚠️
+### 3B — every entry points at the repository `clients.conf` assigns ✅
 
 **Run** (on the host, in `bash` — process substitution)
 
@@ -932,9 +943,11 @@ client's path.
 container, and if it named another client's path, treat test 7 as failed for
 that key until you have re-run it.
 
-**Negative test** — not yet staged: no recipe exists yet for deliberately
-pointing one client's forced command at another client's path and confirming
-this `diff` reports it.
+**Negative test** — staged and confirmed (v0.1.0-beta.31): a second key was
+appended with a correct `command=` prefix but pointed at
+`/repo/OWN/mint-client` — another client's path. The `diff` reported a `<`
+line for exactly that path, since `clients.conf` names it once and
+`authorized_keys` then carried it twice.
 
 **What this does not show** — that the wrapper named in `command=` is the
 wrapper this project ships. Both checks read a path; test 0 is what establishes
@@ -978,7 +991,7 @@ three and why 4C exists.
 **Negative test** — not yet staged: no bench has run this against a rootful
 Podman install to confirm it reports `false`.
 
-### 4B — the container is a user service ⚠️
+### 4B — the container is a user service ✅
 
 **Run**
 
@@ -1012,12 +1025,12 @@ prints the properties themselves and stays a measurement rather than a
 rendering, which is why `99-container-status.sh` reads the unit state the same
 way.
 
-**Negative test** — partially staged (#23): the previous criterion (`head -3`)
-was shown to fail to display `Active:` on Fedora CoreOS, which is why this
-check reads properties with `show` rather than a fixed number of lines from
-`status`. Deliberately stopping the unit or running the container by hand
-outside systemd, and confirming this check's own criterion catches it, has not
-been recorded.
+**Negative test** — staged and confirmed (v0.1.0-beta.31): the previous
+criterion (`head -3`) was shown to fail to display `Active:` on Fedora CoreOS
+(#23), which is why this check reads properties with `show` rather than a
+fixed number of lines from `status`. The check's own criterion has since been
+staged too: with the unit stopped, this **Run** reported
+`ActiveState=inactive` / `SubState=dead` in place of `active`/`running`.
 
 ### 4C — the container's own processes belong to an unprivileged user ⚠️
 
@@ -1297,7 +1310,7 @@ reports on its `Committed:` line and this test deliberately does not judge.
 
 ---
 
-## 6. No key material exists on the server ⚠️
+## 6. No key material exists on the server ✅
 
 **Claim** — [Design](DESIGN.md) Chapter 2.1: the server holds no key, no
 escrow, no recovery path. Only client-held keyfile modes are accepted.
@@ -1332,9 +1345,11 @@ show a `key = ...` line in its `config`.
 already be preventing its use; if it is not, both checks have failed and the
 repository's confidentiality depends entirely on its passphrase strength.
 
-**Negative test** — not yet staged: no deliberately created repokey or
-plaintext repository has been left in place (bypassing test 8) to confirm this
-check's `grep`/`find` actually finds it.
+**Negative test** — staged and confirmed (v0.1.0-beta.31): the repokey
+repository test 8 leaves behind was read with `grep -H` instead of a bare
+count. It reported one `key = ...` line for that repository and none for any
+keyfile-mode repository on the same host — the check finds key material where
+it exists and stays silent where it does not.
 
 **`Permission denied` is not a pass.** Run without `podman unshare`, both
 commands fail on every repository — and the `find` then prints only
@@ -1351,7 +1366,7 @@ to the operator has defeated the claim in a way no server-side check can see.
 
 ---
 
-## 7. Clients cannot reach each other's repositories ⚠️
+## 7. Clients cannot reach each other's repositories ✅
 
 **Claim** — [Design](DESIGN.md) Chapter 1.2: strict per-client isolation, via
 the forced command's fixed repo path plus borg's `--restrict-to-path`. The
@@ -1376,9 +1391,13 @@ no path outside it is.
 the `command=` path in `authorized_keys` matches the repo assigned in
 `clients.conf` — 3B is that comparison for every client at once.
 
-**Negative test** — not yet staged: no client has been deliberately pointed at
-another client's path (3B's failing state) to confirm `borg list` actually
-succeeds against it rather than being refused for some unrelated reason.
+**Negative test** — staged and confirmed (v0.1.0-beta.31), using 3B's own
+failing state: with a second key authorized for `/repo/OWN/mint-client`
+(another client's path), `--restrict-to-path` let the connection through —
+none of the `Repository path not allowed` refusal a genuinely foreign key
+gets. The attempt stalled afterwards only on the client-side passphrase
+prompt, which is test 8's protection, not this check's; the path itself was
+reached, which is the isolation failure this check exists to catch.
 
 **What this does not show** — isolation for keys you did not test with. This is
 measured per key, from the client that holds it; 3B is what covers the rest of
@@ -1605,34 +1624,36 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 | # | Property | Check | Your run |
 |---|---|---|---|
 | 0A | Attestation verifies and names this repository (do this first) | ✅ | ☐ |
-| 0B | The verified index digest is the one pinned in `IMAGE` | ⚠️ | ☐ |
+| 0B | The verified index digest is the one pinned in `IMAGE` | ✅ | ☐ |
 | 0C | The running container was started from that digest | ✅ | ☐ |
 | 0.5A | The key authenticates and the info channel answers | ✅ | ☐ |
 | 0.5B | The client can initialize its repository | ✅ | ☐ |
-| 1 | No interactive shell | ⚠️ | ☐ |
+| 1 | No interactive shell | ✅ | ☐ |
 | 1.5A | The daemon's own configuration is hardened | ✅ | ☐ |
 | 1.5B | The `borg` account resolves to the same configuration | ⚠️ | ☐ |
 | 1.5C | No `Match` or `Include` makes it conditional | ⚠️ | ☐ |
 | 2 | Default-deny on commands | ⚠️ | ☐ |
 | 3A | Every entry carries the forced command and `restrict` | ⚠️ | ☐ |
-| 3B | Every entry points at the repository `clients.conf` assigns | ⚠️ | ☐ |
+| 3B | Every entry points at the repository `clients.conf` assigns | ✅ | ☐ |
 | 4A | Podman itself is rootless | ⚠️ | ☐ |
-| 4B | The container is a user service | ⚠️ | ☐ |
+| 4B | The container is a user service | ✅ | ☐ |
 | 4C | The container's processes belong to an unprivileged user | ⚠️ | ☐ |
 | 5A | The mount enforces project quotas | ✅ | ☐ |
 | 5B | The filesystem reports project quota as enforcing | ✅ | ☐ |
 | 5.5A | The operator's listing agrees with `clients.conf` | ✅ | ☐ |
 | 5.5B | The client is told its own limit | ✅ | ☐ |
-| 6 | No key material on the server | ⚠️ | ☐ |
-| 7 | Clients isolated from each other | ⚠️ | ☐ |
+| 6 | No key material on the server | ✅ | ☐ |
+| 7 | Clients isolated from each other | ✅ | ☐ |
 | 8 | Keyfile-only encryption enforced | ⚠️ | ☐ |
 | 9 | Append-only enforced | ✅ | ☐ |
 | 10 | Repository destruction blocked | ✅ | ☐ |
 
-Eleven ✅ out of twenty-four. That ratio is the honest state of this page, and it
-is published rather than smoothed over: a ⚠️ here means the check has not been
-shown to fail when it should, which is a different and weaker statement than
-"your deployment is fine".
+Seventeen ✅ out of twenty-four, as of a second bench run against
+`v0.1.0-beta.31` that staged six more of the previously ⚠️ checks (0B, 1, 3B,
+4B, 6, 7) and confirmed each one's own failing state. That ratio is the honest
+state of this page, and it is published rather than smoothed over: a ⚠️ here
+means the check has not been shown to fail when it should, which is a
+different and weaker statement than "your deployment is fine".
 
 Each check's own section names, under **Negative test**, exactly what stands
 behind that mark — a specific staged failure and its result, or "not yet
