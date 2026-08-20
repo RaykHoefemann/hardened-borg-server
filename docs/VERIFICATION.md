@@ -1205,7 +1205,12 @@ about the volume as a whole, and then no row of the listing is trustworthy.
 
 **Negative test** — staged for the volume-wide and single-client drift cases
 (#17, #22, #28) and, as of v0.1.0-beta.31, for the `MISSING on host` case too
-(#30). Not staged for `unreadable` or an empty `HOST_REPO_BASE`. See below.
+(#30). Not staged for `unreadable` or an empty `HOST_REPO_BASE`. For
+`unreadable`, one recipe has been tried and ruled out — `chmod` on a group
+directory does not reach it, and locks clients out silently under a report
+that stays green instead (#33); see [Test Environment](TESTENV.md) chapter 8
+and [Roadmap](../ROADMAP.md) 11.8 for the untested candidate and current
+status. See below.
 
 ### 5.5B — the client is told its own limit ✅
 

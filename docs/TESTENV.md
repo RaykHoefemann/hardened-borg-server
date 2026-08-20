@@ -225,7 +225,8 @@ the test notices:
 | Edit `IMAGE` in `config.sh` to a different digest and *do not* restart | 0C's two lines diverge, and `99-container-status.sh` reports it as `PIN MISMATCH` — whatever versions the two digests carry. Its `MISMATCH` line stays quiet, because that one compares the host scripts against the running container and an edited pin moves neither (#31). Repair with `50-service-install.sh` *then* `92-container-restart.sh`; a restart alone starts the old image again |
 | Delete one client's repository directory (`podman unshare rm -rf <HOST_REPO_BASE>/<group>/<client>`) | 5.5A fails: the client reads `n/a (!)` … `MISSING on host`, with the explanation under the listing. From that client, the next connection is refused with `DENY: repository directory missing – needs operator action` rather than being served from a directory the server made itself. `03-provision-client.sh <client>` is the way back — and it brings back an empty repository, so run it on a client whose archives you are willing to lose |
 | Delete a **group** directory (`podman unshare rm -rf <HOST_REPO_BASE>/MIRROR`) | Every client under it reads `MISSING on host` and meets the same refusal. Worth doing once for what it *no longer* does: until beta.30 the wrapper recreated the path here — its parent `/repo` belongs to `borg`, so the `mkdir` succeeded — and served the client from a directory with no project id, bounded by the volume rather than by its limit. That is 5.5B's first failure shape, produced by the server itself, and it needed no mistake inside a client directory at all (#29) |
-| Take the search bit off a group directory (`podman unshare chmod 750 <HOST_REPO_BASE>/OWN`) | 5.5A fails with `n/a (!)` … `unreadable` for every client under it, and the hint points at the group directories and the mount. `statfs()` needs search permission on the *parents*, not on the target, so tightening a client's own directory does **not** produce this — there `02-change-user-quota.sh` breaks instead, on `lsattr`. Note that the container's `borg` user is "other" on that directory too, so this takes the clients down with the report rather than blinding the report alone. Restore with `chmod 755` |
+| Take the search bit off a group directory (`podman unshare chmod 750 <HOST_REPO_BASE>/OWN`) | **Does not produce `unreadable` — confirmed on a live deployment (#33).** `09-show-all-users.sh` runs directly on the host, not through `podman unshare`, and the group directory was left "owned by namespace root" by `00-ssh-create-user.sh`; under rootless Podman that namespace-root uid maps back to the very host user who runs the reporting script, so the script keeps owner access while `750` only removes it from "other". What actually happens: the report stays green while the container's `borg` user — a different, unprivileged mapped uid, genuinely "other" here — loses access and its clients are locked out with `DENY: repository directory missing – needs operator action`, invisibly. `chmod 000` on the same directory does not reach `unreadable` either: it also removes the owner's search bit, so `[ -d ]` itself fails, and the script cannot tell that apart from "does not exist" — it reports `MISSING on host` instead. Restore with `chmod 755` |
+| *(untested)* Take the search bit off `HOST_REPO_BASE` itself | **Hypothesis, not yet staged.** Unlike the group directory, the mount point is plausibly outside the container's namespace and not owned by the host user who runs the reporting scripts — if so, this is the one `chmod` left that could put the *reporting script itself* on the "other" side and produce `unreadable` for every client at once, rather than just locking clients out under a green report. Whether that ownership assumption holds has not been checked on a bench. If it does not reach `unreadable` either, treat the branch as reachable only by a genuine `statfs()` failure (a real mount problem), not by any host-side permission change, and say so in [Verification](VERIFICATION.md) 5.5A rather than leaving a recipe here that was never confirmed |
 
 > **The one that looks like it works and does not:** `sudo mount -o
 > remount,noquota <mount>`. XFS does not accept quota state changes on remount —
@@ -237,13 +238,17 @@ the test notices:
 > no unmount, so the bind mount into `/repo` stays in place and the container
 > never has to be touched.
 
-> **The last four rows are owed measurements, and that is why they are here.**
-> The `PIN MISMATCH` line and the `(!)` markers for `MISSING on host` and
-> `unreadable` are newer than the bench runs that prompted them.
+> **Rows five through eight are owed measurements, and that is why they are
+> here.** The `PIN MISMATCH` line and the `(!)` markers for `MISSING on host`
+> and `unreadable` are newer than the bench runs that prompted them.
 > [Verification](VERIFICATION.md) records them as unverified against a
 > deployment — `tests/host-scripts.sh` covers the code, which is a different
-> statement from the one that page makes. Running these four rows is what closes
-> that gap, and the notes under `0C` and `5.5A` say where each one stands.
+> statement from the one that page makes. Running those four rows is what
+> closes that gap, and the notes under `0C` and `5.5A` say where each one
+> stands. The row for `unreadable` is now measured — and the recipe it named
+> turned out wrong (#33) — which is why a ninth, still-untested row follows it
+> rather than replacing it outright: a wrong recipe that gets silently swapped
+> for an unverified new one repeats the mistake it was replacing.
 
 Restore the snapshot afterwards. This exercise is worth more than the passing
 run: it is the difference between "the tests are green" and "the tests would
