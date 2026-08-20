@@ -1345,6 +1345,18 @@ show a `key = ...` line in its `config`.
 already be preventing its use; if it is not, both checks have failed and the
 repository's confidentiality depends entirely on its passphrase strength.
 
+A nonzero count does not automatically mean test 8 is failing, though. Test 8
+creates a repokey repository (`<repo-repokey>`) to prove the wrapper refuses
+it, and that repository is meant to be cleared right after — see test 8's
+Cleanup step, [Operations](OPERATIONS.md) 9.12. If that cleanup was skipped,
+the leftover repository is what this check is finding: enforcement is still
+working, the repository is just still there. Confirm which case you're in
+before assuming enforcement broke — repeat test 8's **Run** against the
+flagged repository. `borg list` still refused means this is the uncleaned
+leftover: clear it via 9.12 and re-run this check. `borg list` succeeding
+means enforcement has actually failed and the passphrase-strength caveat
+above applies.
+
 **Negative test** — staged and confirmed (v0.1.0-beta.31): the repokey
 repository test 8 leaves behind was read with `grep -H` instead of a bare
 count. It reported one `key = ...` line for that repository and none for any
@@ -1452,6 +1464,15 @@ Both checks are independent and fail closed; either message is a pass.
 **Fail** — if `borg list` succeeds against a repokey repository, the
 encryption policy is not being enforced, and test 6 will start finding key
 material on the server.
+
+**Cleanup — do this before treating the pass as finished.** A *passing* test 8
+leaves `<repo-repokey>` sitting on the server in repokey mode — that is the
+"spent" state described above. Left in place, it is exactly what check 6
+finds key material on the next time this checklist is run, which reads as a
+check-6 failure even though nothing is wrong. Clear it now:
+[Operations](OPERATIONS.md) 9.12, second row of its table. Skipping this
+turns a one-time test artifact into a standing false alarm on every later
+pass.
 
 **Negative test** — the **Run** above already stages the broken-mode
 repository itself, so this check's own **Pass** criterion *is* the negative
