@@ -1204,13 +1204,20 @@ mounted. A `(!)` on the `Disk usage:` or `Disk free:` line says the same thing
 about the volume as a whole, and then no row of the listing is trustworthy.
 
 **Negative test** — staged for the volume-wide and single-client drift cases
-(#17, #22, #28) and, as of v0.1.0-beta.31, for the `MISSING on host` case too
-(#30). Not staged for `unreadable` or an empty `HOST_REPO_BASE`. For
-`unreadable`, one recipe has been tried and ruled out — `chmod` on a group
-directory does not reach it, and locks clients out silently under a report
-that stays green instead (#33); see [Test Environment](TESTENV.md) chapter 8
-and [Roadmap](../ROADMAP.md) 11.8 for the untested candidate and current
-status. See below.
+(#17, #22, #28), for the `MISSING on host` case (#30), and, as of
+v0.1.0-beta.31, for an empty `HOST_REPO_BASE` too: blanking the variable and
+running `09-show-all-users.sh` produces exactly the `n/a (!)` /
+`HOST_REPO_BASE not set` branch `lib.sh` already carries for it. For
+`unreadable`, both host-side `chmod` candidates named in [Test
+Environment](TESTENV.md) chapter 8 have now been tried and ruled out — one on
+a group directory (#33), one on `HOST_REPO_BASE` itself — and both land on
+`MISSING on host` instead, not `unreadable`, because `report_for()` in
+`09-show-all-users.sh` checks `[ -d "$d" ]` before it runs `df -kP "$d"`, and
+both calls need the same search permission on the same parent directories: any
+`chmod` that breaks one breaks the other first. See [Roadmap](../ROADMAP.md)
+11.8 for the resulting conclusion — this branch is believed reachable only by
+a genuine `statfs()` failure, not by any host-side permission change. See
+below.
 
 ### 5.5B — the client is told its own limit ✅
 
@@ -1310,8 +1317,11 @@ reports on its `Committed:` line and this test deliberately does not judge.
 > now marked as well. `(!)` means one thing everywhere in that report: this
 > needs attention, something here is not right. A figure that could not be read
 > qualifies, because a criterion deciding on those columns would otherwise call
-> a failed measurement an agreement. **Neither of those two has been staged on a
-> bench yet.**
+> a failed measurement an agreement. **An empty `HOST_REPO_BASE` has since been
+> staged on a bench and confirmed (v0.1.0-beta.31). `unreadable` has not been
+> staged — and, per [Roadmap](../ROADMAP.md) 11.8, both `chmod` candidates for
+> it have since been tried and ruled out, so it may not be stageable by a
+> host-side permission change at all.**
 
 ---
 
@@ -1423,7 +1433,7 @@ everything: this project isolates clients from each other, not from the host.
 
 ---
 
-## 8. Only client-held keyfile encryption is accepted ⚠️
+## 8. Only client-held keyfile encryption is accepted ✅
 
 **Claim** — [Best Practices](BEST_PRACTICES.md) Chapter 2: the server
 verifies the encryption mode of every repository on each connection and
@@ -1479,15 +1489,20 @@ check-6 failure even though nothing is wrong. Clear it now:
 turns a one-time test artifact into a standing false alarm on every later
 pass.
 
-**Negative test** — the **Run** above already stages the broken-mode
-repository itself, so this check's own **Pass** criterion *is* the negative
-observation. What it confirms is that the current, correct wrapper refuses it —
-confirmed on a live deployment as of v0.1.0-beta.31, with the exact `DENY: repo
-stores key material server-side` text reproduced. What remains unstaged is the
-other direction: deliberately disabling the encryption gate in a live
-deployment and confirming this check would then let `borg list` succeed.
-`tests/wrapper-gating.sh` covers that against the code, not against a running
-deployment.
+**Negative test** — staged and confirmed in both directions (v0.1.0-beta.31).
+The **Run** above already stages the broken-mode repository itself, so this
+check's own **Pass** criterion *is* one negative observation: the current,
+correct wrapper refuses it, with the exact `DENY: repo stores key material
+server-side` text reproduced. The other direction — deliberately disabling the
+encryption gate and confirming this check would then let `borg list` succeed —
+has since been staged too, on a throwaway bench deployment (own port, own
+repository, own client) rather than the production instance: the gate in
+`/borg-wrapper.sh` was disabled by replacing its guard with `if ! true`, and
+against the same `repokey` repository both `borg list` and `borg info`
+succeeded, matching this check's **Fail** condition exactly. The bench
+container, checkout and repository were removed afterwards; the production
+instance was not touched. `tests/wrapper-gating.sh` covers the same direction
+against the code.
 
 **What this does not show** — that the client's key is well kept. The server can
 refuse to hold key material; it cannot verify that the client stored its keyfile
@@ -1670,15 +1685,16 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 | 5.5B | The client is told its own limit | ✅ | ☐ |
 | 6 | No key material on the server | ✅ | ☐ |
 | 7 | Clients isolated from each other | ✅ | ☐ |
-| 8 | Keyfile-only encryption enforced | ⚠️ | ☐ |
+| 8 | Keyfile-only encryption enforced | ✅ | ☐ |
 | 9 | Append-only enforced | ✅ | ☐ |
 | 10 | Repository destruction blocked | ✅ | ☐ |
 
-Seventeen ✅ out of twenty-four, as of a second bench run against
+Eighteen ✅ out of twenty-four, as of a second bench run against
 `v0.1.0-beta.31` that staged six more of the previously ⚠️ checks (0B, 1, 3B,
-4B, 6, 7) and confirmed each one's own failing state. That ratio is the honest
-state of this page, and it is published rather than smoothed over: a ⚠️ here
-means the check has not been shown to fail when it should, which is a
+4B, 6, 7) and confirmed each one's own failing state, plus a third pass that
+staged check 8's reverse direction and confirmed it too. That ratio is the
+honest state of this page, and it is published rather than smoothed over: a
+⚠️ here means the check has not been shown to fail when it should, which is a
 different and weaker statement than "your deployment is fine".
 
 Each check's own section names, under **Negative test**, exactly what stands
