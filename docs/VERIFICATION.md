@@ -82,6 +82,12 @@ would hide exactly the distinction this page exists to make.
   instance, in both directions where that can be staged: the check passes on a
   correct deployment *and* fails on a broken one. The check still has to be run
   against *your* deployment; what is confirmed is that it discriminates.
+- (✅) **Verified, capped** — the passing direction has been reproduced against
+  a live instance, and the failing direction is not staged because it cannot
+  be, not because nobody has gotten to it yet. This is a ceiling, not a
+  placeholder: unlike ⚠️, it does not mean "still to do" — the check will not
+  move to a plain ✅ later, because the missing half cannot be produced. 0A is
+  the only check on this page in this state.
 - ⚠️ **Unverified** — the procedure follows from the implementation, or only
   its passing direction has been observed. Treat an unexpected result as a
   possible flaw in the check, not only in the deployment, and please report it.
@@ -188,7 +194,7 @@ page are all public and auditable. The thing you actually run is a binary blob
 pulled from a registry. Without this check, reviewing the source proves
 nothing about what is executing.
 
-### 0A — the attestation verifies and names this repository ✅
+### 0A — the attestation verifies and names this repository (✅)
 
 **Run**
 
@@ -290,7 +296,9 @@ another route.
 
 **Negative test** — not staged, and cannot be: forging a valid attestation from
 a different signing identity is outside what this project can produce to test
-against. See the note under 0B for what has been measured instead.
+against. That is why this check carries `(✅)` rather than a plain ✅ — see
+"How to read a test". See the note under 0B for what has been measured
+instead.
 
 ### 0B — what you verified is what you pinned ✅
 
@@ -356,12 +364,13 @@ was re-pinned, without a restart, to the real `v0.1.0-beta.30` digest, and
 this **Run** reported the correct `v0.1.0-beta.31` digest against it —
 exactly the divergence **Fail** describes.
 
-> **0A is marked verified:** executed end to end against the published
+> **0A is marked `(✅)`:** executed end to end against the published
 > `v0.1.0-beta.25` tag, signature check included, producing the five lines
 > above, and again against `v0.1.0-beta.27`. What that shows is that the check
 > passes on a correct image — not that it rejects a tampered one, which cannot
-> be staged without a second signing identity. This is the one place on the page
-> where the counter-check is impossible rather than merely undone. The `--repo`
+> be staged without a second signing identity, and never will be. This is the
+> one place on the page where the counter-check is impossible rather than
+> merely undone, which is what the parentheses mean. The `--repo`
 > argument is the part doing that work, so keep it as written: `gh` requires
 > either it or the looser `--owner`, and `--owner` would accept an attestation
 > from any repository of that account.
@@ -1682,7 +1691,7 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 
 | # | Property | Check | Your run |
 |---|---|---|---|
-| 0A | Attestation verifies and names this repository (do this first) | ✅ | ☐ |
+| 0A | Attestation verifies and names this repository (do this first) | (✅) | ☐ |
 | 0B | The verified index digest is the one pinned in `IMAGE` | ✅ | ☐ |
 | 0C | The running container was started from that digest | ✅ | ☐ |
 | 0.5A | The key authenticates and the info channel answers | ✅ | ☐ |
@@ -1707,16 +1716,18 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 | 9 | Append-only enforced | ✅ | ☐ |
 | 10 | Repository destruction blocked | ✅ | ☐ |
 
-Twenty-four ✅ out of twenty-four, as of a third bench run against
-`v0.1.0-beta.31` that staged the six checks still marked ⚠️ (1.5B, 1.5C, 2,
-3A, 4A, 4C) and confirmed each one's own failing state — following a second
-run that had already closed 0B, 1, 3B, 4B, 6 and 7, plus check 8's reverse
-direction. Every check on this page has now been reproduced in both
-directions against a live deployment. That does not make the page complete —
-see [What this document does not cover](#what-this-document-does-not-cover)
+Twenty-three ✅ and one `(✅)` out of twenty-four, as of a third bench run
+against `v0.1.0-beta.31` that staged the six checks still marked ⚠️ (1.5B,
+1.5C, 2, 3A, 4A, 4C) and confirmed each one's own failing state — following a
+second run that had already closed 0B, 1, 3B, 4B, 6 and 7, plus check 8's
+reverse direction. Every check on this page has now been reproduced in both
+directions where that is possible; 0A is the sole exception, capped at
+`(✅)` because its counter-example cannot be produced at all, not because
+nobody has tried (see "How to read a test"). That does not make the page
+complete — see [What this document does not cover](#what-this-document-does-not-cover)
 below, and 5.5A's own note on the one sub-case (`unreadable`) no recipe has
-reached — only that within what it does check, no row is resting on
-reasoning alone anymore.
+reached — only that no row still rests on reasoning alone where measurement
+was possible.
 
 Each check's own section names, under **Negative test**, exactly what stands
 behind that mark — a specific staged failure and its result, or "not yet
