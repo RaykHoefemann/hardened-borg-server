@@ -67,16 +67,16 @@ maintainer's job, not yours.
 
 ## Supported versions
 
-This project is in **beta**. No stable release has been tagged, and only
-pre-release tags exist on GHCR.
+This project ships both stable (`X.Y.Z`) and pre-release (`X.Y.Z-beta.N`) tags
+on GHCR.
 
 | Version | Supported |
 |---|---|
-| Latest pre-release tag | ✅ |
-| Older pre-release tags | ❌ — upgrade first |
+| Latest stable tag | ✅ |
+| Older tags (stable or pre-release) | ❌ — upgrade first |
 
-There is no backporting to older beta tags. If you can reproduce an issue only
-on an older tag, please confirm it against the current one before reporting.
+There is no backporting to older tags. If you can reproduce an issue only on
+an older tag, please confirm it against the current one before reporting.
 
 ## What to expect
 

@@ -136,7 +136,7 @@ location: Frankfurt, DE
 contact: admin@example.com
 
 [software]
-version: 0.1.0-beta.31
+version: 0.1.0
 source: https://github.com/RaykHoefemann/hardened-borg-server
 
 [client]

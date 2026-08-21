@@ -9,8 +9,8 @@ limits are enforced by the host filesystem — not merely tracked. No web UI, no
 orchestration, no auxiliary interfaces: a small, predictable, privacy-preserving
 attack surface by design.
 
-> **Status:** Beta. No stable release has been tagged yet — see
-> [Deployment](docs/DEPLOYMENT.md) for the current pre-release tags on GHCR.
+> **Status:** First stable release, `v0.1.0`. See
+> [Deployment](docs/DEPLOYMENT.md) for how to run it.
 
 ---
 
@@ -91,11 +91,6 @@ directly from the internet. See [`BEST_PRACTICES.md`](docs/BEST_PRACTICES.md).
 ---
 
 ## Quickstart (container test)
-
-> **Beta:** the `:latest` tag does not exist on GHCR yet. Replace it with a
-> current pre-release tag, e.g.
-> `ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.32`
-> ([version list](https://github.com/RaykHoefemann/hardened-borg-server/pkgs/container/hardened-borg-server/versions)).
 
 ```bash
 podman run \

@@ -82,9 +82,10 @@ CONTAINER="borg-server"
 SERVICE="container-borg-server.service"
 # Derived from VERSION above, so a checkout of a release tag already points at
 # the image built from that same commit — no editing needed to get a working
-# pull. This used to default to ":latest", which does NOT exist during the beta
-# phase (see .github/workflows/docker.yml: ":latest" is only published for tags
-# without a "-" suffix), so a fresh install could not pull anything at all.
+# pull. This used to default to ":latest", which does not exist for pre-release
+# tags (see .github/workflows/docker.yml: ":latest" is only published for tags
+# without a "-" suffix), so a fresh install off a pre-release checkout could
+# not pull anything at all that way.
 #
 # The tag below is the starting point, not the end state. SERVERINSTALL step 3
 # replaces it with the digest verified in step 2, and VERIFICATION check 0B
