@@ -37,7 +37,7 @@ Architecture overview and how to run the server — from an ad-hoc test containe
 
 > **Beta phase note:** no stable release has been tagged yet, so the `:latest`
 > tag below does not exist on GHCR yet. Replace it with the exact pre-release
-> tag you want to test, e.g. `ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.31`
+> tag you want to test, e.g. `ghcr.io/raykhoefemann/hardened-borg-server:0.1.0-beta.32`
 > (see the [package's version list](https://github.com/RaykHoefemann/hardened-borg-server/pkgs/container/hardened-borg-server/versions)
 > for the current tags). This note will be removed once a stable release ships.
 
