@@ -39,6 +39,13 @@ log/
 *.swp
 .DS_Store
 
+# --- German test reports ------------------------------------------------------
+#
+# Prüfberichte are German-language verification material and stay outside the
+# repository (docs here are English-only). Ignored so they can be drafted
+# in-tree without risk of an accidental commit.
+Pruefbericht*.md
+
 # NOTE: config/server_info.conf is deliberately NOT ignored — it ships as a
 # tracked template with placeholder values that SERVERINSTALL step 7 tells the
 # operator to edit. Because it stays tracked, ignoring it here would have no
