@@ -263,7 +263,7 @@ The one thing to read release notes for is a change of the **bundled Borg versio
 
 ## 6.4. Rolling back
 
-Rollback is deliberately symmetric with the upgrade, and it is why [Verification](VERIFICATION.md) Test 0 recommends pinning a digest: a digest names exactly one image forever, so going back is unambiguous.
+Rollback is deliberately symmetric with the upgrade: it verifies and pins the target image the same way step 4 of 6.3 does, because a digest names exactly one image forever, so going back is only unambiguous if that digest was actually checked rather than assumed.
 
 ```bash
 cd "$INSTALL_PATH"
@@ -271,16 +271,24 @@ OLD=v0.1.0-beta.18
 
 git clone --branch "$OLD" --depth 1 \
   https://github.com/RaykHoefemann/hardened-borg-server.git ~/tmp/rollback
+
+# Verify the old image before pulling it back, exactly as in an upgrade
+gh attestation verify "oci://ghcr.io/raykhoefemann/hardened-borg-server:${OLD#v}" \
+  --repo RaykHoefemann/hardened-borg-server
+skopeo inspect --format '{{.Digest}}' \
+  "docker://ghcr.io/raykhoefemann/hardened-borg-server:${OLD#v}"
+podman pull "ghcr.io/raykhoefemann/hardened-borg-server:${OLD#v}"
+
 cp -r ~/tmp/rollback/scripts ~/tmp/rollback/systemd "$INSTALL_PATH"/
 cp ~/tmp/rollback/VERSION "$INSTALL_PATH"/
 rm -rf ~/tmp/rollback
 
-$EDITOR scripts/config.sh          # re-apply HOST_REPO_BASE as in the upgrade
+$EDITOR scripts/config.sh          # re-apply HOST_REPO_BASE; set IMAGE to the digest verified above
 ./scripts/50-service-install.sh
 ./scripts/92-container-restart.sh
 ```
 
-Because `IMAGE` is derived from `VERSION`, restoring the older `VERSION` also restores the older image reference — the two halves move together in both directions.
+The checked-out `scripts/config.sh` ships the tag-based default (`IMAGE="...:${RELEASE_VERSION}"`, see `scripts/config.sh`), not a pinned digest — copying it over `$INSTALL_PATH` without editing `IMAGE` leaves that mutable tag in place, so the restart pulls whatever it currently names, unverified. Pin `IMAGE` to the digest confirmed above, the same way step 6 of 6.3 pins the upgrade target; only then do the two halves move together in both directions.
 
 Rolling back the software does not roll back data, and cannot: append-only means nothing written since the upgrade is removed by going back. That is the intended behaviour, not a limitation — for undoing damage to a repository, see [Recovery](RECOVERY.md) Section 1.
 
