@@ -722,7 +722,7 @@ Re-pull the image and verify it (test 0); if the deployment mounts its own
 **Negative test** — staged (#20): see the note below. This is the reason the
 markers moved onto individual checks in the first place.
 
-### 1.5B — the account that can log in gets the same answer ⚠️
+### 1.5B — the account that can log in gets the same answer ✅
 
 **Run** (uses process substitution, so `bash` rather than `sh`)
 
@@ -747,14 +747,18 @@ derives group membership from `user=`, so a `Match Group` is covered here too.
 `-C user=borg` means exactly what a wrong value in 1.5A means, reached by the
 one route the global output cannot show.
 
-**Negative test** — a recipe exists ([Test Environment](TESTENV.md) Chapter 8:
-mount an `sshd_config` with a `Match User borg` block reopening `PermitTTY`
-over the image's own) and is drawn directly from the case that created this
-check (#20). Whether the `diff` above has itself been re-run against that
-staged state, rather than against the original incident, is not recorded — see
-the note below.
+**Negative test** — staged and confirmed: the `Match User borg` block from
+[Test Environment](TESTENV.md) Chapter 8, mounted over a throwaway bench
+container's `sshd_config` (own port, own image copy, production instance
+untouched). 1.5A stayed blind against that same container, reporting ten
+correct lines regardless. This check's `diff` was not empty — `permittty` and
+`allowtcpforwarding` both flipped to `yes` under `-C user=borg` — catching
+exactly what 1.5A could not. A real connection through a
+`command=`/`restrict`-less key on the same container, opened with `ssh -tt`,
+then produced an actual interactive TTY as `borg` — the #20 incident,
+reproduced against this recipe rather than only the original one.
 
-### 1.5C — nothing in the configuration can make it conditional ⚠️
+### 1.5C — nothing in the configuration can make it conditional ✅
 
 **Run**
 
@@ -776,10 +780,10 @@ directory is silenced by the redirect and is not a finding.
 settings above; if it is not yours, treat the daemon's configuration as
 untrusted and re-pull the image.
 
-**Negative test** — the same [Test Environment](TESTENV.md) recipe named under
-1.5B (a `Match User borg` block) would also produce a line here, since it is
-itself a `Match` block — but that pairing has not been run and recorded either.
-See the note below.
+**Negative test** — staged and confirmed, against the same bench container as
+1.5B: the mounted `Match User borg` block was reported by this check's `grep`
+(`/etc/ssh/sshd_config:32:Match User borg`), exactly as a block of that shape
+must be.
 
 **What this does not show** — that the ten settings are *sufficient*. They are
 the ones this project asserts; a hardening review of the full `sshd -T` output
@@ -807,17 +811,16 @@ for the rest.
 > mounted over the image's own, it reported five wrong values and failed as it
 > should. Both directions, measured — which is what ✅ means here.
 >
-> **1.5B and 1.5C are not.** A third staging moved those same directives into a
-> `Match User borg` block: 1.5A reported ten correct lines while a key without
-> `command=` and `restrict` opened an interactive shell on that container (#20).
-> The two checks exist because of that case and have not themselves been run
-> against it. Until they have, the daemon's answer for the `borg` account is
-> covered by reasoning, not by measurement — and a test on this page has already
-> been wrong in exactly that position once.
+> **1.5B and 1.5C are now marked verified too.** A staged bench container
+> reproduced exactly that setup — 1.5A reporting ten correct lines while a key
+> without `command=` and `restrict` opened an interactive shell (#20) — this
+> time against the recipe itself rather than only the original incident:
+> 1.5B's `diff` and 1.5C's `grep` both caught it, on the same container, in the
+> same run.
 
 ---
 
-## 2. Default-deny on commands ⚠️
+## 2. Default-deny on commands ✅
 
 **Claim** — `borg-wrapper.sh` gates on `$SSH_ORIGINAL_COMMAND` and permits
 exactly two things: the literal string `info`, and a `borg serve` invocation.
@@ -849,11 +852,14 @@ not match the permitted patterns, and is rejected.
 model. Treat as an incident: the wrapper is not being invoked, or has been
 modified.
 
-**Negative test** — not yet staged: this **Run** already attempts three
-forbidden commands against a working deployment and confirms they are refused,
-but nobody has deliberately disabled or bypassed the wrapper on a live
-deployment to confirm this check's **Fail** text — a command actually
-executing — appears when it should.
+**Negative test** — staged and confirmed: `borg-wrapper.sh` copied onto a
+throwaway bench container (own port, same image digest, production instance
+untouched) with its default-deny branch replaced by
+`eval "$SSH_ORIGINAL_COMMAND"; exit 0`. A forbidden command (`id -un; ls /`)
+sent through a real client key then executed and returned real output —
+exactly this check's **Fail** condition. The same command against the
+unmodified production instance, with a real client key, still answered
+`DENY: only 'borg serve' and 'info' are permitted`.
 
 **What this does not show** — that the two permitted commands are themselves
 safe. This check establishes that everything else is refused; that `borg serve`
@@ -878,7 +884,7 @@ the key regains forwarding, TTY allocation and agent access from SSH itself.
 Two different questions, asked separately: whether every key is gated at all,
 and whether each gated key points where `clients.conf` says it should.
 
-### 3A — every entry carries the forced command and `restrict` ⚠️
+### 3A — every entry carries the forced command and `restrict` ✅
 
 **Run** (on the host)
 
@@ -904,12 +910,16 @@ tests rather than either.
 keys that run through it without `restrict`. Remove them, regenerate the file by
 restarting the container, and re-run tests 1 and 2.
 
-**Negative test** — a recipe exists ([Test Environment](TESTENV.md) Chapter 8:
-append a line without `command=`; separately, drop only `,restrict` from an
-otherwise correct line) and is asserted by the automated suite
-(`tests/authorized-keys-generation.sh` 1.3) against the generator's code.
-Running it against a live `authorized_keys` file and confirming this check's
-count goes nonzero has not been recorded.
+**Negative test** — staged and confirmed: both documented variants appended
+to a live `authorized_keys` in turn — a key with no `command=` at all, then
+(from a clean state) one with a correct prefix but no `,restrict` — and this
+check's count rose from `0` to `1` for each, one at a time. The
+`,restrict`-missing variant passed every other check on this page: tests 1
+and 2, run against it, saw nothing wrong. Its practical reach was measured
+directly rather than assumed — port forwarding attempted over that key
+failed, but only because `AllowTcpForwarding no` in the daemon (check 1.5A)
+blocked it, confirming the "lock behind the lock" 1.5 describes. Restored by
+a container restart, which regenerates the file from `clients.conf`.
 
 ### 3B — every entry points at the repository `clients.conf` assigns ✅
 
@@ -973,7 +983,7 @@ compromised container cannot clear an immutable flag: it holds no
 All three run on the host, **as the service user**. The order matters: 4A and 4B
 describe the environment, and only 4C describes this container.
 
-### 4A — podman itself is rootless ⚠️
+### 4A — podman itself is rootless ✅
 
 **Run**
 
@@ -988,8 +998,11 @@ the account that ran it. Under the wrong account it reports `true` while the
 container runs rootful under another, which is why it is the weakest of the
 three and why 4C exists.
 
-**Negative test** — not yet staged: no bench has run this against a rootful
-Podman install to confirm it reports `false`.
+**Negative test** — staged and confirmed: the same command, run with `sudo`
+against the same host's rootful Podman, reported `false`, against `true` for
+the unprivileged account queried the same way. No separate installation was
+needed — the check's own weakness, named above, is exactly why: it answers
+for whichever account ran it.
 
 ### 4B — the container is a user service ✅
 
@@ -1032,7 +1045,7 @@ fixed number of lines from `status`. The check's own criterion has since been
 staged too: with the unit stopped, this **Run** reported
 `ActiveState=inactive` / `SubState=dead` in place of `active`/`running`.
 
-### 4C — the container's own processes belong to an unprivileged user ⚠️
+### 4C — the container's own processes belong to an unprivileged user ✅
 
 **Run**
 
@@ -1054,8 +1067,13 @@ subuid range, so nothing on the host side of this container is uid 0.
 security-hardened in the sense this project uses the term, regardless of
 anything else being correct.
 
-**Negative test** — not yet staged: no bench has run this against a
-deliberately rootful deployment to confirm it reports uid 0.
+**Negative test** — staged and confirmed: a second container, built from the
+*same image digest* as the production instance, started rootful by hand
+(`sudo podman run`, its own port and directories, the production container on
+its own port left untouched). This check's command, run against its conmon
+and init PIDs, reported `root`/uid 0 for both — against `core`/uid 1000 for
+the production container queried the same way. Removed afterward; `sudo
+podman` confirmed no container, image or directory was left behind.
 
 **What this does not show** — that the host itself is hardened. Rootless podman
 bounds what a container escape reaches; SELinux enforcing, an immutable OS and
@@ -1671,14 +1689,14 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 | 0.5B | The client can initialize its repository | ✅ | ☐ |
 | 1 | No interactive shell | ✅ | ☐ |
 | 1.5A | The daemon's own configuration is hardened | ✅ | ☐ |
-| 1.5B | The `borg` account resolves to the same configuration | ⚠️ | ☐ |
-| 1.5C | No `Match` or `Include` makes it conditional | ⚠️ | ☐ |
-| 2 | Default-deny on commands | ⚠️ | ☐ |
-| 3A | Every entry carries the forced command and `restrict` | ⚠️ | ☐ |
+| 1.5B | The `borg` account resolves to the same configuration | ✅ | ☐ |
+| 1.5C | No `Match` or `Include` makes it conditional | ✅ | ☐ |
+| 2 | Default-deny on commands | ✅ | ☐ |
+| 3A | Every entry carries the forced command and `restrict` | ✅ | ☐ |
 | 3B | Every entry points at the repository `clients.conf` assigns | ✅ | ☐ |
-| 4A | Podman itself is rootless | ⚠️ | ☐ |
+| 4A | Podman itself is rootless | ✅ | ☐ |
 | 4B | The container is a user service | ✅ | ☐ |
-| 4C | The container's processes belong to an unprivileged user | ⚠️ | ☐ |
+| 4C | The container's processes belong to an unprivileged user | ✅ | ☐ |
 | 5A | The mount enforces project quotas | ✅ | ☐ |
 | 5B | The filesystem reports project quota as enforcing | ✅ | ☐ |
 | 5.5A | The operator's listing agrees with `clients.conf` | ✅ | ☐ |
@@ -1689,13 +1707,16 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 | 9 | Append-only enforced | ✅ | ☐ |
 | 10 | Repository destruction blocked | ✅ | ☐ |
 
-Eighteen ✅ out of twenty-four, as of a second bench run against
-`v0.1.0-beta.31` that staged six more of the previously ⚠️ checks (0B, 1, 3B,
-4B, 6, 7) and confirmed each one's own failing state, plus a third pass that
-staged check 8's reverse direction and confirmed it too. That ratio is the
-honest state of this page, and it is published rather than smoothed over: a
-⚠️ here means the check has not been shown to fail when it should, which is a
-different and weaker statement than "your deployment is fine".
+Twenty-four ✅ out of twenty-four, as of a third bench run against
+`v0.1.0-beta.31` that staged the six checks still marked ⚠️ (1.5B, 1.5C, 2,
+3A, 4A, 4C) and confirmed each one's own failing state — following a second
+run that had already closed 0B, 1, 3B, 4B, 6 and 7, plus check 8's reverse
+direction. Every check on this page has now been reproduced in both
+directions against a live deployment. That does not make the page complete —
+see [What this document does not cover](#what-this-document-does-not-cover)
+below, and 5.5A's own note on the one sub-case (`unreadable`) no recipe has
+reached — only that within what it does check, no row is resting on
+reasoning alone anymore.
 
 Each check's own section names, under **Negative test**, exactly what stands
 behind that mark — a specific staged failure and its result, or "not yet
