@@ -65,10 +65,10 @@ This project intentionally targets a narrow deployment model. If your environmen
 > server, and do not point it at a repository on it.**
 
 Supported is **BorgBackup 1.x**, and within that line the versions this project
-is actually exercised against: **1.2.x on the client**, **1.4.x** as bundled in
-the image (`tests/wrapper-gating.sh` runs both). Client and server do not have
-to be the same version inside 1.x; the evidence base today is a 1.2.8 client
-against the image's 1.4.0 server.
+is actually exercised against: **1.2.x and 1.4.x on the client**, **1.4.x** as
+bundled in the image (`tests/wrapper-gating.sh` runs both). Client and server do
+not have to be the same version inside 1.x; the evidence base today is both a
+1.2.8 and a 1.4.0 client against the image's 1.4.0 server.
 
 Why Borg 2 is excluded: it is a separate line with its own repository format,
 and nothing here has been run against it. The server's encryption gate reads the
@@ -77,7 +77,11 @@ Borg 2 repository neither that on-disk layout nor the type-byte table can be
 assumed to hold, and a Borg 2 client and the image's `borg serve` 1.4 would
 first have to agree on a client/server protocol across a major version. The gate
 is fail-closed, so the expected outcome is a denial rather than a wrong ALLOW —
-but a denial you cannot interpret is not support.
+but a denial you cannot interpret is not support. Separately, BorgBackup 2.x is
+itself still pre-release (beta series `2.0.0bNN`, no `2.0.0` stable tag as of
+this writing) — the upstream project itself does not recommend it for
+production repositories yet, so supporting it here would not be meaningful
+even once the format work above is done.
 
 This section is the authoritative statement of the supported set for the whole
 project; [Client Usage](docs/CLIENTUSE.md) and `borg-wrapper.sh` defer to it.

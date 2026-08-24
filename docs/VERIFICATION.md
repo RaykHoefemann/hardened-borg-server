@@ -1590,6 +1590,11 @@ it.
 correct-state measurement beside the broken-state one it would produce, both
 recorded against Borg 1.2.8.
 
+> Verified again against `v0.1.0`, on both bench clients (Borg 1.2.8 on Linux
+> Mint 22.3, Borg 1.4.0 on Debian 13): usage stayed at the raised level after
+> delete + compact on both (Mint: 3.9→5.0→5.0 MiB, Debian: 3.0→4.1→4.1 MiB) —
+> no rollback on either client version.
+
 **Why 1 MB is enough:** every `borg create` writes into fresh segment files
 rather than extending existing ones, so the probe sits alone in its own
 segment. Deleting it leaves that segment essentially fully unused — far above
@@ -1639,6 +1644,10 @@ ValueError: /repo/OWN/<client> is in append-only mode
 
 Verified against Borg 1.2.8: the same command against a repository without
 append-only destroys it completely.
+
+> Verified again against `v0.1.0`, on both bench clients (Borg 1.2.8 and Borg
+> 1.4.0): identical `ValueError: … is in append-only mode`, exit 2, repository
+> unchanged on both.
 
 The message is the part that discriminates, which is why the criterion names it.
 A `DENY:` line instead means the connection was refused *before* append-only was

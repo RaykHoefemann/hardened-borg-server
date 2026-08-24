@@ -39,7 +39,7 @@ The last row is a signpost rather than a section. An interrupted `borg init` lea
 
 ## 1. A client deleted an archive
 
-*Verified against Borg 1.2.8.*
+*Verified against Borg 1.2.8 and 1.4.0.*
 
 ### What actually happened
 
@@ -133,7 +133,7 @@ Every backup written after the deletion. If the client deleted on Monday and thi
 
 ## 2. A client tried to delete its whole repository
 
-*Verified against Borg 1.2.8.*
+*Verified against Borg 1.2.8 and 1.4.0.*
 
 **Nothing to do — the attempt fails.** `borg delete --force <repository>` against an append-only repository aborts with an error and leaves the repository and all its segments intact. The same command against a repository without append-only destroys it completely.
 
