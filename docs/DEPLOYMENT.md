@@ -139,7 +139,7 @@ Note that `podman` is never executed — the failure happens while systemd prepa
 
 ### 6.2.2. Setup
 
-Before installing, review `scripts/config.sh` — in particular `HOST_STORAGE_BASE`, which must point at your enforcing-`prjquota` XFS volume (see Chapter 1.1.3); `HOST_REPO_BASE` is derived from it automatically. `IMAGE` needs no editing: it is derived from the `VERSION` file, so a checkout of a release tag already points at the image built from that same commit. Change it only to pin a digest instead of a mutable tag, which is worth doing once you have verified the image ([Verification](VERIFICATION.md), Test 0).
+Before installing, review the repository root's `config.sh` — in particular `HOST_STORAGE_BASE`, which must point at your enforcing-`prjquota` XFS volume (see Chapter 1.1.3); `HOST_REPO_BASE` is derived from it automatically. In `scripts/config.sh`, `IMAGE` needs no editing: it is derived from the `VERSION` file, so a checkout of a release tag already points at the image built from that same commit. Change it only to pin a digest instead of a mutable tag, which is worth doing once you have verified the image ([Verification](VERIFICATION.md), Test 0).
 
 ```bash
 ./scripts/50-service-install.sh
@@ -178,16 +178,17 @@ The unit as provided is functional and sufficient for most deployments; this is 
 
 ## 6.3. Upgrading to a new release
 
-A release has two halves and an upgrade moves both. The container image carries `borg-wrapper.sh`, `entrypoint.sh` and `build_authorized_keys.sh`; everything else an operator runs — the provisioning scripts, the systemd unit, `config.sh` — comes from the git checkout. Since the `VERSION` file is baked into the image, **every release changes the image**, even ones whose only substantive changes are host-side.
+A release has two halves and an upgrade moves both. The container image carries `borg-wrapper.sh`, `entrypoint.sh` and `build_authorized_keys.sh`; everything else an operator runs — the provisioning scripts, the systemd unit, both `config.sh` files — comes from the git checkout. Since the `VERSION` file is baked into the image, **every release changes the image**, even ones whose only substantive changes are host-side.
 
 ### What you must not lose
 
-Two files in an installation are yours, not the release's, and a careless upgrade overwrites both:
+Three files in an installation are yours, not the release's, and a careless upgrade overwrites all three:
 
-- **`scripts/config.sh`** — holds `HOST_STORAGE_BASE` (which `HOST_REPO_BASE` is derived from) and your `IMAGE` digest pin. It is shipped code *and* per-host configuration in one file, which is why the procedure below backs it up and diffs rather than simply copying. It holds values only — the shared shell functions live in `scripts/lib.sh`, which is release code with nothing of yours in it, so the diff in step 6 stays about your settings. Note that the pin is the one setting an upgrade must *not* carry over unchanged: a new release is a new image and therefore a new digest, so step 6 re-resolves it rather than restoring the old value.
+- **The repository root's `config.sh`** — holds `HOST_STORAGE_BASE` (which `HOST_REPO_BASE` and `SNAPSHOT_BASE` are derived from) and `CONTAINER`. It is shipped code *and* per-host configuration in one file, which is why the procedure below backs it up and diffs rather than simply copying.
+- **`scripts/config.sh`** — holds your `IMAGE` digest pin, sourcing the root `config.sh` first. It holds values only — the shared shell functions live in `scripts/lib.sh`, which is release code with nothing of yours in it, so the diffs in step 6 stay about your settings. Note that the pin is the one setting an upgrade must *not* carry over unchanged: a new release is a new image and therefore a new digest, so step 6 re-resolves it rather than restoring the old value.
 - **`config/server_info.conf`** — you edited it in SERVERINSTALL step 7; the repository ships it with placeholder values.
 
-> ⚠️ **Do not re-run SERVERINSTALL step 1 against an existing installation.** `cp -r` merges into existing directories and overwrites same-named files, so copying `config/` would replace your `server_info.conf` with the template, and copying `scripts/` would replace your `config.sh`. Your `clients.conf` and `config/keys/` survive only because the repository does not ship them.
+> ⚠️ **Do not re-run SERVERINSTALL step 1 against an existing installation.** `cp -r` merges into existing directories and overwrites same-named files, so copying `config/` would replace your `server_info.conf` with the template, and copying `scripts/` would replace your `scripts/config.sh`; the plain `cp` of the repository root's `config.sh` overwrites it unconditionally, the same way. Your `clients.conf` and `config/keys/` survive only because the repository does not ship them.
 
 ### Procedure
 
@@ -201,7 +202,8 @@ NEW=v0.2.0
 ./scripts/99-container-status.sh | head -10
 
 # 2. Keep what is yours
-cp scripts/config.sh /tmp/config.sh.previous
+cp config.sh /tmp/config.sh.previous
+cp scripts/config.sh /tmp/scripts-config.sh.previous
 
 # 3. Fetch the new release
 git clone --branch "$NEW" --depth 1 \
@@ -220,19 +222,21 @@ podman pull "ghcr.io/raykhoefemann/hardened-borg-server:${NEW#v}"
 
 # 5. Replace only the release's own files — note that config/ is NOT copied
 cp -r ~/tmp/upgrade/scripts ~/tmp/upgrade/systemd "$INSTALL_PATH"/
-cp ~/tmp/upgrade/VERSION "$INSTALL_PATH"/
+cp ~/tmp/upgrade/config.sh ~/tmp/upgrade/VERSION "$INSTALL_PATH"/
 rm -rf ~/tmp/upgrade
 
-# 6. Restore your settings into the new config.sh
-diff /tmp/config.sh.previous scripts/config.sh
-$EDITOR scripts/config.sh          # re-apply HOST_STORAGE_BASE; set IMAGE to the digest from step 4
+# 6. Restore your settings into both new config.sh files
+diff /tmp/config.sh.previous config.sh
+$EDITOR config.sh                  # re-apply HOST_STORAGE_BASE
+diff /tmp/scripts-config.sh.previous scripts/config.sh
+$EDITOR scripts/config.sh          # set IMAGE to the digest from step 4
 
 # 7. Re-render the unit from config.sh and restart
 ./scripts/50-service-install.sh
 ./scripts/92-container-restart.sh
 ```
 
-The `diff` in step 6 is the point of the backup: it shows both your own settings and any new fields the release introduced, which a blind copy of the old file back into place would silently discard.
+The `diff`s in step 6 are the point of the backup: each shows both your own settings and any new fields the release introduced, which a blind copy of the old file back into place would silently discard.
 
 ### Confirm the upgrade actually landed
 
@@ -280,10 +284,11 @@ skopeo inspect --format '{{.Digest}}' \
 podman pull "ghcr.io/raykhoefemann/hardened-borg-server:${OLD#v}"
 
 cp -r ~/tmp/rollback/scripts ~/tmp/rollback/systemd "$INSTALL_PATH"/
-cp ~/tmp/rollback/VERSION "$INSTALL_PATH"/
+cp ~/tmp/rollback/config.sh ~/tmp/rollback/VERSION "$INSTALL_PATH"/
 rm -rf ~/tmp/rollback
 
-$EDITOR scripts/config.sh          # re-apply HOST_STORAGE_BASE; set IMAGE to the digest verified above
+$EDITOR config.sh                  # re-apply HOST_STORAGE_BASE
+$EDITOR scripts/config.sh          # set IMAGE to the digest verified above
 ./scripts/50-service-install.sh
 ./scripts/92-container-restart.sh
 ```

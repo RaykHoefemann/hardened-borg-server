@@ -147,37 +147,52 @@ Used: 12.4 GiB of 50.0 GiB (24%)
 > below are administrative tools for the person operating the backup server
 > itself.
 
-Helper scripts under `scripts/` manage the server's clients, quotas, the systemd service, and the container's lifecycle (start/stop/restart/status). All of them source `scripts/config.sh` — the single source of truth for paths, the container image, and runtime values (see Chapter 9.1 below) — so nothing here needs separate configuration.
+Helper scripts under `scripts/` manage the server's clients, quotas, the systemd service, and the container's lifecycle (start/stop/restart/status). All of them source `scripts/config.sh`, which itself sources the repository root's `config.sh` first — together the single source of truth for paths, the container image, and runtime values (see Chapter 9.1 below) — so nothing here needs separate configuration.
 
 ## 9.1. config.sh
 
-**Before running any other script in this chapter, review and adjust `scripts/config.sh`.** It is sourced by every script below and is the single place where host-specific values live — nothing else in the repo should need to be edited to get the server running.
+**Before running any other script in this chapter, review and adjust both `config.sh` files** — the repository root's and `scripts/config.sh` — which together are the single place where host-specific values live; nothing else in the repo should need to be edited to get the server running.
+
+The split exists because the root file holds exactly the values a second, still-unbuilt consumer will also need: per-client point-in-time snapshot tooling (ROADMAP.md 11.5) shares this installation's identity and storage paths, but has no business with `scripts/config.sh`'s container-image or client-provisioning settings. `scripts/config.sh` sources the root file first (`. "$(dirname "$0")/../config.sh"`), so every script below still gets everything by sourcing exactly one file, `scripts/config.sh`, as before.
+
+### Repository root's `config.sh`
 
 **Must be adjusted for your installation:**
 
-- `HOST_STORAGE_BASE` — the mount point of your XFS filesystem with enforcing project quotas (`prjquota`) already active (see Chapter 1.1.3 / BEST_PRACTICES.md Chapter 1). `HOST_REPO_BASE` below is derived from it automatically; nothing else needs editing once this is right.
-- `IMAGE` — normally left alone: it is derived from the `VERSION` file, so a checkout of a release tag already points at the image built from that same commit. Change it only to **pin a digest** instead of a mutable tag, which is the stronger form once you have verified the image (`ghcr.io/raykhoefemann/hardened-borg-server@sha256:…`, see [Verification](VERIFICATION.md) Test 0).
+- `HOST_STORAGE_BASE` — the mount point of your XFS filesystem with enforcing project quotas (`prjquota`) already active (see Chapter 1.1.3 / BEST_PRACTICES.md Chapter 1). `HOST_REPO_BASE` and `SNAPSHOT_BASE` below are derived from it automatically; nothing else needs editing once this is right.
 
 **Derived automatically — normally left alone:**
 
 - `HOST_REPO_BASE` — the host path holding client repositories, built as `${HOST_STORAGE_BASE}/${CONTAINER}/` rather than an independent literal, so storage location and installation identity can never drift apart. This is also bind-mounted as `/repo` in the generated systemd unit (Chapter 6.2), so the container and the host scripts are always guaranteed to operate on the same directory. Still a plain value underneath — override it directly if your layout genuinely does not fit the `HOST_STORAGE_BASE`/`CONTAINER` convention.
 - `SNAPSHOT_BASE` — the future root for the point-in-time snapshot tooling (ROADMAP.md 11.5), built the same way as `HOST_REPO_BASE`: `${HOST_STORAGE_BASE}/.snapshots/${CONTAINER}/`, a sibling of it rather than nested inside it. **Not yet consumed by any script** — 11.5 is still an open design — recorded now because its shape, not its timing, was the decision that mattered.
+- `REPO_ROOT` — computed from the location of whichever script originally sourced this file's chain; correct regardless of the directory you run scripts from, and however many files deep the sourcing goes.
+
+**Fixed values — only change if you know why:**
+
+- `CONTAINER` — this installation's identity: the Podman container name, and, via `HOST_REPO_BASE` above, the subdirectory its repository storage (and, per ROADMAP.md 11.5, its snapshot tooling) lives in. Change it only if you are running more than one instance of this project — each needs a distinct value, so their storage can never collide on storage they happen to share.
+- `BORG_UID`, `BORG_GID` — the `borg` user's UID/GID **inside the container image**, fixed at build time in the Dockerfile. These must match the image you are actually running; only change them if you rebuilt the image with different values yourself. Used by `00-ssh-create-user.sh` to set correct host-side ownership via `podman unshare`, and, per ROADMAP.md 11.5's restore constraint, will be needed again by the future snapshot-restore path for the same reason.
+
+### `scripts/config.sh`
+
+**Must be adjusted for your installation:**
+
+- `IMAGE` — normally left alone: it is derived from the `VERSION` file, so a checkout of a release tag already points at the image built from that same commit. Change it only to **pin a digest** instead of a mutable tag, which is the stronger form once you have verified the image (`ghcr.io/raykhoefemann/hardened-borg-server@sha256:…`, see [Verification](VERIFICATION.md) Test 0).
+
+**Derived automatically — normally left alone:**
+
 - `SOURCE_URL` — where this software comes from, shown by `99-container-status.sh`. The image carries the same constant and reports it to clients through the `info` channel (Chapter 8); a CI check enforces that the two agree, so an operator and a client are never pointed at different repositories.
 - `RELEASE_VERSION` — read from the `VERSION` file at the installation root, copied there by SERVERINSTALL step 1. It is the single source of truth for the version: `IMAGE` is derived from it, `99-container-status.sh` reports it, and a CI check enforces that it agrees with the git tag and the documented image tag. Reports `unknown` if the tree was assembled by hand rather than installed from a release tag.
-- `REPO_ROOT` — computed from the location of whichever script sourced `config.sh`; correct regardless of the directory you run scripts from.
 - `HOST_CONFIG_BASE`, `HOST_LOG_BASE` — kept inside the repo checkout (`${REPO_ROOT}/config`, `${REPO_ROOT}/log`) unless you have a reason to move them elsewhere.
 - `CONF`, `KEYDIR` — the exact `clients.conf` and key-storage paths used by `00`/`01`/`02`/`09`, derived from `HOST_CONFIG_BASE`.
 - `CONTAINER_REPO_BASE` — the container-side path prefix (`/repo/`); only relevant if you change the container's internal mount point, which the shipped image does not expect.
 
 **Fixed values — only change if you know why:**
 
-- `CONTAINER` — this installation's identity: the Podman container name, and, via `HOST_REPO_BASE` above, the subdirectory its repository storage lives in. Change it only if you are running more than one instance of this project — each needs a distinct value, so their storage (and, per ROADMAP.md 11.5, their snapshot tooling) can never collide on storage they happen to share.
 - `SERVICE` — the systemd unit filename.
 - `SSH_PORT` — the port the container's SSH listens on (bind-mounted in the generated unit).
 - `PROJID_BASE` — the floor for auto-allocated XFS project IDs (Chapter 9.2 scans existing repos and starts above this).
-- `BORG_UID`, `BORG_GID` — the `borg` user's UID/GID **inside the container image**, fixed at build time in the Dockerfile. These must match the image you are actually running; only change them if you rebuilt the image with different values yourself. Used by `00-ssh-create-user.sh` to set correct host-side ownership via `podman unshare`.
 
-**`config.sh` holds values only.** Its last line sources `scripts/lib.sh`, which holds the shell functions the scripts share — so a script still sources exactly one file, while the file an operator edits stays about a hundred lines. That separation is what keeps the upgrade procedure's `diff` of `config.sh` readable ([Deployment](DEPLOYMENT.md) Chapter 6.3, step 6): it shows settings, not helper churn. `lib.sh` is shipped code, is replaced wholesale by an upgrade, and is not meant to be edited.
+**Both files hold values only.** `scripts/config.sh`'s last line sources `scripts/lib.sh`, which holds the shell functions the scripts share — so a script still sources exactly one file (`scripts/config.sh`, which chains to the root file and then to `lib.sh`), while each file an operator edits stays short. That separation is what keeps the upgrade procedure's `diff` of both `config.sh` files readable ([Deployment](DEPLOYMENT.md) Chapter 6.3, step 6): it shows settings, not helper churn. `lib.sh` is shipped code, is replaced wholesale by an upgrade, and is not meant to be edited.
 
 `lib.sh` has two halves, and the line between them is what each is allowed to do:
 

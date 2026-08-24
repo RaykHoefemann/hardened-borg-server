@@ -121,7 +121,7 @@ Throughout, replace `<server>` with your server host (a name or a bare IP),
 `clients.conf`, and `<repo>` with the repository URL assigned to it, e.g.
 `ssh://borgserver/repo/OWN/user1-os1-pc1`. Host paths appear as this project's
 own example layout: `/var/mnt/extern1` is the mount point of the storage volume
-and `/var/mnt/extern1/borg-server` is `HOST_REPO_BASE` from `scripts/config.sh`
+and `/var/mnt/extern1/borg-server` is `HOST_REPO_BASE`, derived in the repository root's `config.sh`
 — substitute your own.
 
 ### How client-side commands are written here

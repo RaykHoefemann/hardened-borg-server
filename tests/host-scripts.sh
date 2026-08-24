@@ -67,12 +67,14 @@ bad() { fail=$((fail+1)); printf 'FAIL %s\n       rc=%s\n       output:\n%s\n' \
         "$1" "$RC" "$(printf '%s' "$OUT" | sed 's/^/         /')"; }
 assert() { if [ "$2" -eq 0 ]; then ok "$1"; else bad "$1"; fi; }
 
-new_tree() { # fresh installation tree with scripts/ and config/
+new_tree() { # fresh installation tree with config.sh, scripts/ and config/
     T="$WORK/tree$RANDOM$RANDOM"
     mkdir -p "$T/config/keys" "$T/repo"
     cp -r "$ROOT/scripts" "$T/scripts"
-    # HOST_REPO_BASE is the one value every operator edits for their host.
-    sed -i "s|^HOST_REPO_BASE=.*|HOST_REPO_BASE=\"$T/repo/\"|" "$T/scripts/config.sh"
+    cp "$ROOT/config.sh" "$T/config.sh"
+    # HOST_REPO_BASE is the one value every operator edits for their host —
+    # it lives in the repository root's config.sh, not scripts/config.sh.
+    sed -i "s|^HOST_REPO_BASE=.*|HOST_REPO_BASE=\"$T/repo/\"|" "$T/config.sh"
 }
 
 run() { OUT="$("$@" 2>&1)"; RC=$?; }
@@ -1351,7 +1353,7 @@ setup_install() {
     new_tree
     mkdir -p "$T/systemd"
     cp "$ROOT/systemd/container-borg-server.service" "$T/systemd/"
-    sed -i "s|^HOST_REPO_BASE=.*|HOST_REPO_BASE=\"$1\"|" "$T/scripts/config.sh"
+    sed -i "s|^HOST_REPO_BASE=.*|HOST_REPO_BASE=\"$1\"|" "$T/config.sh"
 }
 
 # The parent is not a mount point: the volume is probably not mounted, and
