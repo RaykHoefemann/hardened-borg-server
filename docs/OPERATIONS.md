@@ -155,11 +155,13 @@ Helper scripts under `scripts/` manage the server's clients, quotas, the systemd
 
 **Must be adjusted for your installation:**
 
-- `HOST_REPO_BASE` — the host path holding client repositories. **Must** point at an XFS filesystem with enforcing project quotas (`prjquota`) already active (see Chapter 1.1.3 / BEST_PRACTICES.md Chapter 1). This is also bind-mounted as `/repo` in the generated systemd unit (Chapter 6.2), so the container and the host scripts are always guaranteed to operate on the same directory.
+- `HOST_STORAGE_BASE` — the mount point of your XFS filesystem with enforcing project quotas (`prjquota`) already active (see Chapter 1.1.3 / BEST_PRACTICES.md Chapter 1). `HOST_REPO_BASE` below is derived from it automatically; nothing else needs editing once this is right.
 - `IMAGE` — normally left alone: it is derived from the `VERSION` file, so a checkout of a release tag already points at the image built from that same commit. Change it only to **pin a digest** instead of a mutable tag, which is the stronger form once you have verified the image (`ghcr.io/raykhoefemann/hardened-borg-server@sha256:…`, see [Verification](VERIFICATION.md) Test 0).
 
 **Derived automatically — normally left alone:**
 
+- `HOST_REPO_BASE` — the host path holding client repositories, built as `${HOST_STORAGE_BASE}/${CONTAINER}/` rather than an independent literal, so storage location and installation identity can never drift apart. This is also bind-mounted as `/repo` in the generated systemd unit (Chapter 6.2), so the container and the host scripts are always guaranteed to operate on the same directory. Still a plain value underneath — override it directly if your layout genuinely does not fit the `HOST_STORAGE_BASE`/`CONTAINER` convention.
+- `SNAPSHOT_BASE` — the future root for the point-in-time snapshot tooling (ROADMAP.md 11.5), built the same way as `HOST_REPO_BASE`: `${HOST_STORAGE_BASE}/.snapshots/${CONTAINER}/`, a sibling of it rather than nested inside it. **Not yet consumed by any script** — 11.5 is still an open design — recorded now because its shape, not its timing, was the decision that mattered.
 - `SOURCE_URL` — where this software comes from, shown by `99-container-status.sh`. The image carries the same constant and reports it to clients through the `info` channel (Chapter 8); a CI check enforces that the two agree, so an operator and a client are never pointed at different repositories.
 - `RELEASE_VERSION` — read from the `VERSION` file at the installation root, copied there by SERVERINSTALL step 1. It is the single source of truth for the version: `IMAGE` is derived from it, `99-container-status.sh` reports it, and a CI check enforces that it agrees with the git tag and the documented image tag. Reports `unknown` if the tree was assembled by hand rather than installed from a release tag.
 - `REPO_ROOT` — computed from the location of whichever script sourced `config.sh`; correct regardless of the directory you run scripts from.
@@ -169,7 +171,8 @@ Helper scripts under `scripts/` manage the server's clients, quotas, the systemd
 
 **Fixed values — only change if you know why:**
 
-- `CONTAINER`, `SERVICE` — the Podman container name and systemd unit filename.
+- `CONTAINER` — this installation's identity: the Podman container name, and, via `HOST_REPO_BASE` above, the subdirectory its repository storage lives in. Change it only if you are running more than one instance of this project — each needs a distinct value, so their storage (and, per ROADMAP.md 11.5, their snapshot tooling) can never collide on storage they happen to share.
+- `SERVICE` — the systemd unit filename.
 - `SSH_PORT` — the port the container's SSH listens on (bind-mounted in the generated unit).
 - `PROJID_BASE` — the floor for auto-allocated XFS project IDs (Chapter 9.2 scans existing repos and starts above this).
 - `BORG_UID`, `BORG_GID` — the `borg` user's UID/GID **inside the container image**, fixed at build time in the Dockerfile. These must match the image you are actually running; only change them if you rebuilt the image with different values yourself. Used by `00-ssh-create-user.sh` to set correct host-side ownership via `podman unshare`.

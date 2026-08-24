@@ -40,7 +40,7 @@ non-negotiable rather than a nice-to-have.
 | **A non-root user** to own and run the service — every remaining step runs as this user unless a step says `sudo` | — |
 | **BorgBackup 1.x on every client** you will onboard — **2.x is not supported** | `borg --version` on the client → `1.x` (see [Supported BorgBackup versions](../README.md#supported-borgbackup-versions-1x-only)) |
 
-Note the mount path of the XFS volume — it's needed as `HOST_REPO_BASE` in
+Note the mount path of the XFS volume — it's needed as `HOST_STORAGE_BASE` in
 step 3.
 
 ---
@@ -118,16 +118,14 @@ At minimum, set:
 $EDITOR scripts/config.sh
 ```
 
-- `HOST_REPO_BASE` → the XFS/`prjquota` mount noted in step 0 (e.g. `/var/mnt/borg-repo`)
+- `HOST_STORAGE_BASE` → the XFS/`prjquota` mount noted in step 0 (e.g. `/var/mnt/borg-repo`). `HOST_REPO_BASE` is derived from it automatically as `${HOST_STORAGE_BASE}/${CONTAINER}/`, so nothing else needs editing here — the directory name is `CONTAINER`'s value (`borg-server` by default), not a second setting you supply. This keeps storage location and installation identity tied together by construction, and — since the snapshot tooling planned in [ROADMAP.md](../ROADMAP.md) 11.5 will place `.snapshots/${CONTAINER}/` under the same `HOST_STORAGE_BASE`, as a **sibling** of `HOST_REPO_BASE` rather than inside it — leaves that root free to sit right next to the repositories without ever being parsed out of `HOST_REPO_BASE` itself.
 
-  A **subdirectory** of that mount works too (e.g. `/var/mnt/borg-repo/repo`,
-  which keeps filesystem snapshots beside the repositories rather than inside
-  them). Whichever you choose, **the directory has to exist before step 4**: it
+  **The resulting `HOST_REPO_BASE` directory has to exist before step 4**: it
   is bind-mounted into the container as `/repo`, and podman will not start a
   container whose bind-mount source is missing. `50-service-install.sh` refuses
   to install the unit until it does, rather than leaving you with a service
-  that restart-loops. Create a subdirectory yourself — `mkdir -p
-  /var/mnt/borg-repo/repo` — but never create the *mount point* to get past
+  that restart-loops. Create it yourself — `mkdir -p
+  /var/mnt/borg-repo/borg-server` — but never create the *mount point* to get past
   that error: on an unmounted volume that succeeds silently and puts client
   repositories on the root filesystem, with no project quotas at all.
 

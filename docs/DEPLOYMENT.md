@@ -139,7 +139,7 @@ Note that `podman` is never executed — the failure happens while systemd prepa
 
 ### 6.2.2. Setup
 
-Before installing, review `scripts/config.sh` — in particular `HOST_REPO_BASE`, which must point at your enforcing-`prjquota` XFS volume (see Chapter 1.1.3). `IMAGE` needs no editing: it is derived from the `VERSION` file, so a checkout of a release tag already points at the image built from that same commit. Change it only to pin a digest instead of a mutable tag, which is worth doing once you have verified the image ([Verification](VERIFICATION.md), Test 0).
+Before installing, review `scripts/config.sh` — in particular `HOST_STORAGE_BASE`, which must point at your enforcing-`prjquota` XFS volume (see Chapter 1.1.3); `HOST_REPO_BASE` is derived from it automatically. `IMAGE` needs no editing: it is derived from the `VERSION` file, so a checkout of a release tag already points at the image built from that same commit. Change it only to pin a digest instead of a mutable tag, which is worth doing once you have verified the image ([Verification](VERIFICATION.md), Test 0).
 
 ```bash
 ./scripts/50-service-install.sh
@@ -184,7 +184,7 @@ A release has two halves and an upgrade moves both. The container image carries 
 
 Two files in an installation are yours, not the release's, and a careless upgrade overwrites both:
 
-- **`scripts/config.sh`** — holds `HOST_REPO_BASE` and your `IMAGE` digest pin. It is shipped code *and* per-host configuration in one file, which is why the procedure below backs it up and diffs rather than simply copying. It holds values only — the shared shell functions live in `scripts/lib.sh`, which is release code with nothing of yours in it, so the diff in step 6 stays about your settings. Note that the pin is the one setting an upgrade must *not* carry over unchanged: a new release is a new image and therefore a new digest, so step 6 re-resolves it rather than restoring the old value.
+- **`scripts/config.sh`** — holds `HOST_STORAGE_BASE` (which `HOST_REPO_BASE` is derived from) and your `IMAGE` digest pin. It is shipped code *and* per-host configuration in one file, which is why the procedure below backs it up and diffs rather than simply copying. It holds values only — the shared shell functions live in `scripts/lib.sh`, which is release code with nothing of yours in it, so the diff in step 6 stays about your settings. Note that the pin is the one setting an upgrade must *not* carry over unchanged: a new release is a new image and therefore a new digest, so step 6 re-resolves it rather than restoring the old value.
 - **`config/server_info.conf`** — you edited it in SERVERINSTALL step 7; the repository ships it with placeholder values.
 
 > ⚠️ **Do not re-run SERVERINSTALL step 1 against an existing installation.** `cp -r` merges into existing directories and overwrites same-named files, so copying `config/` would replace your `server_info.conf` with the template, and copying `scripts/` would replace your `config.sh`. Your `clients.conf` and `config/keys/` survive only because the repository does not ship them.
@@ -225,7 +225,7 @@ rm -rf ~/tmp/upgrade
 
 # 6. Restore your settings into the new config.sh
 diff /tmp/config.sh.previous scripts/config.sh
-$EDITOR scripts/config.sh          # re-apply HOST_REPO_BASE; set IMAGE to the digest from step 4
+$EDITOR scripts/config.sh          # re-apply HOST_STORAGE_BASE; set IMAGE to the digest from step 4
 
 # 7. Re-render the unit from config.sh and restart
 ./scripts/50-service-install.sh
@@ -283,7 +283,7 @@ cp -r ~/tmp/rollback/scripts ~/tmp/rollback/systemd "$INSTALL_PATH"/
 cp ~/tmp/rollback/VERSION "$INSTALL_PATH"/
 rm -rf ~/tmp/rollback
 
-$EDITOR scripts/config.sh          # re-apply HOST_REPO_BASE; set IMAGE to the digest verified above
+$EDITOR scripts/config.sh          # re-apply HOST_STORAGE_BASE; set IMAGE to the digest verified above
 ./scripts/50-service-install.sh
 ./scripts/92-container-restart.sh
 ```

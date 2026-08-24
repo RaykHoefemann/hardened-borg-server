@@ -132,7 +132,7 @@ podman info --format '{{.Host.Security.Rootless}}'     # true
 grep "^$(whoami):" /etc/subuid /etc/subgid             # both present
 ```
 
-Use `/var/mnt/borg-repo` as `HOST_REPO_BASE` in step 3.
+Use `/var/mnt/borg-repo` as `HOST_STORAGE_BASE` in step 3.
 
 ---
 

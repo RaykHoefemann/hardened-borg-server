@@ -15,10 +15,10 @@
 # the last line here sources — so a script still sources one file, and this one
 # stays short enough to be read by the person who has to edit it. That is the
 # whole reason for the split: this file is shipped code *and* per-host
-# configuration at once, and an upgrade diffs it to carry HOST_REPO_BASE and
-# IMAGE forward (DEPLOYMENT.md chapter 6.3, step 6). While 750 lines of helpers
-# sat here too, a release that touched one of them buried the two lines that
-# diff exists to show.
+# configuration at once, and an upgrade diffs it to carry HOST_STORAGE_BASE
+# and IMAGE forward (DEPLOYMENT.md chapter 6.3, step 6). While 750 lines of
+# helpers sat here too, a release that touched one of them buried the two
+# lines that diff exists to show.
 #
 # shellcheck disable=SC2034
 #
@@ -49,35 +49,15 @@ RELEASE_VERSION="$(cat "${REPO_ROOT}/VERSION" 2>/dev/null || echo unknown)"
 # client are never pointed at different sources.
 SOURCE_URL="https://github.com/RaykHoefemann/hardened-borg-server"
 
-# --- Host-side paths -------------------------------------------------------
-
-# Config and log storage: kept inside the repo checkout itself.
-HOST_CONFIG_BASE="${REPO_ROOT}/config"
-HOST_LOG_BASE="${REPO_ROOT}/log"
-
-# Repository storage: MUST point at the XFS filesystem that has ENFORCING
-# project quotas (prjquota) enabled — see README Chapter 1.1.3 /
-# BEST_PRACTICES.md Chapter 1. ADJUST THIS to your actual storage volume.
-# This is also the exact value used to bind-mount /repo in the generated
-# systemd unit (see 50-service-install.sh) — so the container is
-# guaranteed to mount the same directory that 00/02/09 operate on.
-# A trailing slash is optional — every script normalizes this value itself,
-# so either "/path/to/repo" or "/path/to/repo/" works the same.
-HOST_REPO_BASE="/var/mnt/extern1/borg-server/"
-
-# Container-side path prefix (as seen inside the container).
-CONTAINER_REPO_BASE="/repo/"
-
-# Scripts' view of config/keys (used by 00/01/02/09).
-CONF="${HOST_CONFIG_BASE}/clients.conf"
-KEYDIR="${HOST_CONFIG_BASE}/keys"
-
-# Starting project id for auto-allocation (00-ssh-create-user.sh scans
-# existing repo dirs and takes max+1, starting from this floor).
-PROJID_BASE=1000
-
 # --- Container runtime -----------------------------------------------------
 
+# This installation's identity. HOST_REPO_BASE below is derived from this
+# value rather than set independently, so an installation's storage location
+# and its runtime identity can never drift apart — and so two independent
+# instances of this project (or, per ROADMAP.md 11.5, of its snapshot
+# tooling) on the same host or the same shared volume get non-overlapping
+# paths automatically, from distinct CONTAINER values, with no coordination
+# required.
 CONTAINER="borg-server"
 SERVICE="container-borg-server.service"
 # Derived from VERSION above, so a checkout of a release tag already points at
@@ -108,6 +88,48 @@ SSH_PORT=2222
 # `podman unshare` (rootless Podman UID mapping).
 BORG_UID=1111
 BORG_GID=1111
+
+# --- Host-side paths -------------------------------------------------------
+
+# Config and log storage: kept inside the repo checkout itself.
+HOST_CONFIG_BASE="${REPO_ROOT}/config"
+HOST_LOG_BASE="${REPO_ROOT}/log"
+
+# The mount point of the dedicated XFS filesystem that has ENFORCING project
+# quotas (prjquota) enabled — see README Chapter 1.1.3 / BEST_PRACTICES.md
+# Chapter 1. ADJUST THIS to your actual mount point; nothing below needs
+# editing once this is right.
+HOST_STORAGE_BASE="/var/mnt/extern1"
+
+# Repository storage: this installation's own subdirectory of
+# HOST_STORAGE_BASE, named after CONTAINER above rather than an independent
+# literal, so storage location and installation identity can never drift
+# apart. This is also the exact value used to bind-mount /repo in the
+# generated systemd unit (see 50-service-install.sh) — so the container is
+# guaranteed to mount the same directory that 00/02/09 operate on. A
+# trailing slash is optional — every script normalizes this value itself, so
+# either "/path/to/repo" or "/path/to/repo/" works the same.
+HOST_REPO_BASE="${HOST_STORAGE_BASE}/${CONTAINER}/"
+
+# Snapshot root for the point-in-time snapshot tooling (ROADMAP.md 11.5).
+# NOT YET CONSUMED — no script reads this today; 11.5 itself is still an open
+# design, not an implemented feature. Recorded here now because its shape is
+# already decided: a sibling of HOST_REPO_BASE, built from the same two
+# values (HOST_STORAGE_BASE, CONTAINER) rather than parsed out of
+# HOST_REPO_BASE at runtime — see the constraint recorded in ROADMAP.md 11.5
+# for why that distinction matters. A trailing slash is optional, as above.
+SNAPSHOT_BASE="${HOST_STORAGE_BASE}/.snapshots/${CONTAINER}/"
+
+# Container-side path prefix (as seen inside the container).
+CONTAINER_REPO_BASE="/repo/"
+
+# Scripts' view of config/keys (used by 00/01/02/09).
+CONF="${HOST_CONFIG_BASE}/clients.conf"
+KEYDIR="${HOST_CONFIG_BASE}/keys"
+
+# Starting project id for auto-allocation (00-ssh-create-user.sh scans
+# existing repo dirs and takes max+1, starting from this floor).
+PROJID_BASE=1000
 
 
 # --- Shared functions ------------------------------------------------------
