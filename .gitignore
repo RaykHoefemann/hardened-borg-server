@@ -31,6 +31,12 @@ config/keys/
 systemd/*.env
 systemd/*.rendered
 
+# Same idea, for snapshots/71-timer-install.sh: snapshot-create.service is
+# rendered from snapshot-create.service.rendered's template with this
+# checkout's own REPO_ROOT baked into ExecStart — valid on exactly one
+# machine, same as the systemd/ case above.
+snapshots/*.rendered
+
 # --- Runtime logs ------------------------------------------------------------
 log/
 

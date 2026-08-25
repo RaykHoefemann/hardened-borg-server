@@ -33,20 +33,50 @@
 #   Nothing is skipped by prior success — a snapshot is a new, independent
 #   directory each time, keyed by the timestamp this run started at.
 #
-# Intended to run unattended from cron (hence no confirmation prompt, unlike
-# scripts/00 and scripts/03 — this operation only ever adds a directory, it
-# never changes or removes anything an operator would want to confirm
-# first). Example crontab line, hourly:
+# Intended to run unattended, on a schedule (hence no confirmation prompt,
+# unlike scripts/00 and scripts/03 — this operation only ever adds a
+# directory, it never changes or removes anything an operator would want to
+# confirm first). Two ways to schedule it, pick whichever exists on your
+# host:
 #
-#   0 * * * *  /path/to/borg-server/snapshots/70-create-snapshot.sh >> /path/to/borg-server/log/snapshots.log 2>&1
+#   - systemd timer (works everywhere this project already requires
+#     systemd for the container service, and the only option on Fedora
+#     CoreOS, which has no cron): see snapshots/71-timer-install.sh and
+#     snapshots/snapshot-create.timer, which fires daily at 03:00.
+#   - plain crontab line, hourly, on a host that has cron:
+#
+#       0 * * * *  /path/to/borg-server/snapshots/70-create-snapshot.sh >> /path/to/borg-server/log/snapshots.log 2>&1
 #
 # A run already in progress is detected and refused (flock on a lock file
-# inside SNAPSHOT_BASE), so a slow run never overlaps the next cron firing.
+# inside SNAPSHOT_BASE), so a slow run never overlaps the next firing,
+# whichever of the two triggers it.
 #
 # One client failing (disk full mid-copy, an unreadable directory, ...) does
 # not stop the others: every client found is attempted, and the exit status
 # at the end reflects whether all of them succeeded (0) or not (1) — the
 # signal a cron MAILTO or a systemd OnFailure= unit is meant to catch.
+#
+# TIMING. Every client is timed (wall clock around the whole per-client
+# attempt — mkdir, stale cleanup, the reflink copy, rename, chattr and its
+# read-back). Reported on the normal `[snapshot] ...` line every run, cheap
+# enough to always print. Where the time actually goes on a real repository
+# — the reflink copy is expected to be near-instant regardless of data size
+# (blocks are shared, not moved), `chattr -R` recurses the whole tree and is
+# the more likely place a large client shows up here — has not been
+# measured against a real repository; only against small synthetic test
+# trees so far (see this script's own commit history).
+#
+# DEBUG LOG. Off by default — nothing is written and no file is created.
+# Set SNAPSHOT_DEBUG_LOG to a path to additionally append one line per
+# client (timestamp, directory, result, duration) there, e.g.:
+#
+#   SNAPSHOT_DEBUG_LOG=/path/to/borg-server/log/snapshot-debug.log ./snapshots/70-create-snapshot.sh
+#
+# Meant for a one-off debugging session (a slow or misbehaving run), not
+# routine operation — the normal stdout lines already go wherever stdout
+# goes (cron's own redirection, or the journal under the systemd timer), so
+# this does not replace that. To turn it off again, stop setting the
+# variable; nothing needs to be edited in this script.
 #
 # PRIVILEGES. Run as the normal operator user, the SAME user that runs the
 # container — same as every script in scripts/ — with two exceptions
@@ -74,6 +104,106 @@
 set -e
 #load setup for all scripts
 . "$(dirname "$0")/config.sh"
+
+# snapshot_debug_log <line>
+#
+# See "DEBUG LOG" above. A no-op, and no file is ever created, unless
+# SNAPSHOT_DEBUG_LOG is set.
+snapshot_debug_log() {
+    [ -n "${SNAPSHOT_DEBUG_LOG:-}" ] || return 0
+    printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$SNAPSHOT_DEBUG_LOG"
+}
+
+# snapshot_client <client-dir>
+#
+# Everything for one client: mkdir, stale-staging cleanup, the reflink copy,
+# the rename, chattr, and reading the flag back. A function rather than
+# inline loop body so the loop below can time and log the whole attempt in
+# one place regardless of where inside here a client succeeds or fails —
+# `return` where the inline version used `continue`, so control always comes
+# back to the loop's own timing/logging tail. Returns 0 on success, 1 on any
+# failure; every failure explains itself on stdout before returning.
+#
+# Uses the shared globals SNAPSHOT_BASE and TIMESTAMP (set once for the
+# whole run, below) and prefixes everything local to itself with `_sc_` —
+# same convention scripts/lib.sh's functions use — since POSIX sh functions
+# have no `local` and share the caller's variable namespace.
+snapshot_client() {
+    _sc_client_dir="$1"
+    _sc_username="$(basename "$_sc_client_dir")"
+    _sc_group="$(basename "$(dirname "$_sc_client_dir")")"
+
+    case "$_sc_username" in
+        *[!a-zA-Z0-9_-]*)
+            echo "ERROR: skipping '$_sc_client_dir' -- name contains characters"
+            echo "       outside a-z, 0-9, _, - and cannot be trusted as a"
+            echo "       path component under SNAPSHOT_BASE."
+            return 1
+            ;;
+    esac
+
+    _sc_snap_dir="${SNAPSHOT_BASE}/${_sc_username}"
+    _sc_staging="${_sc_snap_dir}/.creating-${TIMESTAMP}"
+    _sc_final="${_sc_snap_dir}/${TIMESTAMP}"
+
+    echo "[snapshot] ${_sc_username} (${_sc_group}): starting"
+
+    mkdir -p "$_sc_snap_dir"
+
+    # A .creating-* left behind by a run that never reached the mv below
+    # (crash, kill, disk full mid-copy). It was never renamed to a real
+    # <timestamp>/, so nothing could have listed or relied on it yet, and it
+    # is still plain-owned/mutable (chattr only ever runs after the rename)
+    # -- safe for the operator to remove without sudo.
+    for _sc_stale in "${_sc_snap_dir}"/.creating-*; do
+        [ -e "$_sc_stale" ] || continue
+        echo "[snapshot] ${_sc_username}: removing stale incomplete snapshot from a previous run: $_sc_stale"
+        rm -rf "$_sc_stale"
+    done
+
+    if [ -e "$_sc_final" ]; then
+        echo "ERROR: ${_sc_username}: '$_sc_final' already exists (duplicate timestamp"
+        echo "       within the same second?). Skipping this client this run."
+        return 1
+    fi
+
+    if ! sudo cp -a --reflink=always "$_sc_client_dir" "$_sc_staging"; then
+        echo "ERROR: ${_sc_username}: reflink copy failed. Leaving '$_sc_staging' in"
+        echo "       place for inspection; it is not a valid snapshot and"
+        echo "       will be removed automatically on the next run."
+        return 1
+    fi
+
+    if ! mv "$_sc_staging" "$_sc_final"; then
+        echo "ERROR: ${_sc_username}: could not rename '$_sc_staging' to '$_sc_final'."
+        return 1
+    fi
+
+    if ! sudo chattr -R +i "$_sc_final"; then
+        echo "ERROR: ${_sc_username}: '$_sc_final' was created but chattr +i failed."
+        echo "       It holds a real copy of this client's data but is NOT"
+        echo "       protected against deletion. Needs manual attention."
+        return 1
+    fi
+
+    # Trust but verify, the way quota_verify reads the limit back rather than
+    # the exit status of the command that set it: confirm the flag actually
+    # reached the directory rather than assuming a zero exit means it did.
+    _sc_final_attrs="$(lsattr -d "$_sc_final" 2>/dev/null | awk '{print $1}')"
+    case "$_sc_final_attrs" in
+        *i*) ;;
+        *)
+            echo "ERROR: ${_sc_username}: chattr reported success but '$_sc_final' is"
+            echo "       NOT showing the immutable flag on read-back"
+            echo "       (lsattr: '${_sc_final_attrs:-unreadable}'). Needs manual"
+            echo "       attention -- this snapshot is not protected."
+            return 1
+            ;;
+    esac
+
+    echo "[snapshot] ${_sc_username}: done -> $_sc_final"
+    return 0
+}
 
 if [ -z "${HOST_REPO_BASE:-}" ]; then
     echo "ERROR: HOST_REPO_BASE is not set in config.sh."
@@ -160,6 +290,9 @@ fi
 # ---------------------------------------------------------------------------
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 
+RUN_START="$(date +%s.%N)"
+snapshot_debug_log "run start host_repo_base=${HOST_REPO_BASE} snapshot_base=${SNAPSHOT_BASE} timestamp=${TIMESTAMP}"
+
 TOTAL=0
 FAILED=0
 
@@ -168,87 +301,25 @@ FAILED=0
 # levels deep. Deliberately not clients.conf -- see the file header.
 for CLIENT_DIR in "${HOST_REPO_BASE}"/*/*; do
     [ -d "$CLIENT_DIR" ] || continue
-
-    USERNAME="$(basename "$CLIENT_DIR")"
-    GROUP="$(basename "$(dirname "$CLIENT_DIR")")"
     TOTAL=$((TOTAL + 1))
 
-    case "$USERNAME" in
-        *[!a-zA-Z0-9_-]*)
-            echo "ERROR: skipping '$CLIENT_DIR' -- name contains characters"
-            echo "       outside a-z, 0-9, _, - and cannot be trusted as a"
-            echo "       path component under SNAPSHOT_BASE."
-            FAILED=$((FAILED + 1))
-            continue
-            ;;
-    esac
-
-    CLIENT_SNAP_DIR="${SNAPSHOT_BASE}/${USERNAME}"
-    STAGING="${CLIENT_SNAP_DIR}/.creating-${TIMESTAMP}"
-    FINAL="${CLIENT_SNAP_DIR}/${TIMESTAMP}"
-
-    echo "[snapshot] ${USERNAME} (${GROUP}): starting"
-
-    mkdir -p "$CLIENT_SNAP_DIR"
-
-    # A .creating-* left behind by a run that never reached the mv below
-    # (crash, kill, disk full mid-copy). It was never renamed to a real
-    # <timestamp>/, so nothing could have listed or relied on it yet, and it
-    # is still plain-owned/mutable (chattr only ever runs after the rename)
-    # -- safe for the operator to remove without sudo.
-    for STALE in "${CLIENT_SNAP_DIR}"/.creating-*; do
-        [ -e "$STALE" ] || continue
-        echo "[snapshot] ${USERNAME}: removing stale incomplete snapshot from a previous run: $STALE"
-        rm -rf "$STALE"
-    done
-
-    if [ -e "$FINAL" ]; then
-        echo "ERROR: ${USERNAME}: '$FINAL' already exists (duplicate timestamp"
-        echo "       within the same second?). Skipping this client this run."
+    CLIENT_START="$(date +%s.%N)"
+    if snapshot_client "$CLIENT_DIR"; then
+        CLIENT_RESULT="ok"
+    else
+        CLIENT_RESULT="failed"
         FAILED=$((FAILED + 1))
-        continue
     fi
+    CLIENT_END="$(date +%s.%N)"
+    CLIENT_DURATION="$(awk -v s="$CLIENT_START" -v e="$CLIENT_END" 'BEGIN{printf "%.2f", e-s}')"
 
-    if ! sudo cp -a --reflink=always "$CLIENT_DIR" "$STAGING"; then
-        echo "ERROR: ${USERNAME}: reflink copy failed. Leaving '$STAGING' in"
-        echo "       place for inspection; it is not a valid snapshot and"
-        echo "       will be removed automatically on the next run."
-        FAILED=$((FAILED + 1))
-        continue
-    fi
-
-    if ! mv "$STAGING" "$FINAL"; then
-        echo "ERROR: ${USERNAME}: could not rename '$STAGING' to '$FINAL'."
-        FAILED=$((FAILED + 1))
-        continue
-    fi
-
-    if ! sudo chattr -R +i "$FINAL"; then
-        echo "ERROR: ${USERNAME}: '$FINAL' was created but chattr +i failed."
-        echo "       It holds a real copy of this client's data but is NOT"
-        echo "       protected against deletion. Needs manual attention."
-        FAILED=$((FAILED + 1))
-        continue
-    fi
-
-    # Trust but verify, the way quota_verify reads the limit back rather than
-    # the exit status of the command that set it: confirm the flag actually
-    # reached the directory rather than assuming a zero exit means it did.
-    FINAL_ATTRS="$(lsattr -d "$FINAL" 2>/dev/null | awk '{print $1}')"
-    case "$FINAL_ATTRS" in
-        *i*) ;;
-        *)
-            echo "ERROR: ${USERNAME}: chattr reported success but '$FINAL' is"
-            echo "       NOT showing the immutable flag on read-back"
-            echo "       (lsattr: '${FINAL_ATTRS:-unreadable}'). Needs manual"
-            echo "       attention -- this snapshot is not protected."
-            FAILED=$((FAILED + 1))
-            continue
-            ;;
-    esac
-
-    echo "[snapshot] ${USERNAME}: done -> $FINAL"
+    echo "[snapshot] $(basename "$CLIENT_DIR"): ${CLIENT_RESULT} in ${CLIENT_DURATION}s"
+    snapshot_debug_log "client=$(basename "$CLIENT_DIR") dir=${CLIENT_DIR} result=${CLIENT_RESULT} duration=${CLIENT_DURATION}s"
 done
+
+RUN_END="$(date +%s.%N)"
+RUN_DURATION="$(awk -v s="$RUN_START" -v e="$RUN_END" 'BEGIN{printf "%.2f", e-s}')"
+snapshot_debug_log "run end total=${TOTAL} failed=${FAILED} duration=${RUN_DURATION}s"
 
 echo ""
 if [ "$TOTAL" -eq 0 ]; then
@@ -257,7 +328,7 @@ if [ "$TOTAL" -eq 0 ]; then
 fi
 
 OK=$((TOTAL - FAILED))
-echo "[snapshot] $OK/$TOTAL client(s) snapshotted successfully."
+echo "[snapshot] $OK/$TOTAL client(s) snapshotted successfully in ${RUN_DURATION}s total."
 if [ "$FAILED" -gt 0 ]; then
     echo "[snapshot] $FAILED client(s) FAILED -- see ERROR lines above."
     exit 1
