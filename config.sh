@@ -72,10 +72,11 @@ HOST_STORAGE_BASE="/var/mnt/extern1"
 HOST_REPO_BASE="${HOST_STORAGE_BASE}/${CONTAINER}/"
 
 # Snapshot root for the point-in-time snapshot tooling (ROADMAP.md 11.5).
-# NOT YET CONSUMED — no script reads this today; 11.5 itself is still an open
-# design, not an implemented feature. Recorded here now because its shape is
-# already decided: a sibling of HOST_REPO_BASE, built from the same two
-# values (HOST_STORAGE_BASE, CONTAINER) rather than parsed out of
-# HOST_REPO_BASE at runtime — see the constraint recorded in ROADMAP.md 11.5
-# for why that distinction matters. A trailing slash is optional, as above.
+# Consumed today by snapshots/70-create-snapshot.sh and
+# snapshots/75-list-snapshots.sh; 11.5 as a whole is still an open design (the
+# remaining scripts -- prune, compare, restore -- do not exist yet). Its
+# shape: a sibling of HOST_REPO_BASE, built from the same two values
+# (HOST_STORAGE_BASE, CONTAINER) rather than parsed out of HOST_REPO_BASE at
+# runtime -- see the constraint recorded in ROADMAP.md 11.5 for why that
+# distinction matters. A trailing slash is optional, as above.
 SNAPSHOT_BASE="${HOST_STORAGE_BASE}/.snapshots/${CONTAINER}/"
