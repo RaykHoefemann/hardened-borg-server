@@ -64,6 +64,8 @@ Meant to run unattended, on a schedule — there is no confirmation prompt, sinc
   journalctl --user -u snapshot-create.service
   ```
 
+  Reversed by `./snapshots/72-timer-uninstall.sh` — disables and removes the timer and its rendered service unit, the same way `scripts/51-service-uninstall.sh` reverses `50-`. It refuses rather than stopping a creation run already in progress: unlike the long-running container service, interrupting `70-create-snapshot.sh` mid-copy and removing the timer in the same step would leave a stale `.creating-*` with no future run left to clean it up. Existing snapshot generations, and `75-`/`76-`/`77-`, are untouched either way — this only turns off future scheduled creation.
+
 - **plain crontab**, on a host that has cron:
 
   ```
