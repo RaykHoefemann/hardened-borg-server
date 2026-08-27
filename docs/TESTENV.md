@@ -699,7 +699,7 @@ Never judge a measurement taken mid-write.
 
 **Consistency.** A `cp` taken while a backup is in progress is a
 crash-consistent snapshot, not a clean one — Borg's transaction log usually
-tolerates that (see [Roadmap](../ROADMAP.md) 11.5, "Copy ordering", for
+tolerates that (see [Snapshots](SNAPSHOTS.md), "Creating snapshots", for
 exactly how far that holds up empirically). A snapshot is only clean by
 construction outside the backup window, or with the container briefly
 stopped.

@@ -5,11 +5,14 @@
 # snapshots/-side configuration: today, exactly the shared core one directory
 # up (CONTAINER, HOST_STORAGE_BASE, HOST_REPO_BASE, SNAPSHOT_BASE,
 # BORG_UID/BORG_GID, REPO_ROOT) — see the repository root's config.sh for what
-# each holds and why. Nothing snapshot-specific exists yet; retention counts
-# and a schedule (ROADMAP.md 11.5) belong here once the scripts that need them
-# (prune, and whatever else) exist. Mirrors the same split scripts/config.sh
-# already does, for the same reason: an upgrade diffs this file to carry
-# per-host settings forward without dragging shared plumbing through the diff.
+# each holds and why. Nothing snapshot-specific has needed a value of its own
+# here so far: creation runs on a fixed daily schedule (snapshot-create.timer),
+# and retention is a manual operator decision made with 75-/76- directly
+# (docs/SNAPSHOTS.md) rather than a configured policy. If an unattended,
+# age-based prune is ever built, its settings belong here. Mirrors the same
+# split scripts/config.sh already does, for the same reason: an upgrade diffs
+# this file to carry per-host settings forward without dragging shared
+# plumbing through the diff.
 #
 # Source this file at the beginning of each script:
 #

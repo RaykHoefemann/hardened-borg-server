@@ -6,9 +6,9 @@
 # the shared core (installation identity and storage paths — REPO_ROOT,
 # CONTAINER, HOST_STORAGE_BASE, HOST_REPO_BASE, SNAPSHOT_BASE, BORG_UID,
 # BORG_GID), which lives one level up in the repository root's config.sh and
-# is sourced first below because it is also what the still-unbuilt
-# snapshots/ tooling (ROADMAP.md 11.5) will need. This file holds what is
-# specific to this side: the container image, SSH port, and the
+# is sourced first below because it is also what the snapshots/ tooling
+# (docs/SNAPSHOTS.md) needs. This file holds what is specific to this
+# side: the container image, SSH port, and the
 # config/keys/log locations under HOST_CONFIG_BASE/HOST_LOG_BASE.
 #
 # Source this file at the beginning of each script:

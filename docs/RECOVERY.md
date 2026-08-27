@@ -86,7 +86,7 @@ mv index.17 hints.17 integrity.17 ../quarantine/
 sed -i '/transaction 17,/d' transactions
 ```
 
-If a snapshot mechanism is available (Roadmap 11.5), take a named snapshot before this instead of — or in addition to — the quarantine directory.
+Run `./snapshots/70-create-snapshot.sh` before this instead of — or in addition to — the quarantine directory: a proper, immutable snapshot rather than the improvisation above (see [Snapshots](SNAPSHOTS.md)).
 
 ### Operator-side verification
 

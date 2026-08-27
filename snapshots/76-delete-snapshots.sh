@@ -3,10 +3,10 @@
 # 76-delete-snapshots.sh
 # ------------------------
 # Deletes one or more snapshot generations of a single client under
-# SNAPSHOT_BASE (ROADMAP.md 11.5). This is the prune path ROADMAP.md itself
-# calls "the most dangerous code in the deployment" -- it exists specifically
-# to disarm the immutable flag and then delete recursively, on client-scoped
-# history that otherwise cannot be removed at all.
+# SNAPSHOT_BASE (docs/SNAPSHOTS.md). This is the most dangerous code in the
+# deployment -- it exists specifically to disarm the immutable flag and then
+# delete recursively, on client-scoped history that otherwise cannot be
+# removed at all.
 #
 # Usage:
 #   ./snapshots/76-delete-snapshots.sh <client> [from] [to]
@@ -14,10 +14,12 @@
 # Same three arguments, same meaning, as 75-list-snapshots.sh -- <client>
 # mandatory, [from]/[to] optional inclusive bounds in the same
 # YYYYMMDDTHHMMSSZ format 70-create-snapshot.sh names generations with.
-# Omitting both deletes this client's ENTIRE snapshot history (ROADMAP.md
-# 11.5, "Client isolation": the intended way to handle a compromised client,
-# a client's own repository reset, or complete/residue-free removal of a
-# client, in one pass, without touching any other client's history).
+# Omitting both deletes this client's ENTIRE snapshot history -- the
+# intended way to handle a compromised client, a client's own repository
+# reset, or complete/residue-free removal of a client, in one pass, without
+# touching any other client's history (the client-first layout is what
+# makes that one pass sufficient -- see docs/SNAPSHOTS.md, "Layout on
+# disk").
 #
 # What this does, in order:
 #
@@ -35,9 +37,7 @@
 #   3. Only then: for each generation in scope, `sudo chattr -R -i` (read
 #      back via `lsattr` before trusting it worked -- see PRIVILEGES), then
 #      `sudo rm -rf`. One generation failing does not stop the rest -- see
-#      PRIVILEGES for why both steps need root, and ROADMAP.md 11.5's
-#      "Constraints to preserve" for why clearing the flag alone is not
-#      enough to delete anything.
+#      PRIVILEGES below for why both steps need root.
 #
 # Held under the same lock 70-create-snapshot.sh uses (SNAPSHOT_BASE/.lock),
 # for the whole run from directly after argument validation through the
@@ -48,10 +48,10 @@
 #
 # PATH SAFETY. Per generation, the path actually handed to `chattr`/`rm` is
 # canonicalized (`cd ... && pwd -P`) and checked to resolve inside
-# SNAPSHOT_BASE before anything is touched -- ROADMAP.md 11.5's own
-# constraint on this code ("must validate that its target resolves inside
-# the snapshot root and refuse everything else, rather than trusting its
-# argument"). <client> is additionally restricted to a safe charset (same
+# SNAPSHOT_BASE before anything is touched -- this code must validate that
+# its target resolves inside the snapshot root and refuse everything else,
+# rather than trusting its argument. <client> is additionally restricted to
+# a safe charset (same
 # rule 70-/75- already apply) before it is ever used to build a path, and
 # [from]/[to] must match the exact timestamp format, so neither can smuggle
 # a `..` or an absolute path in.
@@ -64,23 +64,24 @@
 #   - `rm -rf`: clearing the immutable flag is NOT sufficient on its own.
 #     The reflinked files still carry the *original* client directories'
 #     mapped-subuid ownership and restrictive mode (verified against a real
-#     deployment -- see ROADMAP.md 11.5, "70-create-snapshot.sh -- verified
-#     end to end"), so an unprivileged `rm -rf` fails with `Permission
-#     denied` (a different failure than the flag's `Operation not
-#     permitted`) even after the flag is gone. Deleting therefore needs
-#     root too, not only the flag change.
+#     deployment, FCOS-BorgBackupServer, 2026-08-25), so an unprivileged
+#     `rm -rf` fails with `Permission denied` (a different failure than the
+#     flag's `Operation not permitted`) even after the flag is gone.
+#     Deleting therefore needs root too, not only the flag change.
 #
 # Unattended/scripted use is not a goal of this script -- the confirmation
 # step exists precisely because deletion here is meant to be a deliberate,
 # witnessed act by an operator, not something a cron job decides on its
 # own. (A future retention-driven prune, if it is ever built, is a
 # different, non-interactive script -- ROADMAP.md 11.5 leaves that open.)
-# A sudoers entry enabling passwordless `chattr` already exists for
-# 70-create-snapshot.sh; running this script interactively does not need
-# that, since a human is present to authenticate `sudo` normally -- but
-# note the two commands elevated here (`chattr -R -i`, `rm -rf`) are new
-# entries beyond what 70-create-snapshot.sh's own header documents needing
-# (`cp`, `chattr -R +i`), if a sudoers policy is ever written down.
+# A sudoers entry enabling passwordless `chattr` and `rm` already exists for
+# 70-create-snapshot.sh's own unattended operation (its stale `.creating-*`
+# cleanup needs `rm -rf` for the same reason this script's deletion does --
+# see that script's own PRIVILEGES section). Running this script
+# interactively does not need any of that to be passwordless, since a human
+# is present to authenticate `sudo` normally -- but if a sudoers policy is
+# written down, `chattr -R -i` and `rm -rf` here reuse exactly the same two
+# commands 70-create-snapshot.sh's own policy already names, not new ones.
 #
 
 set -e

@@ -263,7 +263,7 @@ It creates the client but does not authorize it: that takes the key (Chapter 9.3
 
 ## 9.2.1. 04-reattach-client.sh
 
-Reconnects `clients.conf` to a client whose repository directory, host ownership and XFS project id are already correct on disk — the state a `HOST_REPO_BASE`-only restore leaves behind, since `clients.conf` and the key file live under `HOST_CONFIG_BASE`, inside the git checkout, not on the storage volume any restore of `HOST_REPO_BASE` touches (ROADMAP.md 11.5, "Scope" / "What restoring `HOST_REPO_BASE` alone does not restore"). Companion to `00-ssh-create-user.sh` the way `03-provision-client.sh` (Chapter 9.4.1) is companion to `02-change-user-quota.sh`: `00` creates both halves of a client from nothing, `03` rebuilds the filesystem half from an existing `clients.conf` entry, and this rebuilds the `clients.conf` entry from an existing filesystem half.
+Reconnects `clients.conf` to a client whose repository directory, host ownership and XFS project id are already correct on disk — the state a `HOST_REPO_BASE`-only restore leaves behind, since `clients.conf` and the key file live under `HOST_CONFIG_BASE`, inside the git checkout, not on the storage volume any restore of `HOST_REPO_BASE` touches (see [Snapshots](SNAPSHOTS.md), "Scope"). Companion to `00-ssh-create-user.sh` the way `03-provision-client.sh` (Chapter 9.4.1) is companion to `02-change-user-quota.sh`: `00` creates both halves of a client from nothing, `03` rebuilds the filesystem half from an existing `clients.conf` entry, and this rebuilds the `clients.conf` entry from an existing filesystem half.
 
 ```bash
 ./scripts/04-reattach-client.sh <username>

@@ -8,8 +8,8 @@
 #
 #   75-list-snapshots.sh   -- find the anomaly (append-only means a size
 #                              jump on an existing generation is never
-#                              legitimate; ROADMAP.md 11.5, "Snapshot
-#                              comparison")
+#                              legitimate -- the only signal a compromised
+#                              client can actually produce)
 #   76-delete-snapshots.sh -- remove every generation that covers the
 #                              compromise window
 #   77-restore-last-snapshot.sh  -- whatever generation is left as "last"
@@ -40,12 +40,13 @@
 #      for the same class of data), then recreates the directory and
 #      restores the snapshot's content into it.
 #
-# What is restored, and what is not (ROADMAP.md 11.5, "What restoring
-# HOST_REPO_BASE alone does not restore"): the repository's file content,
-# its host ownership, and its XFS project id (see "QUOTA IDENTITY" below).
+# What is restored, and what is not: the repository's file content, its
+# host ownership, and its XFS project id (see "QUOTA IDENTITY" below).
 # NOT restored: nothing needs to be -- clients.conf and the SSH key are
 # untouched by this whole workflow, because the client's repository
-# directory never stopped existing. That is also this script's boundary:
+# directory never stopped existing. (Where it did stop existing, that is
+# scripts/04-reattach-client.sh's territory, not this script's -- see
+# below.) That is also this script's boundary:
 # if the directory is gone entirely (an operator rm -rf, or a client
 # removed and later wanted back), there is no "current live repository" to
 # scan for, and this script refuses rather than attempting the fuller
@@ -68,10 +69,10 @@
 # (podman unshare for ownership, sudo xfs_quota for the project id) --
 # the same "confined, per-call sudo" privilege class scripts/ has always
 # used, NOT the pervasive chattr root that made snapshots/ a separate
-# top-level directory from scripts/ in the first place (ROADMAP.md 11.5,
-# "where this code lives"). Reusing the existing, already-tested
-# implementation was chosen over a second copy of the same xfs_quota
-# mechanics living in snapshots/ and risking drift from it.
+# top-level directory from scripts/ in the first place. Reusing the
+# existing, already-tested implementation was chosen over a second copy of
+# the same xfs_quota mechanics living in snapshots/ and risking drift from
+# it.
 #
 # PRIVILEGES. `sudo` for the same class of commands 70-/76- already use --
 # `rm -rf` (deleting the live directory: mode 755, mapped-subuid owned, an
@@ -81,7 +82,8 @@
 # files) -- plus, via scripts/lib.sh, `sudo xfs_quota` for the project id
 # (same as 00-/02-) and `podman unshare` for the directory's own ownership
 # (same as 00-). No `chattr` here at all: live repositories are
-# deliberately never made immutable (ROADMAP.md 11.5, "Mechanism").
+# deliberately never made immutable (only completed snapshots are --
+# see docs/SNAPSHOTS.md).
 #
 # LOCKING. Holds the same SNAPSHOT_BASE/.lock 70-/76- use, for the whole
 # run -- a snapshot creation running mid-restore could otherwise capture

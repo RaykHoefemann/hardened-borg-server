@@ -4,8 +4,8 @@
 # ----------------------
 # Reconnects an existing client's repository -- directory, host ownership and
 # XFS project id already correct on disk -- to clients.conf, which no longer
-# holds an entry for it (ROADMAP.md 11.5, "What restoring HOST_REPO_BASE
-# alone does not restore"). Companion to 00-ssh-create-user.sh the way
+# holds an entry for it (see docs/SNAPSHOTS.md, "Scope"). Companion to
+# 00-ssh-create-user.sh the way
 # 03-provision-client.sh is companion to 02-change-user-quota.sh: 00 creates
 # both halves of a client (clients.conf entry + filesystem) from nothing, 03
 # rebuilds the filesystem half from an existing clients.conf entry, and this
@@ -13,8 +13,8 @@
 #
 # WHY THIS EXISTS. HOST_CONFIG_BASE (clients.conf, config/keys/) lives inside
 # the git checkout, not on the quota-enforcing storage volume that snapshots
-# (11.5) and offsite mirroring (11.2) protect -- deliberately out of scope
-# for both, see ROADMAP.md 11.5 "Scope". A HOST_REPO_BASE restore can
+# (docs/SNAPSHOTS.md) and offsite mirroring (ROADMAP.md 11.2) protect --
+# deliberately out of scope for both. A HOST_REPO_BASE restore can
 # therefore bring a client's repository directory, its host ownership and its
 # XFS project id back perfectly intact while clients.conf and the key file do
 # not come back with it. Everything the server needs to serve that client

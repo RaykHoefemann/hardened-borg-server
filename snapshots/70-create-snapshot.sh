@@ -3,7 +3,8 @@
 # 70-create-snapshot.sh
 # ----------------------
 # Creates one point-in-time snapshot of every client currently found under
-# HOST_REPO_BASE (ROADMAP.md 11.5). For each client:
+# HOST_REPO_BASE (see docs/SNAPSHOTS.md for the full picture). For each
+# client:
 #
 #   ${SNAPSHOT_BASE}/<client>/<timestamp>/
 #
@@ -11,20 +12,31 @@
 #     `cp -a --reflink=always` (cheap: blocks are shared with the live
 #     repository until either side diverges)
 #   - then made read-only, rename-proof and delete-proof with
-#     `chattr -R +i` — see "Constraints to preserve" in ROADMAP.md 11.5 for
-#     why this, and not a weaker permission change, is what actually matters
+#     `chattr -R +i` — this, not a weaker permission change, is what
+#     actually matters: it blocks unlink()/rename() outright (EPERM) on
+#     every file, where a mode change alone leaves root free to `chmod`
+#     its way back in first.
 #
-# Copy ordering between data/ and index/hints/ was flagged in ROADMAP.md as
-# an open question and has since been tested and resolved: a single
-# unordered `cp -a --reflink=always` over the whole client tree is
-# sufficient (ROADMAP.md 11.5, "Copy ordering"). This script does not
-# special-case any file within a client's tree.
+# Copying a live, actively-written repository this way is safe -- tested,
+# not assumed. A `cp -a` walk is not atomic the way a block-layer snapshot
+# would be, so the obvious worry is a transaction committing mid-copy: an
+# index naming a segment the copy never actually captured. Tested
+# empirically (Borg 1.2.8): a deterministic worst case (segments copied
+# before a second archive committed, then the index copied after), the
+# reverse ordering, and a real `borg create` interrupted mid-write by a
+# plain `cp -a` all came back clean under `borg check`. On a cache-less
+# first access Borg does not appear to trust a copied index at face value
+# -- it rebuilds the true state from the segments actually present in
+# `data/`, the same replay a hard crash already relies on. This script
+# therefore does one unordered copy per client, no special-casing of
+# `index`/`hints` versus `data/`.
 #
 # Clients are discovered by walking the filesystem
 # (${HOST_REPO_BASE}/<group>/<client>), not by reading clients.conf: the
 # point of this feature is to protect whatever is physically on disk,
-# including a client whose clients.conf entry is missing or wrong (see
-# ROADMAP.md 11.5, "What restoring HOST_REPO_BASE alone does not restore").
+# including a client whose clients.conf entry is missing or wrong. (A
+# client's clients.conf entry itself surviving on the filesystem but not
+# in the file is a different situation -- scripts/04-reattach-client.sh.)
 #
 # Usage:
 #   ./snapshots/70-create-snapshot.sh
@@ -79,10 +91,11 @@
 # variable; nothing needs to be edited in this script.
 #
 # PRIVILEGES. Run as the normal operator user, the SAME user that runs the
-# container — same as every script in scripts/ — with two exceptions
-# elevated internally via `sudo`, and unattended operation needs both to be
-# passwordless (a sudoers drop-in restricting them to exactly these two
-# commands, e.g. `operator ALL=(root) NOPASSWD: /usr/bin/cp, /usr/sbin/chattr`
+# container — same as every script in scripts/ — with three exceptions
+# elevated internally via `sudo`, and unattended operation needs all three to
+# be passwordless (a sudoers drop-in restricting them to exactly these
+# commands, e.g.
+# `operator ALL=(root) NOPASSWD: /usr/bin/cp, /usr/sbin/chattr, /usr/bin/rm`
 # — narrower still if your sudo supports argument restrictions):
 #
 #   - `cp -a`: the source directories are owned by the container's mapped
@@ -96,6 +109,14 @@
 #     container's user namespace.
 #   - `chattr -R +i`: needs CAP_LINUX_IMMUTABLE, which not even the file's
 #     owner has without it.
+#   - `rm -rf` (stale `.creating-*` cleanup only): the same `cp -a` above
+#     already means a genuinely stale staging directory is mapped-subuid-
+#     owned, not operator-owned, for exactly the reason the `cp -a` bullet
+#     gives — an unprivileged `rm -rf` fails on it the same way an
+#     unprivileged `cp -a` would. See 76-delete-snapshots.sh's own
+#     PRIVILEGES section: this is the same command, needed for the same
+#     reason, on content this script itself created rather than on a
+#     finished, immutable generation.
 #
 # Must run on the HOST, not inside the container — see OPERATIONS.md
 # chapter 9.12.
@@ -153,12 +174,21 @@ snapshot_client() {
     # A .creating-* left behind by a run that never reached the mv below
     # (crash, kill, disk full mid-copy). It was never renamed to a real
     # <timestamp>/, so nothing could have listed or relied on it yet, and it
-    # is still plain-owned/mutable (chattr only ever runs after the rename)
-    # -- safe for the operator to remove without sudo.
+    # is never immutable (chattr only ever runs after the rename) -- but it
+    # is not plain-owned either. `sudo cp -a` above preserves the SOURCE's
+    # ownership and mode onto it, same as onto any finished snapshot: a
+    # genuinely interrupted copy is owned by the client's mapped subuid at
+    # mode 755, exactly like the live client directory it came from. An
+    # unprivileged `rm -rf` cannot recurse into that (confirmed against a
+    # real deployment -- FCOS-BorgBackupServer, 2026-08-27: it fails on the
+    # first file with "Permission denied" and leaves the rest of the stale
+    # tree in place, silently, forever, since the run's own outcome does not
+    # depend on this cleanup succeeding). Needs the same privilege the copy
+    # itself used to create it.
     for _sc_stale in "${_sc_snap_dir}"/.creating-*; do
         [ -e "$_sc_stale" ] || continue
         echo "[snapshot] ${_sc_username}: removing stale incomplete snapshot from a previous run: $_sc_stale"
-        rm -rf "$_sc_stale"
+        sudo rm -rf "$_sc_stale"
     done
 
     if [ -e "$_sc_final" ]; then
@@ -277,16 +307,16 @@ fi
 if ! xfs_info "$SNAP_MOUNT" 2>/dev/null | grep -q 'reflink=1'; then
     echo "ERROR: '$SNAPSHOT_BASE' (mount '$SNAP_MOUNT') is not on an XFS"
     echo "       filesystem with reflink support (xfs_info must report"
-    echo "       reflink=1). This mechanism requires it (ROADMAP.md 11.5,"
-    echo "       \"Mechanism\"). Nothing was done."
+    echo "       reflink=1). This mechanism requires it (see docs/SNAPSHOTS.md,"
+    echo "       \"Why reflinks\"). Nothing was done."
     exit 1
 fi
 
 # ---------------------------------------------------------------------------
 # One snapshot generation for this whole run. Every client that gets a
-# snapshot this run gets the same label -- client isolation (ROADMAP.md
-# 11.5, "Client isolation") means this carries no grouping meaning across
-# clients, it is purely "when this run happened".
+# snapshot this run gets the same label -- the client-first layout
+# (docs/SNAPSHOTS.md, "Layout on disk") means this carries no grouping
+# meaning across clients, it is purely "when this run happened".
 # ---------------------------------------------------------------------------
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 

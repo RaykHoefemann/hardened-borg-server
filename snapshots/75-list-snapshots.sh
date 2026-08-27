@@ -3,12 +3,13 @@
 # 75-list-snapshots.sh
 # ---------------------
 # Inventory for one client's snapshot history under SNAPSHOT_BASE
-# (ROADMAP.md 11.5): which generations exist, and how large each one is.
+# (docs/SNAPSHOTS.md): which generations exist, and how large each one is.
 # Pure read-only reporting -- no anomaly detection, no thresholds. A
 # structural comparison between generations (segments, config, nonce) to
-# explain *what* changed was considered and dropped (ROADMAP.md 11.5,
-# "Snapshot comparison") -- it could not add anything append-only does not
-# already rule out. This script only ever prints raw numbers; interpreting
+# explain *what* changed was considered and dropped (docs/SNAPSHOTS.md,
+# "What this does not protect against") -- it could not add anything
+# append-only does not already rule out. This script only ever prints raw
+# numbers; interpreting
 # them is left to the operator, on purpose -- what counts as a normal size
 # for one client says nothing about another.
 #
@@ -44,24 +45,25 @@
 #
 # COST. There is no fast path for snapshot size the way 09-show-all-users.sh
 # has one for live repositories: SNAPSHOT_BASE deliberately carries no XFS
-# project id (ROADMAP.md 11.5, "Constraints to preserve" -- exactly so that
-# reflinked blocks are never double-counted against a client's quota), so
-# there is no per-directory quota to read via a cheap `df`. Each generation
-# actually printed here is sized with `du -sh`, which walks its whole tree --
-# the same order of cost `70-create-snapshot.sh` already pays once per
-# generation to create it via `cp -a`. Bounding [from]/[to] bounds how many
-# generations get walked. What this has NOT been measured against is a
-# single client repository large enough for that one walk itself to be slow
-# (a multi-terabyte archive with very many segments) -- the same gap
-# ROADMAP.md 11.5 already flags as unmeasured for 70-create-snapshot.sh's own
-# `chattr -R` step.
+# project id -- exactly so that reflinked blocks are never double-counted
+# against a client's quota -- so there is no per-directory quota to read via
+# a cheap `df`. Each generation actually printed here is sized with `du -sh`,
+# which walks its whole tree -- the same order of cost `70-create-snapshot.sh`
+# already pays once per generation to create it via `cp -a`. Bounding
+# [from]/[to] bounds how many generations get walked. What this has NOT been
+# measured against is a single client repository large enough for that one
+# walk itself to be slow (a multi-terabyte archive with very many segments)
+# -- the same gap flagged as unmeasured for 70-create-snapshot.sh's own
+# `chattr -R` step (see that script's own header, TIMING).
 #
 # Note on what `du -sh` actually reports: reflinked blocks are shared on
 # disk, but each generation's own inodes still carry the full extent map, so
 # `du` reports each generation's complete size on its own terms, not the
 # marginal cost it actually adds to the volume (which is usually far
-# smaller, and only visible in aggregate -- see the "Reflink cost" numbers in
-# ROADMAP.md 11.5). That is the right number for this script's purpose: an
+# smaller, and only visible in aggregate -- 11 real client repositories
+# snapshotted twice, 22 generations total, moved reported volume usage to
+# 2.0 GiB, measured against a real deployment). That is the right number for
+# this script's purpose: an
 # operator scanning for an anomaly wants to see "generation N is a very
 # different size than its neighbours", not the volume's aggregate storage
 # bill.
