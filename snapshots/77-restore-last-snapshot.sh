@@ -3,7 +3,7 @@
 # 77-restore-last-snapshot.sh
 # -----------------------------
 # Restores one client's repository from that client's most recent snapshot
-# generation under SNAPSHOT_BASE (ROADMAP.md 11.5). Deliberately restores
+# generation under SNAPSHOT_BASE (docs/SNAPSHOTS.md). Deliberately restores
 # ONLY the newest generation, not an arbitrary one: the intended workflow is
 #
 #   75-list-snapshots.sh   -- find the anomaly (append-only means a size
@@ -33,7 +33,7 @@
 #   3. Asks for confirmation. Same exact-uppercase-Y rule as
 #      76-delete-snapshots.sh, for the same reason: this is irreversible.
 #   4. Only then: DELETES the current live repository outright (not
-#      quarantined -- ROADMAP.md 11.5 already gives a compromised client's
+#      quarantined -- docs/SNAPSHOTS.md already gives a compromised client's
 #      tainted history nowhere safe to sit once 76- has removed the
 #      snapshots that covered it; keeping the live copy around serves no
 #      purpose 76-'s own quarantine-free deletion did not already reject
@@ -194,7 +194,7 @@ if [ -z "$GROUP" ]; then
     echo "is genuinely gone, that needs ./scripts/00-ssh-create-user.sh (new project"
     echo "id, a limit you choose, a fresh clients.conf entry). 04-reattach-client.sh"
     echo "does not help here either -- it reattaches clients.conf to a directory"
-    echo "that is already on disk, not recreate one that is not (ROADMAP.md 11.5)."
+    echo "that is already on disk, not recreate one that is not (docs/SNAPSHOTS.md)."
     exit 1
 fi
 HOST_REPO="${HOST_REPO_BASE}/${GROUP}/${CLIENT}"

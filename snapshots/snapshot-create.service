@@ -1,5 +1,5 @@
 [Unit]
-Description=Run 70-create-snapshot.sh (ROADMAP.md 11.5)
+Description=Run 70-create-snapshot.sh (docs/SNAPSHOTS.md)
 
 [Service]
 Type=oneshot

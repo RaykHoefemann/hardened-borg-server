@@ -60,9 +60,10 @@ Meant to run unattended, on a schedule — there is no confirmation prompt, sinc
   Installs a daily-at-03:00 timer and its service unit as a rootless *user* timer, the same mechanism `scripts/50-service-install.sh` uses for the container itself (DEPLOYMENT.md 6.2.1). Both are installed under `snapshot_${CONTAINER}` (`snapshots/config.sh`'s `SNAPSHOT_TIMER_NAME`, `snapshot_borg-server` by default) rather than a fixed name — a host running more than one instance of this tooling installs every instance's units into the same shared `~/.config/systemd/user/` directory, and a fixed name would let a second install silently overwrite the first instance's timer. Requires `loginctl enable-linger $USER` so the timer keeps running after logout — the same requirement the container service already documents. Check it with:
 
   ```bash
-  systemctl --user list-timers snapshot_borg-server.timer
-  journalctl --user -u snapshot_borg-server.service
+  ./snapshots/79-timer-status.sh
   ```
+
+  Answers "is this actually working" in one pass — is the timer scheduled to fire again, did the last run succeed, and is unattended `sudo` in place — rather than requiring the three separate `systemctl`/`journalctl` calls each of those questions would otherwise take. `Type=oneshot` means `ActiveState=inactive` between runs is normal, not a fault, so it reads `Result` from the *service*, not `ActiveState`, to tell a healthy idle timer apart from one whose last run failed.
 
   Reversed by `./snapshots/72-timer-uninstall.sh` — disables and removes the timer and its rendered service unit, the same way `scripts/51-service-uninstall.sh` reverses `50-`. It refuses rather than stopping a creation run already in progress: unlike the long-running container service, interrupting `70-create-snapshot.sh` mid-copy and removing the timer in the same step would leave a stale `.creating-*` with no future run left to clean it up. Existing snapshot generations, and `75-`/`76-`/`77-`, are untouched either way — this only turns off future scheduled creation.
 
@@ -128,6 +129,7 @@ Every script above runs as the normal operator user — **the same user that run
 | `76-delete-snapshots.sh` | `chattr -R -i`, `rm -rf` | Clearing the immutable flag alone is **not** sufficient to delete a snapshot: the reflinked files still carry the original client directories' restrictive mode and mapped-subuid ownership, so an unprivileged `rm -rf` fails with `Permission denied` — a different failure from the flag's `Operation not permitted` — even after the flag is gone. |
 | `77-restore-last-snapshot.sh` | `rm -rf`, `cp -a --reflink=always`, plus (via `scripts/lib.sh`) `xfs_quota` and `podman unshare` | Same reasoning as above for the live directory, plus the same project-id/ownership mechanics `00-ssh-create-user.sh` uses. |
 | `75-list-snapshots.sh` | none | Purely read-only; the directories it walks are mode 755 by construction, readable without root. |
+| `79-timer-status.sh` | none | Purely read-only — `systemctl --user show`, `journalctl --user`, and `sudo -n true` (which never prompts and elevates nothing; it only *checks* whether the passwordless entry above is in place). |
 
 **Interactive use needs nothing extra** — `sudo` simply prompts, the same as every other privileged script in this project. **Unattended use of `70-create-snapshot.sh` under the systemd timer or cron needs passwordless `sudo` for `cp`, `chattr`, and `rm`**, since none of the three has a terminal to answer a password prompt on. This project deliberately does not write that sudoers entry for you — it is a host security decision for the operator to make, not something to drop into `/etc/sudoers.d/` silently. A starting point, narrower still if your `sudo` supports argument restrictions:
 

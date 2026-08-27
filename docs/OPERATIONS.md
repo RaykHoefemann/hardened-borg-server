@@ -153,7 +153,7 @@ Helper scripts under `scripts/` manage the server's clients, quotas, the systemd
 
 **Before running any other script in this chapter, review and adjust both `config.sh` files** — the repository root's and `scripts/config.sh` — which together are the single place where host-specific values live; nothing else in the repo should need to be edited to get the server running.
 
-The split exists because the root file holds exactly the values a second consumer also needs: the per-client point-in-time snapshot tooling under `snapshots/` ([Snapshots](SNAPSHOTS.md), ROADMAP.md 11.5) shares this installation's identity and storage paths, but has no business with `scripts/config.sh`'s container-image or client-provisioning settings. `scripts/config.sh` sources the root file first (`. "$(dirname "$0")/../config.sh"`), so every script below still gets everything by sourcing exactly one file, `scripts/config.sh`, as before.
+The split exists because the root file holds exactly the values a second consumer also needs: the per-client point-in-time snapshot tooling under `snapshots/` ([Snapshots](SNAPSHOTS.md)) shares this installation's identity and storage paths, but has no business with `scripts/config.sh`'s container-image or client-provisioning settings. `scripts/config.sh` sources the root file first (`. "$(dirname "$0")/../config.sh"`), so every script below still gets everything by sourcing exactly one file, `scripts/config.sh`, as before.
 
 ### Repository root's `config.sh`
 
@@ -164,7 +164,7 @@ The split exists because the root file holds exactly the values a second consume
 **Derived automatically — normally left alone:**
 
 - `HOST_REPO_BASE` — the host path holding client repositories, built as `${HOST_STORAGE_BASE}/${CONTAINER}/` rather than an independent literal, so storage location and installation identity can never drift apart. This is also bind-mounted as `/repo` in the generated systemd unit (Chapter 6.2), so the container and the host scripts are always guaranteed to operate on the same directory. Still a plain value underneath — override it directly if your layout genuinely does not fit the `HOST_STORAGE_BASE`/`CONTAINER` convention.
-- `SNAPSHOT_BASE` — the root for the point-in-time snapshot tooling (ROADMAP.md 11.5), built the same way as `HOST_REPO_BASE`: `${HOST_STORAGE_BASE}/.snapshots/${CONTAINER}/`, a sibling of it rather than nested inside it. Consumed by all four `snapshots/` scripts — see [Snapshots](SNAPSHOTS.md).
+- `SNAPSHOT_BASE` — the root for the point-in-time snapshot tooling, built the same way as `HOST_REPO_BASE`: `${HOST_STORAGE_BASE}/.snapshots/${CONTAINER}/`, a sibling of it rather than nested inside it. Consumed by all four `snapshots/` scripts — see [Snapshots](SNAPSHOTS.md).
 - `REPO_ROOT` — computed from the location of whichever script originally sourced this file's chain; correct regardless of the directory you run scripts from, and however many files deep the sourcing goes.
 
 **Fixed values — only change if you know why:**

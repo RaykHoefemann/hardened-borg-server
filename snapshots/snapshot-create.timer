@@ -1,12 +1,12 @@
 [Unit]
-Description=Daily point-in-time snapshot of all Borg client repositories (ROADMAP.md 11.5)
+Description=Daily point-in-time snapshot of all Borg client repositories (docs/SNAPSHOTS.md)
 
 [Timer]
 OnCalendar=*-*-* 03:00:00
 # If the machine was off or this user's systemd instance wasn't running at
 # 03:00 (maintenance window, reboot), run the missed snapshot once as soon
 # as it's back — a silently skipped day defeats a feature whose whole point
-# is a dense-enough retention window (ROADMAP.md 11.5, "Retention").
+# is a dense-enough retention window (docs/SNAPSHOTS.md, "Deleting snapshots").
 Persistent=true
 
 [Install]

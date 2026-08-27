@@ -37,7 +37,7 @@
 #
 # REPO_ROOT, CONTAINER, HOST_STORAGE_BASE, HOST_REPO_BASE, SNAPSHOT_BASE,
 # BORG_UID, BORG_GID: genuinely shared with the snapshots/ tooling
-# (ROADMAP.md 11.5), so they live one level up rather than here. See that
+# (docs/SNAPSHOTS.md), so they live one level up rather than here. See that
 # file's own header for the rationale and for how REPO_ROOT is resolved.
 . "$(dirname "$0")/../config.sh"
 

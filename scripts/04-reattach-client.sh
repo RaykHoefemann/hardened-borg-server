@@ -45,7 +45,7 @@
 # survived either. It never lived on HOST_REPO_BASE and there is nothing on
 # disk to read it back from -- an empty key file is created, same as 00 does
 # for a brand new client, and nothing about repository access depends on
-# which key was used historically (ROADMAP.md 11.5).
+# which key was used historically (VERIFICATION.md 3B).
 #
 # QUOTA FORMAT. clients.conf records quotas as "<n>G", and quota_kib() --
 # which every script here uses to interpret that field -- accepts nothing

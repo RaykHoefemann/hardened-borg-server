@@ -3,7 +3,7 @@
 # 71-timer-install.sh
 # --------------------
 # Installs and enables the systemd timer that runs 70-create-snapshot.sh
-# once a day at 03:00 (ROADMAP.md 11.5). The mechanism scripts/50-
+# once a day at 03:00 (docs/SNAPSHOTS.md). The mechanism scripts/50-
 # service-install.sh already uses for the container: this checkout's own
 # REPO_ROOT is rendered into the service unit's ExecStart (the only value
 # that varies between installations -- 70-create-snapshot.sh itself takes

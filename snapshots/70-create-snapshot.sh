@@ -269,7 +269,7 @@ if [ ! -d "$HOST_REPO_BASE" ]; then
 fi
 
 # SNAPSHOT_BASE, unlike HOST_REPO_BASE, IS created here: it is this script's
-# own territory (ROADMAP.md 11.5 — a sibling of HOST_REPO_BASE, never nested
+# own territory (docs/SNAPSHOTS.md — a sibling of HOST_REPO_BASE, never nested
 # inside a client's project tree, so it carries no client's XFS project id
 # by construction), not a client-facing path an operator must consciously
 # mount first. Created as the plain operator, not root: nothing here needs

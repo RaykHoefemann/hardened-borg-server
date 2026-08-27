@@ -73,7 +73,7 @@
 # step exists precisely because deletion here is meant to be a deliberate,
 # witnessed act by an operator, not something a cron job decides on its
 # own. (A future retention-driven prune, if it is ever built, is a
-# different, non-interactive script -- ROADMAP.md 11.5 leaves that open.)
+# different, non-interactive script -- docs/SNAPSHOTS.md leaves that open.)
 # A sudoers entry enabling passwordless `chattr` and `rm` already exists for
 # 70-create-snapshot.sh's own unattended operation (its stale `.creating-*`
 # cleanup needs `rm -rf` for the same reason this script's deletion does --
