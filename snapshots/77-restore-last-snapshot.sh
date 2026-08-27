@@ -50,8 +50,8 @@
 # removed and later wanted back), there is no "current live repository" to
 # scan for, and this script refuses rather than attempting the fuller
 # from-scratch rebuild 00-ssh-create-user.sh does (new project id, a limit
-# read from clients.conf, a clients.conf entry) -- that path still needs
-# 04-reattach-client.sh, which does not exist yet.
+# read from clients.conf, a clients.conf entry). That is a different repair:
+# nothing here recreates a directory that is gone, only scripts/00 does that.
 #
 # QUOTA IDENTITY. `cp -a` does not preserve an XFS project id -- it is not a
 # file attribute `cp` knows about. Before anything is deleted, this script
@@ -188,10 +188,11 @@ if [ -z "$GROUP" ]; then
     echo "ERROR: no existing repository directory found for client '$CLIENT' under"
     echo "       $HOST_REPO_BASE."
     echo "This script restores an existing client's repository in place -- it does"
-    echo "NOT (yet) recreate one that no longer exists at all. If this client's"
-    echo "directory is genuinely gone, that needs 00-ssh-create-user.sh or"
-    echo "03-provision-client.sh first (and, to reconnect clients.conf, the"
-    echo "still-unbuilt 04-reattach-client.sh -- see ROADMAP.md 11.5)."
+    echo "NOT recreate one that no longer exists at all. If this client's directory"
+    echo "is genuinely gone, that needs ./scripts/00-ssh-create-user.sh (new project"
+    echo "id, a limit you choose, a fresh clients.conf entry). 04-reattach-client.sh"
+    echo "does not help here either -- it reattaches clients.conf to a directory"
+    echo "that is already on disk, not recreate one that is not (ROADMAP.md 11.5)."
     exit 1
 fi
 HOST_REPO="${HOST_REPO_BASE}/${GROUP}/${CLIENT}"

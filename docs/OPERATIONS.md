@@ -261,6 +261,45 @@ there) for the operations that need `CAP_SYS_ADMIN`.
 
 It creates the client but does not authorize it: that takes the key (Chapter 9.3) and a container restart (Chapter 9.10), and the script closes by naming both. `authorized_keys` is generated at container start and nowhere else, and a client whose key file is still empty is skipped there — so restarting before the key is set authorizes nobody.
 
+## 9.2.1. 04-reattach-client.sh
+
+Reconnects `clients.conf` to a client whose repository directory, host ownership and XFS project id are already correct on disk — the state a `HOST_REPO_BASE`-only restore leaves behind, since `clients.conf` and the key file live under `HOST_CONFIG_BASE`, inside the git checkout, not on the storage volume any restore of `HOST_REPO_BASE` touches (ROADMAP.md 11.5, "Scope" / "What restoring `HOST_REPO_BASE` alone does not restore"). Companion to `00-ssh-create-user.sh` the way `03-provision-client.sh` (Chapter 9.4.1) is companion to `02-change-user-quota.sh`: `00` creates both halves of a client from nothing, `03` rebuilds the filesystem half from an existing `clients.conf` entry, and this rebuilds the `clients.conf` entry from an existing filesystem half.
+
+```bash
+./scripts/04-reattach-client.sh <username>
+```
+
+**What it reads, all from the directory itself, and consults `clients.conf` for nothing:** the group (which of `HOST_REPO_BASE/OWN/<username>` or `HOST_REPO_BASE/MIRROR/<username>` exists), the XFS project id, and the quota currently enforced. From those alone it writes one line to `clients.conf` and, unless a key file already survived, one empty one — nothing it did not already find on disk.
+
+**It needs no `podman unshare` and no mutating `xfs_quota` call.** Nothing on the filesystem is created or changed — the directory, its ownership and its project id are already correct, which is the whole precondition for reattaching rather than provisioning. The only privileged call is the same read-only `xfs_quota -x -c 'state -p'` enforcement check `00`/`02`/`03` all make before trusting anything quota-related.
+
+**What it refuses, rather than guesses:**
+
+- `clients.conf` already holding this username — that is not this script's problem; it points at Chapter 9.4.1 instead.
+- No repository directory for this username at all — nothing to reattach; it points at Chapter 9.2 instead.
+- A repository directory under more than one group, or under a group that is neither `OWN` nor `MIRROR` — needs manual review.
+- No readable XFS project id on the directory — an unexpected state this script does not build a fresh id for (that would be Chapter 9.4.1's job, but `03` itself requires the `clients.conf` entry this script exists to create) — needs manual review.
+- No limit currently enforced (`df` reports the whole volume) — recording that in `clients.conf` would recreate exactly the drift Chapter 9.5 exists to catch.
+- An enforced quota that is not a whole number of GiB — `clients.conf`'s `<n>G` format cannot represent it, and rounding would record a limit different from the one actually enforced. This can only happen if something outside this project's tooling set the limit; correct it to a whole GiB with `xfs_quota` directly, then re-run.
+
+Otherwise it previews the reattachment the same way `00` previews a new client — current state (client absent from `clients.conf`, and so invisible to the volume's committed total) against after (the client declared with the quota already enforced) — and asks before writing anything:
+
+```
+[reattach] Client:      user1-os1-pc1 (OWN)
+[reattach] Directory:   /var/mnt/extern1/borg-server/OWN/user1-os1-pc1
+[reattach] Project id 1003, enforced limit 50.0 GiB -- reattaching as 50G
+
+[quota] Volume /var/mnt/extern1/borg-server — 3.6 TiB
+...
+Reattach client 'user1-os1-pc1' to clients.conf with this quota? [y/N]
+```
+
+If a key file already exists under `config/keys/` for this username, it is left untouched and the closing message says only to restart the container. Otherwise the script closes exactly as `00` does: set the key (Chapter 9.3), then restart (Chapter 9.10) — both required, since `authorized_keys` is generated at container start and skips a client whose key file is still empty.
+
+**What it cannot bring back:** the client's original SSH key, if no key file survived either. Nothing about repository access depends on which key was used historically — a freshly set key works exactly the same as the original one did.
+
+Run as the normal operator user, not as root. Safe to re-run: it refuses immediately once `clients.conf` already holds the entry it would otherwise write.
+
 ## 9.3. 01-ssh-set-user-key.sh
 
 Sets (or overwrites, with confirmation) the public SSH key for an existing client. Accepts either a path to a key file or the key string directly.
