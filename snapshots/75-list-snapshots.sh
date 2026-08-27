@@ -4,12 +4,13 @@
 # ---------------------
 # Inventory for one client's snapshot history under SNAPSHOT_BASE
 # (ROADMAP.md 11.5): which generations exist, and how large each one is.
-# Pure read-only reporting -- no anomaly detection, no thresholds. That job
-# belongs to the future comparison script, which inspects repository
-# structure (segments, config, nonce) to explain *what* changed. This script
-# only ever prints raw numbers; interpreting them is left to the operator, on
-# purpose -- what counts as a normal size for one client says nothing about
-# another.
+# Pure read-only reporting -- no anomaly detection, no thresholds. A
+# structural comparison between generations (segments, config, nonce) to
+# explain *what* changed was considered and dropped (ROADMAP.md 11.5,
+# "Snapshot comparison") -- it could not add anything append-only does not
+# already rule out. This script only ever prints raw numbers; interpreting
+# them is left to the operator, on purpose -- what counts as a normal size
+# for one client says nothing about another.
 #
 # Usage:
 #   ./snapshots/75-list-snapshots.sh <client> [from] [to]

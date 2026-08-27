@@ -1,4 +1,4 @@
-> **Docs:** [Overview](../README.md) · [Design & Threat Model](../docs/DESIGN.md) · [Deployment](../docs/DEPLOYMENT.md) · [Operations](../docs/OPERATIONS.md) · [Recovery](../docs/RECOVERY.md) · [Verification](../docs/VERIFICATION.md) · [Best Practices](../docs/BEST_PRACTICES.md) · [Roadmap](../ROADMAP.md)
+> **Docs:** [Overview](../README.md) · [Design & Threat Model](../docs/DESIGN.md) · [Deployment](../docs/DEPLOYMENT.md) · [Operations](../docs/OPERATIONS.md) · [Snapshots](../docs/SNAPSHOTS.md) · [Recovery](../docs/RECOVERY.md) · [Verification](../docs/VERIFICATION.md) · [Best Practices](../docs/BEST_PRACTICES.md) · [Roadmap](../ROADMAP.md)
 >
 > Chapter numbers are kept from the original single-file README. Where they live now: **1–4** → Design · **5–6** → Deployment · **7–10** → Operations · **11** → Roadmap.
 
@@ -153,7 +153,7 @@ Helper scripts under `scripts/` manage the server's clients, quotas, the systemd
 
 **Before running any other script in this chapter, review and adjust both `config.sh` files** — the repository root's and `scripts/config.sh` — which together are the single place where host-specific values live; nothing else in the repo should need to be edited to get the server running.
 
-The split exists because the root file holds exactly the values a second, still-unbuilt consumer will also need: per-client point-in-time snapshot tooling (ROADMAP.md 11.5) shares this installation's identity and storage paths, but has no business with `scripts/config.sh`'s container-image or client-provisioning settings. `scripts/config.sh` sources the root file first (`. "$(dirname "$0")/../config.sh"`), so every script below still gets everything by sourcing exactly one file, `scripts/config.sh`, as before.
+The split exists because the root file holds exactly the values a second consumer also needs: the per-client point-in-time snapshot tooling under `snapshots/` ([Snapshots](SNAPSHOTS.md), ROADMAP.md 11.5) shares this installation's identity and storage paths, but has no business with `scripts/config.sh`'s container-image or client-provisioning settings. `scripts/config.sh` sources the root file first (`. "$(dirname "$0")/../config.sh"`), so every script below still gets everything by sourcing exactly one file, `scripts/config.sh`, as before.
 
 ### Repository root's `config.sh`
 
@@ -164,13 +164,13 @@ The split exists because the root file holds exactly the values a second, still-
 **Derived automatically — normally left alone:**
 
 - `HOST_REPO_BASE` — the host path holding client repositories, built as `${HOST_STORAGE_BASE}/${CONTAINER}/` rather than an independent literal, so storage location and installation identity can never drift apart. This is also bind-mounted as `/repo` in the generated systemd unit (Chapter 6.2), so the container and the host scripts are always guaranteed to operate on the same directory. Still a plain value underneath — override it directly if your layout genuinely does not fit the `HOST_STORAGE_BASE`/`CONTAINER` convention.
-- `SNAPSHOT_BASE` — the future root for the point-in-time snapshot tooling (ROADMAP.md 11.5), built the same way as `HOST_REPO_BASE`: `${HOST_STORAGE_BASE}/.snapshots/${CONTAINER}/`, a sibling of it rather than nested inside it. **Not yet consumed by any script** — 11.5 is still an open design — recorded now because its shape, not its timing, was the decision that mattered.
+- `SNAPSHOT_BASE` — the root for the point-in-time snapshot tooling (ROADMAP.md 11.5), built the same way as `HOST_REPO_BASE`: `${HOST_STORAGE_BASE}/.snapshots/${CONTAINER}/`, a sibling of it rather than nested inside it. Consumed by all four `snapshots/` scripts — see [Snapshots](SNAPSHOTS.md).
 - `REPO_ROOT` — computed from the location of whichever script originally sourced this file's chain; correct regardless of the directory you run scripts from, and however many files deep the sourcing goes.
 
 **Fixed values — only change if you know why:**
 
-- `CONTAINER` — this installation's identity: the Podman container name, and, via `HOST_REPO_BASE` above, the subdirectory its repository storage (and, per ROADMAP.md 11.5, its snapshot tooling) lives in. Change it only if you are running more than one instance of this project — each needs a distinct value, so their storage can never collide on storage they happen to share.
-- `BORG_UID`, `BORG_GID` — the `borg` user's UID/GID **inside the container image**, fixed at build time in the Dockerfile. These must match the image you are actually running; only change them if you rebuilt the image with different values yourself. Used by `00-ssh-create-user.sh` to set correct host-side ownership via `podman unshare`, and, per ROADMAP.md 11.5's restore constraint, will be needed again by the future snapshot-restore path for the same reason.
+- `CONTAINER` — this installation's identity: the Podman container name, and, via `HOST_REPO_BASE` above, the subdirectory its repository storage and its snapshot tooling (`SNAPSHOT_BASE`) both live in. Change it only if you are running more than one instance of this project — each needs a distinct value, so their storage can never collide on storage they happen to share.
+- `BORG_UID`, `BORG_GID` — the `borg` user's UID/GID **inside the container image**, fixed at build time in the Dockerfile. These must match the image you are actually running; only change them if you rebuilt the image with different values yourself. Used by `00-ssh-create-user.sh` to set correct host-side ownership via `podman unshare`, and by the snapshot-restore path (`snapshots/77-restore-last-snapshot.sh`, [Snapshots](SNAPSHOTS.md)) for the same reason.
 
 ### `scripts/config.sh`
 
