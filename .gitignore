@@ -26,8 +26,8 @@ config/keys/
 # --- Generated systemd artifacts ---------------------------------------------
 #
 # Rendered from scripts/config.sh by 50-service-install.sh. The template they
-# are produced from — systemd/container-borg-server.service — stays tracked;
-# these two carry absolute paths that are valid on exactly one machine.
+# are produced from — systemd/container.service — stays tracked; these two
+# carry absolute paths that are valid on exactly one machine.
 systemd/*.env
 systemd/*.rendered
 

@@ -1018,7 +1018,7 @@ for whichever account ran it.
 **Run**
 
 ```bash
-systemctl --user show container-borg-server.service \
+systemctl --user show container_borg-server.service \
     -p LoadState -p ActiveState -p SubState -p FragmentPath
 ```
 
@@ -1028,7 +1028,7 @@ systemctl --user show container-borg-server.service \
 LoadState=loaded
 ActiveState=active
 SubState=running
-FragmentPath=/var/home/<user>/.config/systemd/user/container-borg-server.service
+FragmentPath=/var/home/<user>/.config/systemd/user/container_borg-server.service
 ```
 
 `--user` already carries half the claim — it addresses the calling user's own

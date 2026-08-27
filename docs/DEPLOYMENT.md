@@ -52,7 +52,7 @@ Useful for testing, but the container does not survive a reboot or a logout, and
 
 ## 6.2. Persistent Deployment via systemd (Recommended)
 
-For production use, the container should run as a **rootless systemd user service** rather than being started manually. A ready-to-use unit **template** is provided at `systemd/container-borg-server.service`.
+For production use, the container should run as a **rootless systemd user service** rather than being started manually. A ready-to-use unit **template** is provided at `systemd/container.service`, installed under a name derived from `CONTAINER` (`container_<CONTAINER>.service`, `container_borg-server.service` by default) — see 6.2.2.
 
 This unit contains no hardcoded values — every runtime setting (`${CONTAINER}`, `${IMAGE}`, `${SSH_PORT}`, `${HOST_CONFIG_BASE}`, `${HOST_REPO_BASE}`, `${HOST_LOG_BASE}`) is resolved by systemd at service start from an `EnvironmentFile`, which `scripts/50-service-install.sh` generates directly from `scripts/config.sh` — the single source of truth for the whole project. Nothing needs to be edited in the unit file itself.
 
@@ -83,10 +83,10 @@ EnvironmentFile=@@ENV_FILE@@
 # unit instead of having podman journal it a second time. podman runs in the
 # foreground here, so systemd already captures its output; with the default
 # journald driver every container log line was written twice under this same
-# unit — once by conmon, once by podman — which doubled `journalctl --user -u
-# container-borg-server` for anyone reading it, debugging a failed start
-# included. The cost is `podman logs` for this container, which has no output
-# of its own to show once the journal holds it all.
+# unit — once by conmon, once by podman — which doubled the `journalctl`
+# output for anyone reading it, debugging a failed start included. The cost
+# is `podman logs` for this container, which has no output of its own to
+# show once the journal holds it all.
 ExecStart=/usr/bin/podman run \
     --name=${CONTAINER} \
     --rm \
@@ -130,9 +130,9 @@ This unit is designed to be installed under `~/.config/systemd/user/`, not `/etc
 **Do not add `User=`/`Group=` to this unit.** They belong to the system-unit shape above, and carrying them over is the natural mistake when adapting such a template — they read as a correct restatement of who the service runs as. In a user unit they are fatal. `systemd.exec(5)` permits `User=` there in principle (*"the only valid setting is the same user the user's service manager is running as"*), but using it makes systemd re-initialize the supplementary group list, which requires `CAP_SETGID`. An unprivileged user manager does not have it, and the kernel refuses even when the resulting group list would be byte-for-byte identical. The unit then fails at the `GROUP` step:
 
 ```
-container-borg-server.service: Failed to determine supplementary groups: Operation not permitted
-container-borg-server.service: Failed at step GROUP spawning /usr/bin/podman: Operation not permitted
-container-borg-server.service: Main process exited, code=exited, status=216/GROUP
+container_borg-server.service: Failed to determine supplementary groups: Operation not permitted
+container_borg-server.service: Failed at step GROUP spawning /usr/bin/podman: Operation not permitted
+container_borg-server.service: Main process exited, code=exited, status=216/GROUP
 ```
 
 Note that `podman` is never executed — the failure happens while systemd prepares the process, so nothing on the Podman side is worth investigating. With `Restart=on-failure` the service loops instead of starting. Nothing needs to replace these directives: the user manager already runs as the target user, and every child process inherits that identity.
@@ -143,10 +143,10 @@ Before installing, review the repository root's `config.sh` — in particular `H
 
 ```bash
 ./scripts/50-service-install.sh
-systemctl --user enable --now container-borg-server.service
+systemctl --user enable --now container_borg-server.service
 ```
 
-`50-service-install.sh` generates the `EnvironmentFile` from `config.sh`, renders the unit template into `systemd/container-borg-server.service.rendered`, and symlinks that into `~/.config/systemd/user/`. Re-run it after any change to `config.sh` (e.g. bumping `IMAGE` to a new tag) **and after updating the checkout to a new release**, since the unit itself is part of a release and the installed symlink points at a rendering of the template as it stood when the script last ran. Then restart the service for the change to take effect — day-to-day start/stop/restart/status is handled by the scripts in Chapter 9.8–9.11:
+`50-service-install.sh` generates the `EnvironmentFile` from `config.sh`, renders the unit template into `systemd/container_borg-server.service.rendered` (named after the installed unit, `SERVICE` in `scripts/config.sh` — not the fixed template filename `systemd/container.service`), and symlinks that into `~/.config/systemd/user/`. Re-run it after any change to `config.sh` (e.g. bumping `IMAGE` to a new tag) **and after updating the checkout to a new release**, since the unit itself is part of a release and the installed symlink points at a rendering of the template as it stood when the script last ran. Then restart the service for the change to take effect — day-to-day start/stop/restart/status is handled by the scripts in Chapter 9.8–9.11:
 
 ```bash
 ./scripts/50-service-install.sh
@@ -189,6 +189,14 @@ Three files in an installation are yours, not the release's, and a careless upgr
 - **`config/server_info.conf`** — you edited it in SERVERINSTALL step 7; the repository ships it with placeholder values.
 
 > ⚠️ **Do not re-run SERVERINSTALL step 1 against an existing installation.** `cp -r` merges into existing directories and overwrites same-named files, so copying `config/` would replace your `server_info.conf` with the template, and copying `scripts/` would replace your `scripts/config.sh`; the plain `cp` of the repository root's `config.sh` overwrites it unconditionally, the same way. Your `clients.conf` and `config/keys/` survive only because the repository does not ship them.
+
+> ⚠️ **One-time step if you are upgrading from before the systemd unit was namespaced by `CONTAINER`** (any release before this rename — `v0.1.0` included): the installed unit's name changed from the fixed `container-borg-server.service` to `container_<CONTAINER>.service` (`container_borg-server.service` by default), so that a host running more than one instance of this project never has a second install silently overwrite the first instance's unit (Chapter 9.6). An upgrade in place does not remove the old unit — nothing tells systemd to. If you skip this and reach step 7 below, the newly-named unit fails to start: both units run `podman run --name=${CONTAINER}` with the *same* `CONTAINER` value, and podman refuses the second container while the first, still running under the old unit name, holds that name. **Before step 5 overwrites `scripts/`, uninstall the old unit while it can still find itself:**
+>
+> ```bash
+> ./scripts/51-service-uninstall.sh
+> ```
+>
+> This stops and disables `container-borg-server.service` and removes its symlink; it does not touch the container image or any data. Only needed once, on the first upgrade past this rename.
 
 ### Procedure
 
@@ -268,6 +276,14 @@ The one thing to read release notes for is a change of the **bundled Borg versio
 ## 6.4. Rolling back
 
 Rollback is deliberately symmetric with the upgrade: it verifies and pins the target image the same way step 4 of 6.3 does, because a digest names exactly one image forever, so going back is only unambiguous if that digest was actually checked rather than assumed.
+
+> ⚠️ **The mirror image of 6.3's one-time systemd-unit note applies here too.** Rolling back to a release before the unit was namespaced by `CONTAINER` overwrites `scripts/config.sh` with one that expects the old fixed name (`container-borg-server.service`) again — but the *currently installed* unit is the new, namespaced one (`container_<CONTAINER>.service`), and nothing removes it just because `scripts/` was replaced. Reaching the `50-service-install.sh` step below with both still runnable fails the same way: two units, one `podman run --name=${CONTAINER}` each, the same `CONTAINER` value. **Before overwriting `scripts/`, uninstall the currently installed unit while today's `scripts/` can still find it:**
+>
+> ```bash
+> ./scripts/51-service-uninstall.sh
+> ```
+>
+> Only needed once, rolling back across this rename in either direction.
 
 ```bash
 cd "$INSTALL_PATH"

@@ -22,8 +22,8 @@
 # Usage:
 #   ./snapshots/71-timer-install.sh
 #
-# This installs a rootless USER timer, the same kind of unit as
-# container-borg-server.service (DEPLOYMENT.md 6.2.1) -- it runs as this
+# This installs a rootless USER timer, the same kind of unit as the
+# container's own service (DEPLOYMENT.md 6.2.1) -- it runs as this
 # same operator user, not root. Two things that are NOT set up by this
 # script, both deliberate:
 #

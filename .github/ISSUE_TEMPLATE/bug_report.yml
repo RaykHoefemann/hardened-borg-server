@@ -114,7 +114,7 @@ body:
       label: Log excerpt
       description: >
         Relevant lines from the container log (`journalctl --user -u
-        container-borg-server` for the systemd user service, or `podman logs`),
+        container_<CONTAINER>` for the systemd user service, or `podman logs`),
         which is also where `borg-wrapper.sh` DENY messages appear, plus
         `entrypoint.log` / `build_authorized_keys.log` from the log volume if
         the problem is about startup or client provisioning. Include the

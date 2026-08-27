@@ -11,6 +11,13 @@
 # from the generated EnvironmentFile at service start. Re-run this script
 # after any change to config.sh (then `systemctl --user restart $SERVICE`).
 #
+# Installed under SERVICE (config.sh), namespaced by CONTAINER
+# ("container_${CONTAINER}.service", not the fixed template filename
+# SERVICE_TEMPLATE_NAME) -- a host running more than one instance of this
+# project installs every instance's unit into the same shared
+# ~/.config/systemd/user/ directory, and a fixed name would let a second
+# install silently overwrite the first instance's service.
+#
 # Usage:
 #   ./scripts/50-service-install.sh
 #
@@ -22,6 +29,7 @@ set -e
 # --- Validate required values are present -----------------------------
 if [ -z "${CONTAINER:-}" ]; then echo "ERROR: 'CONTAINER' is not set in config.sh."; exit 1; fi
 if [ -z "${SERVICE:-}" ]; then echo "ERROR: 'SERVICE' is not set in config.sh."; exit 1; fi
+if [ -z "${SERVICE_TEMPLATE_NAME:-}" ]; then echo "ERROR: 'SERVICE_TEMPLATE_NAME' is not set in config.sh."; exit 1; fi
 if [ -z "${IMAGE:-}" ]; then echo "ERROR: 'IMAGE' is not set in config.sh."; exit 1; fi
 if [ -z "${SSH_PORT:-}" ]; then echo "ERROR: 'SSH_PORT' is not set in config.sh."; exit 1; fi
 if [ -z "${HOST_CONFIG_BASE:-}" ]; then echo "ERROR: 'HOST_CONFIG_BASE' is not set in config.sh."; exit 1; fi
@@ -32,7 +40,7 @@ if [ -z "${HOST_LOG_BASE:-}" ]; then echo "ERROR: 'HOST_LOG_BASE' is not set in 
 # EnvironmentFile always matches what those scripts operate on exactly.
 HOST_REPO_BASE="${HOST_REPO_BASE%/}"
 
-TEMPLATE_FILE="${REPO_ROOT}/systemd/${SERVICE}"
+TEMPLATE_FILE="${REPO_ROOT}/systemd/${SERVICE_TEMPLATE_NAME}"
 ENV_FILE="${REPO_ROOT}/systemd/${SERVICE}.env"
 RENDERED_FILE="${REPO_ROOT}/systemd/${SERVICE}.rendered"
 SERVICE_DIR="$HOME/.config/systemd/user"
@@ -91,9 +99,10 @@ fi
 
 # --- Generate the EnvironmentFile from config.sh ------------------------
 # Note: BORG_UID/BORG_GID are deliberately NOT included here — the systemd
-# unit no longer passes them to the container (see container-borg-server.
-# service comments). They are still used directly by 00-ssh-create-user.sh
-# (podman unshare chown) and don't need to reach the container's env.
+# unit no longer passes them to the container (see the unit template's own
+# comments, systemd/container.service). They are still used directly by
+# 00-ssh-create-user.sh (podman unshare chown) and don't need to reach the
+# container's env.
 echo "[install] Generating $ENV_FILE from config.sh"
 cat > "$ENV_FILE" <<EOF
 CONTAINER=${CONTAINER}

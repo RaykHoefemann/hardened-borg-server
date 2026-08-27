@@ -169,7 +169,7 @@ change it (Operations Chapter 9.1 explains what each remaining value does).
 
 ```bash
 ./scripts/50-service-install.sh
-systemctl --user enable --now container-borg-server.service
+systemctl --user enable --now container_borg-server.service
 ```
 
 This generates the `EnvironmentFile` from `config.sh`, renders the unit, and

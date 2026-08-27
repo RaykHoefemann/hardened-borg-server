@@ -169,7 +169,7 @@ The split exists because the root file holds exactly the values a second consume
 
 **Fixed values — only change if you know why:**
 
-- `CONTAINER` — this installation's identity: the Podman container name, and, via `HOST_REPO_BASE` above, the subdirectory its repository storage and its snapshot tooling (`SNAPSHOT_BASE`) both live in. Change it only if you are running more than one instance of this project — each needs a distinct value, so their storage can never collide on storage they happen to share.
+- `CONTAINER` — this installation's identity: the Podman container name; via `HOST_REPO_BASE` above, the subdirectory its repository storage and its snapshot tooling (`SNAPSHOT_BASE`) both live in; and, via `SERVICE` (Chapter 9.6) and `SNAPSHOT_TIMER_NAME` ([Snapshots](SNAPSHOTS.md)), the systemd unit names it installs under. Change it only if you are running more than one instance of this project — each needs a distinct value, so their storage and their systemd units can never collide with a second instance's.
 - `BORG_UID`, `BORG_GID` — the `borg` user's UID/GID **inside the container image**, fixed at build time in the Dockerfile. These must match the image you are actually running; only change them if you rebuilt the image with different values yourself. Used by `00-ssh-create-user.sh` to set correct host-side ownership via `podman unshare`, and by the snapshot-restore path (`snapshots/77-restore-last-snapshot.sh`, [Snapshots](SNAPSHOTS.md)) for the same reason.
 
 ### `scripts/config.sh`
@@ -185,10 +185,10 @@ The split exists because the root file holds exactly the values a second consume
 - `HOST_CONFIG_BASE`, `HOST_LOG_BASE` — kept inside the repo checkout (`${REPO_ROOT}/config`, `${REPO_ROOT}/log`) unless you have a reason to move them elsewhere.
 - `CONF`, `KEYDIR` — the exact `clients.conf` and key-storage paths used by `00`/`01`/`02`/`09`, derived from `HOST_CONFIG_BASE`.
 - `CONTAINER_REPO_BASE` — the container-side path prefix (`/repo/`); only relevant if you change the container's internal mount point, which the shipped image does not expect.
+- `SERVICE` — the *installed* systemd unit name, built as `container_${CONTAINER}` — `container_borg-server.service` by default. Namespaced by `CONTAINER` so a host running more than one instance of this project never has a second install silently overwrite the first instance's unit in the shared `~/.config/systemd/user/` directory (the same reason [Snapshots](SNAPSHOTS.md)' timer is namespaced too). Distinct from `SERVICE_TEMPLATE_NAME` (`container.service`, the fixed filename of the template under `systemd/` that `50-service-install.sh` renders from) — only `50-` needs that one; every other script's business is with `SERVICE`, the installed name.
 
 **Fixed values — only change if you know why:**
 
-- `SERVICE` — the systemd unit filename.
 - `SSH_PORT` — the port the container's SSH listens on (bind-mounted in the generated unit).
 - `PROJID_BASE` — the floor for auto-allocated XFS project IDs (Chapter 9.2 scans existing repos and starts above this).
 
@@ -491,11 +491,11 @@ The distinction matters for the sizing invariant in Chapter 10.2, which is about
 
 ## 9.6. 50-service-install.sh
 
-Generates the systemd unit's `EnvironmentFile` from `config.sh`, renders the unit template (`systemd/container-borg-server.service`), and installs it as a symlink under `~/.config/systemd/user/` (see Chapter 6.2.2). Re-run after any change to `config.sh` (for example, bumping `IMAGE` to a new tag), then restart the service for the change to take effect.
+Generates the systemd unit's `EnvironmentFile` from `config.sh`, renders the unit template (`systemd/container.service`), and installs it as a symlink under `~/.config/systemd/user/` under a name derived from `CONTAINER` (`container_<CONTAINER>.service`, `container_borg-server.service` by default — namespaced for the same reason [Snapshots](SNAPSHOTS.md)'s timer is: a host running more than one instance of this project must not have a second install silently overwrite the first instance's unit in the shared `~/.config/systemd/user/` directory) (see Chapter 6.2.2). Re-run after any change to `config.sh` (for example, bumping `IMAGE` to a new tag), then restart the service for the change to take effect.
 
 ```bash
 ./scripts/50-service-install.sh
-systemctl --user restart container-borg-server.service
+systemctl --user restart container_borg-server.service
 ```
 
 It refuses to install anything while `HOST_REPO_BASE` does not exist. That path is the source of the container's `/repo` bind mount, and podman will not start a container whose bind-mount source is missing — so a unit installed regardless would be enabled successfully and then restart-loop on `statfs …: no such file or directory`, with `systemctl --user enable --now` still exiting 0 and the unit sitting in `activating (auto-restart)` rather than `failed`.
@@ -596,7 +596,7 @@ After that: the systemd service state, `podman ps` output, a detailed `podman in
 The service state is stated as fields rather than as `systemctl status` output:
 
 ```
-Unit:        container-borg-server.service (enabled)
+Unit:        container_borg-server.service (enabled)
 State:       active (running)
 Started:     Fri 2026-08-15 16:00:13 CEST
 Restarts:    0
@@ -604,7 +604,7 @@ Restarts:    0
 
 `Restarts` is the one to read when something is wrong. A unit that fails and is restarted spends most of its time in `activating (auto-restart)` rather than `failed`, and `systemctl --user enable --now` exits 0 on the way into that loop — so a nonzero restart count, together with the `Result` line the report then adds, is what distinguishes a service that is running from one that keeps being started. The report points at its own log section when it sees this; a single error repeating there is the loop.
 
-The journal appears once, in that section alone. The container's output is handed to systemd by the unit itself (`--log-driver=passthrough`, [Deployment](DEPLOYMENT.md) Chapter 6.2) rather than journalled a second time by Podman, so `journalctl --user -u container-borg-server.service` shows one copy of each line as well.
+The journal appears once, in that section alone. The container's output is handed to systemd by the unit itself (`--log-driver=passthrough`, [Deployment](DEPLOYMENT.md) Chapter 6.2) rather than journalled a second time by Podman, so `journalctl --user -u container_borg-server.service` shows one copy of each line as well.
 
 ```bash
 ./scripts/99-container-status.sh

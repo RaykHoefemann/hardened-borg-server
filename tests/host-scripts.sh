@@ -197,7 +197,7 @@ fi
 # are syntactically valid and the value is the permitted one. The failure only
 # exists at process-spawn time, which no offline check reaches.
 
-UNIT="$ROOT/systemd/container-borg-server.service"
+UNIT="$ROOT/systemd/container.service"
 RC=0; OUT="not found: $UNIT"
 [ -f "$UNIT" ]; assert "0.3 the systemd unit template exists" $?
 
@@ -219,8 +219,7 @@ done
 # podman runs in the foreground under this unit, so systemd already captures
 # its output. Without passthrough, podman's default journald driver logs the
 # container a second time under the same unit — every line present twice for
-# anyone reading `journalctl --user -u container-borg-server`, a failed start
-# included.
+# anyone reading the journal, a failed start included.
 RC=0
 OUT="$(grep -A6 '^ExecStart=' "$UNIT")"
 grep -q -- '--log-driver=passthrough' "$UNIT"
@@ -996,11 +995,11 @@ case "$*" in
         ;;
     *status*)
         cat <<'REAL'
-● container-borg-server.service - Borg Backup Server (Podman)
-     Loaded: loaded (/home/core/.config/systemd/user/container-borg-server.service; enabled)
+● container_borg-server.service - Borg Backup Server (Podman)
+     Loaded: loaded (/home/core/.config/systemd/user/container_borg-server.service; enabled)
      Active: active (running) since Fri 2026-08-15 16:00:13 CEST; 2h ago
    Main PID: 5214 (podman)
-     CGroup: /user.slice/user-1000.slice/user@1000.service/app.slice/container-borg-server.service
+     CGroup: /user.slice/user-1000.slice/user@1000.service/app.slice/container_borg-server.service
              |-5214 /usr/bin/podman run --name=borg-server --rm --log-driver=passthrough
              `-5243 /usr/bin/conmon --api-version 1 -c e601e84e5c8b --exit-command-arg --root
 Aug 15 16:00:13 host borg-server[5243]: Server listening on 0.0.0.0 port 22.
@@ -1352,7 +1351,7 @@ assert "12.15 the preview and the listing report one volume the same way" "$DISK
 setup_install() {
     new_tree
     mkdir -p "$T/systemd"
-    cp "$ROOT/systemd/container-borg-server.service" "$T/systemd/"
+    cp "$ROOT/systemd/container.service" "$T/systemd/"
     sed -i "s|^HOST_REPO_BASE=.*|HOST_REPO_BASE=\"$1\"|" "$T/config.sh"
 }
 
@@ -1368,8 +1367,8 @@ printf '%s' "$OUT" | grep -q 'not a mount point' \
     && printf '%s' "$OUT" | grep -q 'Do NOT create the directory'
 assert "13.2 ... and an unmounted volume is named as the likely cause" $?
 
-[ ! -e "$T/systemd/container-borg-server.service.env" ] \
-    && [ ! -e "$T/systemd/container-borg-server.service.rendered" ]
+[ ! -e "$T/systemd/container_borg-server.service.env" ] \
+    && [ ! -e "$T/systemd/container_borg-server.service.rendered" ]
 assert "13.3 ... before the unit or its EnvironmentFile is written" $?
 
 # The parent IS a mount point: the volume looks mounted and only the

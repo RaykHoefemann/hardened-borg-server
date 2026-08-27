@@ -58,7 +58,19 @@ SOURCE_URL="https://github.com/RaykHoefemann/hardened-borg-server"
 
 # --- Container runtime -----------------------------------------------------
 
-SERVICE="container-borg-server.service"
+# The systemd *unit template*'s fixed filename under systemd/ -- distinct
+# from SERVICE below, which is the *installed* unit name and varies with
+# CONTAINER. Only 50-service-install.sh needs this one, to find the
+# template; every other script's business is with the installed unit.
+SERVICE_TEMPLATE_NAME="container.service"
+
+# The installed systemd unit name, namespaced by CONTAINER for the same
+# reason SNAPSHOT_TIMER_NAME (snapshots/config.sh) is: a host running more
+# than one instance of this project installs every instance's unit into the
+# same shared ~/.config/systemd/user/ directory, and a fixed name would let
+# a second install silently overwrite the first instance's service. Default
+# (CONTAINER=borg-server): container_borg-server.service.
+SERVICE="container_${CONTAINER}.service"
 # Derived from VERSION above, so a checkout of a release tag already points at
 # the image built from that same commit — no editing needed to get a working
 # pull. This used to default to ":latest", which does not exist for pre-release
