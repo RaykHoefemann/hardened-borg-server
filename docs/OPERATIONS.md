@@ -115,7 +115,7 @@ location: Frankfurt, DE
 contact: admin@example.com
 
 [software]
-version: 0.1.0
+version: 0.2.0
 source: https://github.com/RaykHoefemann/hardened-borg-server
 
 [client]
@@ -544,8 +544,8 @@ Because the unit runs `podman run --rm`, this is a teardown rather than a reload
 Shows a combined status view, opening with the release identity of this installation:
 
 ```
-Host scripts:     0.1.0
-Running version:  0.1.0
+Host scripts:     0.2.0
+Running version:  0.2.0
 Configured image: ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest>
 Running image:    ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest>
 Bundled borg:     borg 1.4.0

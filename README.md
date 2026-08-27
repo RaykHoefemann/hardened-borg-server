@@ -9,7 +9,7 @@ limits are enforced by the host filesystem — not merely tracked. No web UI, no
 orchestration, no auxiliary interfaces: a small, predictable, privacy-preserving
 attack surface by design.
 
-> **Status:** First stable release, `v0.1.0`. See
+> **Status:** Stable, current release `v0.2.0`. See
 > [Deployment](docs/DEPLOYMENT.md) for how to run it.
 
 ---
@@ -135,7 +135,7 @@ automatic restart. For production, run it as a rootless systemd **user** service
 | [Recovery](docs/RECOVERY.md) | Incident handling: accidental deletion, operator error, data loss, restoring data |
 | [Verification](docs/VERIFICATION.md) | Test every claimed guarantee against your own installation — don't take them on faith |
 | [Best Practices](docs/BEST_PRACTICES.md) | Required operational baseline and defense-in-depth hardening |
-| [Roadmap](ROADMAP.md) | Mirroring, `borg check`, Quadlet migration, storage snapshots — and why pruning was dropped |
+| [Roadmap](ROADMAP.md) | Mirroring, `borg check`, Quadlet migration — and why pruning was dropped |
 | [Security Policy](SECURITY.md) | Reporting a vulnerability — including a documented guarantee that turns out not to hold |
 | [Contributing](CONTRIBUTING.md) | Issues, pull requests, and the non-goals a change has to stay clear of |
 
