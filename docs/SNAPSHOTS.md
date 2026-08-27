@@ -57,11 +57,11 @@ Meant to run unattended, on a schedule — there is no confirmation prompt, sinc
   ./snapshots/71-timer-install.sh
   ```
 
-  Installs `snapshot-create.timer` (daily at 03:00) and its service unit as a rootless *user* timer, the same mechanism `scripts/50-service-install.sh` uses for the container itself (DEPLOYMENT.md 6.2.1). Requires `loginctl enable-linger $USER` so the timer keeps running after logout — the same requirement the container service already documents. Check it with:
+  Installs a daily-at-03:00 timer and its service unit as a rootless *user* timer, the same mechanism `scripts/50-service-install.sh` uses for the container itself (DEPLOYMENT.md 6.2.1). Both are installed under `snapshot_${CONTAINER}` (`snapshots/config.sh`'s `SNAPSHOT_TIMER_NAME`, `snapshot_borg-server` by default) rather than a fixed name — a host running more than one instance of this tooling installs every instance's units into the same shared `~/.config/systemd/user/` directory, and a fixed name would let a second install silently overwrite the first instance's timer. Requires `loginctl enable-linger $USER` so the timer keeps running after logout — the same requirement the container service already documents. Check it with:
 
   ```bash
-  systemctl --user list-timers snapshot-create.timer
-  journalctl --user -u snapshot-create.service
+  systemctl --user list-timers snapshot_borg-server.timer
+  journalctl --user -u snapshot_borg-server.service
   ```
 
   Reversed by `./snapshots/72-timer-uninstall.sh` — disables and removes the timer and its rendered service unit, the same way `scripts/51-service-uninstall.sh` reverses `50-`. It refuses rather than stopping a creation run already in progress: unlike the long-running container service, interrupting `70-create-snapshot.sh` mid-copy and removing the timer in the same step would leave a stale `.creating-*` with no future run left to clean it up. Existing snapshot generations, and `75-`/`76-`/`77-`, are untouched either way — this only turns off future scheduled creation.

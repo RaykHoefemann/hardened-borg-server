@@ -5,13 +5,19 @@
 # Installs and enables the systemd timer that runs 70-create-snapshot.sh
 # once a day at 03:00 (ROADMAP.md 11.5). The mechanism scripts/50-
 # service-install.sh already uses for the container: this checkout's own
-# REPO_ROOT is rendered into snapshot-create.service's ExecStart (the only
-# value that varies between installations -- 70-create-snapshot.sh itself
-# takes no arguments and resolves HOST_REPO_BASE/SNAPSHOT_BASE via its own
+# REPO_ROOT is rendered into the service unit's ExecStart (the only value
+# that varies between installations -- 70-create-snapshot.sh itself takes
+# no arguments and resolves HOST_REPO_BASE/SNAPSHOT_BASE via its own
 # config.sh), then both units are installed as symlinks under
 # ~/.config/systemd/user/, same as 50-service-install.sh does, so a
 # `git pull` that changes either unit is picked up without re-running this
 # script.
+#
+# Installed under SNAPSHOT_TIMER_NAME (snapshots/config.sh), not the fixed
+# name "snapshot-create" -- a host running more than one instance of this
+# tooling installs every instance's units into the same shared
+# ~/.config/systemd/user/ directory, and a fixed name would let a second
+# install silently overwrite the first instance's timer.
 #
 # Usage:
 #   ./snapshots/71-timer-install.sh
@@ -46,6 +52,8 @@ SERVICE_TEMPLATE="${REPO_ROOT}/snapshots/snapshot-create.service"
 RENDERED_SERVICE="${REPO_ROOT}/snapshots/snapshot-create.service.rendered"
 SCRIPT="${REPO_ROOT}/snapshots/70-create-snapshot.sh"
 SERVICE_DIR="$HOME/.config/systemd/user"
+TIMER_NAME="${SNAPSHOT_TIMER_NAME}.timer"
+SERVICE_NAME="${SNAPSHOT_TIMER_NAME}.service"
 
 if [ ! -f "$TIMER_UNIT" ]; then
     echo "ERROR: Timer unit not found: $TIMER_UNIT"
@@ -66,25 +74,25 @@ sed "s|@@SCRIPT@@|${SCRIPT}|" "$SERVICE_TEMPLATE" > "$RENDERED_SERVICE"
 echo "[install] Installing systemd units as symlinks..."
 mkdir -p "$SERVICE_DIR"
 
-for TARGET in "$SERVICE_DIR/snapshot-create.timer" "$SERVICE_DIR/snapshot-create.service"; do
+for TARGET in "$SERVICE_DIR/$TIMER_NAME" "$SERVICE_DIR/$SERVICE_NAME"; do
     if [ -e "$TARGET" ]; then
         echo "[install] Removing old file $TARGET"
         rm -f "$TARGET"
     fi
 done
 
-ln -s "$TIMER_UNIT" "$SERVICE_DIR/snapshot-create.timer"
-ln -s "$RENDERED_SERVICE" "$SERVICE_DIR/snapshot-create.service"
+ln -s "$TIMER_UNIT" "$SERVICE_DIR/$TIMER_NAME"
+ln -s "$RENDERED_SERVICE" "$SERVICE_DIR/$SERVICE_NAME"
 
 echo "[install] Symlinks created:"
-echo "  $SERVICE_DIR/snapshot-create.timer -> $TIMER_UNIT"
-echo "  $SERVICE_DIR/snapshot-create.service -> $RENDERED_SERVICE"
+echo "  $SERVICE_DIR/$TIMER_NAME -> $TIMER_UNIT"
+echo "  $SERVICE_DIR/$SERVICE_NAME -> $RENDERED_SERVICE"
 
 systemctl --user daemon-reload
-systemctl --user enable --now snapshot-create.timer
+systemctl --user enable --now "$TIMER_NAME"
 
-echo "[install] Timer enabled: daily snapshot creation at 03:00."
-echo "→ Check schedule:  systemctl --user list-timers snapshot-create.timer"
-echo "→ Check last run:  journalctl --user -u snapshot-create.service"
+echo "[install] Timer enabled: daily snapshot creation at 03:00 for CONTAINER=${CONTAINER}."
+echo "→ Check schedule:  systemctl --user list-timers $TIMER_NAME"
+echo "→ Check last run:  journalctl --user -u $SERVICE_NAME"
 echo "→ Run it manually right now (does not affect the schedule):"
-echo "    systemctl --user start snapshot-create.service"
+echo "    systemctl --user start $SERVICE_NAME"

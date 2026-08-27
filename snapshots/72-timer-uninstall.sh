@@ -6,6 +6,11 @@
 # removes its symlink and the rendered service unit's symlink from
 # ~/.config/systemd/user/, and deletes the rendered service unit.
 #
+# Targets SNAPSHOT_TIMER_NAME (snapshots/config.sh) -- the same
+# CONTAINER-namespaced name 71- installs under -- so this only ever touches
+# this installation's own timer, never a different container's instance of
+# this tooling sharing the same ~/.config/systemd/user/ directory.
+#
 # Does NOT touch HOST_REPO_BASE, SNAPSHOT_BASE, or any snapshot already
 # taken -- this only removes the schedule that creates new ones. Existing
 # generations, and the tooling to list/delete/restore them (75-/76-/77-),
@@ -13,8 +18,8 @@
 # stops running automatically.
 #
 # REFUSES rather than interrupts if a snapshot creation is currently
-# running (snapshot-create.service in "activating" state -- Type=oneshot
-# has no other state while its ExecStart is still executing). Unlike
+# running (the service unit in "activating" state -- Type=oneshot has no
+# other state while its ExecStart is still executing). Unlike
 # 51-service-uninstall.sh, which stops the long-running container service
 # outright, `systemctl --user stop` here would send SIGTERM into the middle
 # of 70-create-snapshot.sh's `sudo cp -a`/`sudo chattr` sequence for
@@ -33,11 +38,11 @@ set -e
 . "$(dirname "$0")/config.sh"
 
 SERVICE_DIR="$HOME/.config/systemd/user"
-TIMER_NAME="snapshot-create.timer"
-SERVICE_NAME="snapshot-create.service"
+TIMER_NAME="${SNAPSHOT_TIMER_NAME}.timer"
+SERVICE_NAME="${SNAPSHOT_TIMER_NAME}.service"
 TIMER_LINK="$SERVICE_DIR/$TIMER_NAME"
 SERVICE_LINK="$SERVICE_DIR/$SERVICE_NAME"
-RENDERED_SERVICE="${REPO_ROOT}/snapshots/${SERVICE_NAME}.rendered"
+RENDERED_SERVICE="${REPO_ROOT}/snapshots/snapshot-create.service.rendered"
 
 SERVICE_STATE="$(systemctl --user show -p ActiveState --value "$SERVICE_NAME" 2>/dev/null || true)"
 case "$SERVICE_STATE" in
