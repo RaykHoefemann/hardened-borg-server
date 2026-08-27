@@ -1,4 +1,4 @@
-> **Docs:** [Overview](../README.md) · [Design & Threat Model](../docs/DESIGN.md) · [Deployment](../docs/DEPLOYMENT.md) · [Operations](../docs/OPERATIONS.md) · [Recovery](../docs/RECOVERY.md) · [Verification](../docs/VERIFICATION.md) · [Best Practices](../docs/BEST_PRACTICES.md) · [Roadmap](../ROADMAP.md)
+> **Docs:** [Overview](../README.md) · [Design & Threat Model](../docs/DESIGN.md) · [Deployment](../docs/DEPLOYMENT.md) · [Operations](../docs/OPERATIONS.md) · [Snapshots](../docs/SNAPSHOTS.md) · [Recovery](../docs/RECOVERY.md) · [Verification](../docs/VERIFICATION.md) · [Best Practices](../docs/BEST_PRACTICES.md) · [Roadmap](../ROADMAP.md)
 
 ---
 
@@ -28,7 +28,7 @@ Disable the client's timer, or remove its key from `clients.conf` and restart th
 | Client tried to delete its whole repository | [2](#2-a-client-tried-to-delete-its-whole-repository) | Nothing to do — blocked by design |
 | Client lost its encryption key | [3](#3-a-client-lost-its-key) | **No** — permanent loss |
 | Client needs its data back (normal restore) | [4](#4-a-client-restoring-its-own-data) | Yes — client-side, routine |
-| Operator destroyed repository data on the host | [5](#5-operator-side-data-loss-on-the-server) | Depends — see section |
+| Operator destroyed repository data on the host | [5](#5-operator-side-data-loss-on-the-server) | Yes, in seconds, if a snapshot predates the incident — see section |
 | Storage volume lost entirely | [6](#6-total-loss-of-the-storage-volume) | Only from offsite |
 | Getting data back from the offsite mirror | [7](#7-recovering-from-the-offsite-mirror) | Not implemented yet |
 | Client cannot initialize — `DENY: no repository segments found` | — | Nothing lost — not a recovery case, see [Operations](OPERATIONS.md) Chapter 9.12 |
@@ -86,7 +86,7 @@ mv index.17 hints.17 integrity.17 ../quarantine/
 sed -i '/transaction 17,/d' transactions
 ```
 
-If a snapshot mechanism is available (Roadmap 11.5), take a named snapshot before this instead of — or in addition to — the quarantine directory.
+Run `./snapshots/70-create-snapshot.sh` before this instead of — or in addition to — the quarantine directory: a proper, immutable snapshot rather than the improvisation above (see [Snapshots](SNAPSHOTS.md)).
 
 ### Operator-side verification
 
@@ -184,25 +184,29 @@ The passphrase is needed in addition to the key file, since the export is itself
 
 ## 5. Operator-side data loss on the server
 
-Accidental `rm -rf` against the storage volume, a botched maintenance command, or destructive software running on the host.
+Accidental `rm -rf` against a client's repository directory, a botched maintenance command, or destructive software running on the host — anything that destroys data under `HOST_REPO_BASE` without also reaching the rest of the storage volume (a command destructive enough for that is section 6, not this one).
 
-**Current state: there is no local recovery path.** Snapshots of the storage volume are Roadmap item 11.5 and are not implemented. Until they are, the options are, in order of preference:
+**If a snapshot predates the incident, this is a local rollback measured in seconds.** See [Snapshots](SNAPSHOTS.md) for the full mechanism; the short version:
+
+1. `./snapshots/75-list-snapshots.sh <client>` — find the affected client's most recent generation from before the incident.
+2. If the cause was a compromised client rather than plain operator error, `./snapshots/76-delete-snapshots.sh <client>` first, to remove any generation that might already carry tainted data — a snapshot of already-compromised data is not a safe rollback point.
+3. `./snapshots/77-restore-last-snapshot.sh <client>` — restores content, host ownership and the XFS project id in one step, verified before use.
+
+**If no snapshot predates the incident** — the tooling was never set up, the incident happened before that day's scheduled snapshot ran, or it reached `SNAPSHOT_BASE` itself (see the caveat below) — the options fall back to, in order of preference:
 
 1. **The clients still hold their source data.** For repositories whose clients are healthy, the fastest correct answer is often to let the clients re-upload. Archive history before the incident is lost, but current data is not.
 2. **The offsite mirror** — Roadmap 11.2, not implemented (see section 7).
-3. Nothing else. Repository data destroyed on the host is destroyed.
+3. Nothing else. Repository data destroyed on the host, with nothing to restore it from, is destroyed.
 
-The append-only guarantee does **not** help here: it constrains what clients may do over the protocol, not what the operator or a process with host access can do to the files directly.
-
-Once 11.5 exists, this section becomes a rollback procedure measured in seconds. Until then, treat host-side destructive commands against `HOST_REPO_BASE` as unrecoverable and act accordingly.
+The append-only guarantee does **not** help here either way: it constrains what clients may do over the protocol, not what the operator or a process with host access can do to the files directly. Snapshots are what closes that specific gap — but only within their own boundary: a snapshot lives on the **same physical storage** as the data it protects, as a sibling directory (`SNAPSHOT_BASE`) next to `HOST_REPO_BASE`, not a second copy anywhere else. A destructive command scoped to one client's directory leaves the snapshots untouched; one that reaches the whole storage volume takes them down with it — see section 6.
 
 ---
 
 ## 6. Total loss of the storage volume
 
-Disk failure, filesystem corruption, or loss of the machine.
+Disk failure, filesystem corruption, or loss of the machine — anything that takes the whole storage volume with it, `HOST_REPO_BASE` and `SNAPSHOT_BASE` (and every snapshot it holds) alike.
 
-Snapshots would not help even once implemented — they live on the same storage as the origin (Roadmap 11.5). This is precisely and exclusively what the offsite copy is for.
+Snapshots do not help here, by design — they live on the same storage as the origin (see [Snapshots](SNAPSHOTS.md), "What this does not protect against"). This is precisely and exclusively what the offsite copy is for.
 
 With no offsite copy in place, repositories are lost and the clients' own source data is all that remains.
 

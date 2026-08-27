@@ -1,4 +1,4 @@
-> **Docs:** [Overview](../README.md) · [Design & Threat Model](../docs/DESIGN.md) · [Deployment](../docs/DEPLOYMENT.md) · [Operations](../docs/OPERATIONS.md) · [Recovery](../docs/RECOVERY.md) · [Verification](../docs/VERIFICATION.md) · [Best Practices](../docs/BEST_PRACTICES.md) · [Roadmap](../ROADMAP.md)
+> **Docs:** [Overview](../README.md) · [Design & Threat Model](../docs/DESIGN.md) · [Deployment](../docs/DEPLOYMENT.md) · [Operations](../docs/OPERATIONS.md) · [Snapshots](../docs/SNAPSHOTS.md) · [Recovery](../docs/RECOVERY.md) · [Verification](../docs/VERIFICATION.md) · [Best Practices](../docs/BEST_PRACTICES.md) · [Roadmap](../ROADMAP.md)
 >
 > This guide walks through a complete server installation, start to finish, on
 > a fresh host. It stitches together material that otherwise lives spread
@@ -40,7 +40,7 @@ non-negotiable rather than a nice-to-have.
 | **A non-root user** to own and run the service — every remaining step runs as this user unless a step says `sudo` | — |
 | **BorgBackup 1.x on every client** you will onboard — **2.x is not supported** | `borg --version` on the client → `1.x` (see [Supported BorgBackup versions](../README.md#supported-borgbackup-versions-1x-only)) |
 
-Note the mount path of the XFS volume — it's needed as `HOST_REPO_BASE` in
+Note the mount path of the XFS volume — it's needed as `HOST_STORAGE_BASE` in
 step 3.
 
 ---
@@ -51,7 +51,8 @@ The server host only *runs* the pre-built container and the management
 scripts — it never builds the image itself, so it has no use for the full
 repository (`Dockerfile`, `entrypoint.sh`, CI workflows, docs, ...). Create a
 dedicated installation directory and copy in just the three directories the
-host actually needs: `config`, `scripts`, `systemd`.
+host actually needs — `config`, `scripts`, `systemd` — plus the repository
+root's `config.sh` and `VERSION`.
 
 ```bash
 INSTALL_PATH=~/containers/borg-server
@@ -61,7 +62,7 @@ mkdir -p "$INSTALL_PATH"
 git clone --branch "$RELEASE" --depth 1 \
   https://github.com/RaykHoefemann/hardened-borg-server.git ~/tmp/hardened-borg-server
 cp -r ~/tmp/hardened-borg-server/config ~/tmp/hardened-borg-server/scripts ~/tmp/hardened-borg-server/systemd "$INSTALL_PATH"/
-cp ~/tmp/hardened-borg-server/VERSION "$INSTALL_PATH"/
+cp ~/tmp/hardened-borg-server/config.sh ~/tmp/hardened-borg-server/VERSION "$INSTALL_PATH"/
 rm -rf ~/tmp/hardened-borg-server
 
 cd "$INSTALL_PATH"
@@ -107,27 +108,26 @@ one operation split across a page break.
 
 ---
 
-## 3. Configure `scripts/config.sh`
+## 3. Configure `config.sh`
 
-This file is the single source of truth for every path and runtime value used
+The repository root's `config.sh` and `scripts/config.sh` (which sources it)
+are together the single source of truth for every path and runtime value used
 by both the host-management scripts and the generated systemd unit — see
-[Operations](OPERATIONS.md) Chapter 9.1 for the full field-by-field reference.
-At minimum, set:
+[Operations](OPERATIONS.md) Chapter 9.1 for the full field-by-field reference,
+including why the values are split across the two files. At minimum, set:
 
 ```bash
-$EDITOR scripts/config.sh
+$EDITOR config.sh
 ```
 
-- `HOST_REPO_BASE` → the XFS/`prjquota` mount noted in step 0 (e.g. `/var/mnt/borg-repo`)
+- `HOST_STORAGE_BASE` → the XFS/`prjquota` mount noted in step 0 (e.g. `/var/mnt/borg-repo`). `HOST_REPO_BASE` is derived from it automatically as `${HOST_STORAGE_BASE}/${CONTAINER}/`, so nothing else needs editing here — the directory name is `CONTAINER`'s value (`borg-server` by default), not a second setting you supply. This keeps storage location and installation identity tied together by construction, and — since the snapshot tooling planned in [ROADMAP.md](../ROADMAP.md) 11.5 will place `.snapshots/${CONTAINER}/` under the same `HOST_STORAGE_BASE`, as a **sibling** of `HOST_REPO_BASE` rather than inside it — leaves that root free to sit right next to the repositories without ever being parsed out of `HOST_REPO_BASE` itself.
 
-  A **subdirectory** of that mount works too (e.g. `/var/mnt/borg-repo/repo`,
-  which keeps filesystem snapshots beside the repositories rather than inside
-  them). Whichever you choose, **the directory has to exist before step 4**: it
+  **The resulting `HOST_REPO_BASE` directory has to exist before step 4**: it
   is bind-mounted into the container as `/repo`, and podman will not start a
   container whose bind-mount source is missing. `50-service-install.sh` refuses
   to install the unit until it does, rather than leaving you with a service
-  that restart-loops. Create a subdirectory yourself — `mkdir -p
-  /var/mnt/borg-repo/repo` — but never create the *mount point* to get past
+  that restart-loops. Create it yourself — `mkdir -p
+  /var/mnt/borg-repo/borg-server` — but never create the *mount point* to get past
   that error: on an unmounted volume that succeeds silently and puts client
   repositories on the root filesystem, with no project quotas at all.
 
@@ -142,7 +142,7 @@ $EDITOR scripts/config.sh
     docker://ghcr.io/raykhoefemann/hardened-borg-server:${RELEASE#v}
   ```
 
-  and write that reference into `config.sh`, replacing `:tag` with `@sha256:`:
+  and write that reference into `scripts/config.sh`, replacing `:tag` with `@sha256:`:
 
   ```bash
   IMAGE="ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest from the command above>"
@@ -346,5 +346,5 @@ is verified reachable with correct quota enforcement.
 - **Day-to-day administration** (quota changes, status checks, more scripts):
   [Operations](OPERATIONS.md) Chapter 9.
 - **Upgrading later:** [Deployment](DEPLOYMENT.md) Chapter 6.3 — do *not* simply
-  repeat step 1 against an existing installation, it overwrites `config.sh` and
-  `server_info.conf`.
+  repeat step 1 against an existing installation, it overwrites both
+  `config.sh` files and `server_info.conf`.

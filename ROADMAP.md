@@ -121,70 +121,11 @@ Constraints to preserve:
 
 This is a **deployment/lifecycle change only** — it does not alter client-facing behavior, the security model (Chapter 1), or the privacy model (Chapter 2). Existing deployments on the current `.service` unit continue to work; the Quadlet becomes the recommended path for new installations.
 
-## 11.5. Point-in-Time Snapshots of the Storage Volume
+## 11.5. Point-in-Time Snapshots of the Storage Volume — done
 
-Automatic, operator-side, point-in-time snapshots of the **entire storage volume** that carries the repositories, with a retention policy, a restore path, and snapshot-to-snapshot comparison.
+Point-in-time snapshots of `HOST_REPO_BASE`, with a client-scoped restore path, closing the one gap append-only cannot: destructive action originating on the *host* side rather than over a client's connection (operator error, destructive host-side software, a bug in this server's own privileged operations). Not a second copy and not a substitute for offsite mirroring (11.2), which remains mandatory regardless.
 
-Unlike the other items on this list, this is **not an optional enhancement**. For a server that calls itself hardened it belongs to the baseline: today the design has no answer at all for destructive action originating on the *host* side. Append-only (Chapter 1.2.4) closes the client-triggered path completely — a client cannot delete anything — but nothing protects the stored data against:
-
-- **Operator error.** A mistyped `rm -rf` against the storage volume destroys every hosted repository at once, and the only remaining copy is offsite.
-- **Destructive software running on the host.** Ransomware or a runaway process acting outside the rootless container is beyond anything the application layer can defend against — up to, but not including, an attacker who holds root (see the scope boundary below).
-- **The server's own mutating operations.** `borg check --repair` (11.3) deliberately writes to repositories from the operator side, bypassing append-only by design, as would any manual reclamation tooling (11.1). Each is an opportunity to destroy data through a bug or a wrong parameter — and 11.3 is a planned feature, so this is a risk the project is about to create for itself.
-
-Without snapshots, every one of these ends in the same place: a full restore from the offsite mirror (11.2). That is slow, depends on a third party's availability, and is a disproportionate response to what is usually a small, local, entirely recoverable mistake. Snapshots turn it into a local rollback measured in seconds, and — because a snapshot can be compared against the live tree — they also answer *what* changed and *when* it started, which no restore from offsite can tell you.
-
-### Scope: the whole volume, not just the repositories
-
-The snapshot unit is the complete storage volume (`/var/mnt/…`, the filesystem `HOST_REPO_BASE` lives on), not `HOST_REPO_BASE` alone. The volume typically holds other operator data next to the Borg repositories, and that data is subject to exactly the same accidents. Most of it may be reproducible in principle, but reproducing it is expensive, and there is no reason to protect a subdirectory when protecting the filesystem costs the same.
-
-The boundary that does hold: a snapshot lives on the same storage as the origin and is therefore **not** a second copy. Physical media failure, filesystem-level corruption, and site loss remain the domain of offsite mirroring (11.2) and the operator's storage design (Chapter 3, closing note) — snapshots neither replace nor weaken that requirement.
-
-A deliberate attacker holding **root on the host** is out of scope for the same reason, and this is not a shortcoming of the mechanism chosen below. Root can clear an immutable flag, and could equally destroy a block-layer snapshot, a second local disk, or any other copy reachable from the machine. Nothing hosted on a system defends that system against its own root. Snapshots are a recovery path for accidents, bugs, and unprivileged damage; the answer to a root-level compromise is, and can only be, the offsite copy.
-
-That answer is only valid under one condition, and it is a hard dependency of this item: the offsite target must enforce append-only against this server (11.2). If replication runs with credentials that permit deletion, root here reaches both copies and this boundary collapses. Protection against root is never local — it comes from the surviving copy sitting where this machine has no authority to destroy it.
-
-### Mechanism: XFS reflink copies plus the immutable flag
-
-XFS has no native snapshot capability, and enforcing `prjquota` on XFS is mandatory (BEST_PRACTICES Chapter 1) and cannot be traded away for a snapshot-capable filesystem — the per-client hard limits and the `info` channel's live usage reporting (Chapter 7, Chapter 8) both depend on it. Ruling out a different filesystem leaves two viable routes, and the chosen one is **XFS reflinks**:
-
-- A snapshot is a copy-on-write copy of every top-level directory of the volume into `.snapshots/<timestamp>/`, made with `cp -a --reflink=always`. Blocks are shared until they diverge, so a snapshot costs almost nothing at creation.
-- The finished snapshot tree is then made immutable with `chattr -R +i`. `.snapshots/` itself stays mutable so new snapshots can be created; each completed snapshot below it does not.
-
-The immutable flag is what makes this a real protection rather than a convenience copy. It prevents modification, renaming **and** deletion: `unlink()` on an immutable inode fails with `EPERM`. An `rm -rf` against the volume therefore fails on every file in every snapshot, cannot empty a single snapshot directory, and consequently cannot remove one either — it produces a wall of errors and leaves the data intact. The rootless container is structurally unable to defeat this: clearing the flag needs `CAP_LINUX_IMMUTABLE`, which it does not have even if fully compromised.
-
-Two properties make reflinks specifically the right primitive here, where the obvious alternatives are not:
-
-- **Not hardlinks.** A hardlink is a second name for the same inode, so it shares the data: Borg's in-place appends to the newest segment would silently mutate the "snapshot", ransomware encrypting files in place would destroy every generation at once, and `chattr +i` would be unusable because setting it on the copy sets it on the live file the server still needs to write. Reflinks are independent inodes that merely share blocks — CoW breaks the sharing on write, so the copy is a true point-in-time view and can be made immutable on its own.
-- **Not a block-layer snapshot.** LVM thin volumes or Stratis would place snapshots outside the filesystem and would additionally survive filesystem-level corruption or an accidental `mkfs` against the origin. That is the *only* class they add: against host root they are no stronger, since `lvremove` is as easy as `chattr -R -i`. Buying that one class costs a destructive storage rebuild of an existing volume plus permanent thin-pool exhaustion monitoring, and the class it covers is precisely the one offsite mirroring (11.2) exists for. The trade is not worth it here. This remains the documented alternative for operators whose risk assessment differs, and the tooling should keep the snapshot mechanism behind a thin enough abstraction that swapping it is not a rewrite.
-
-The immutable flag is deliberately **not** extended to the live repositories. Applying it to sealed segments in the repositories themselves would enforce the append-only invariant at the filesystem layer rather than only through the Borg protocol, which is superficially attractive. It is rejected because it would make correct server operation depend on assumptions about Borg's internal segment handling: a future Borg release that touches an older segment for any reason would not merely surprise the operator, it would break the server outright. The flag belongs on the snapshots, where it protects data without sitting anywhere in the write path.
-
-A prerequisite worth stating explicitly: the volume must have been created with reflink support (`xfs_info <mountpoint>` must report `reflink=1`). This is the default on current Fedora, but must be verified rather than assumed — a volume without it cannot use this mechanism at all.
-
-### Snapshot comparison as a key-less integrity tripwire
-
-Enforced append-only gives the repositories a strong on-disk invariant: existing segment files under `data/` are never modified and never removed — only the newest segment grows, and new ones are added. Comparing two snapshots therefore yields a sharp signal without ever touching archive contents:
-
-- new segments, latest one grown — ordinary backup traffic
-- an **existing** segment changed in size or mtime — cannot happen under append-only; indicates tampering or a bug
-- segments missing — only `borg compact` removes segments, so outside a deliberate operator run this is an anomaly
-- `config` or `nonce` changed — always worth investigating
-
-This fits the privacy model exactly as 11.3 does (Chapter 2.1): it inspects repository *structure*, never content, and needs no key — which is what makes it something the server is actually permitted to do. The two are complementary rather than redundant: `borg check --repository-only` finds corruption *within* a repository at one point in time, while snapshot comparison finds unexpected mutation *across* time. Comparison should work from cheap per-snapshot manifests (path, size, mtime) rather than walking two full trees, so it stays viable at multi-terabyte scale.
-
-### Constraints to preserve
-
-- **`.snapshots/` must not carry a client project ID.** XFS project-quota accounting counts reflinked blocks in full against every inode that references them, so a snapshot placed inside a client's project tree would exhaust that client's quota instantly despite occupying no real space. The snapshot root must live outside all project trees, under project ID 0.
-- **The prune path is the most dangerous code in the deployment.** Removing an expired snapshot requires clearing the immutable flag first, so a script whose job is to disarm protection and then delete recursively necessarily exists. It must validate that its target resolves inside the snapshot root and refuse everything else, rather than trusting its argument.
-- **Immutable snapshots pin blocks.** Space freed by a later `borg compact` is not returned to the filesystem while any snapshot still references those segments. Volume sizing must account for retention depth — the same consideration a thin pool would impose, without the pool.
-- **Append-only is untouched (Chapter 1.2.4).** Snapshots add a recovery path for the operator; they are not a justification for relaxing what a client connection may do.
-- **Operator-side only (Chapter 1.2.6).** Creation, listing, comparison, and restore are host-side actions. No client-facing interface, no new port, and nothing surfaced through the `info` channel — snapshot existence and timing are operational metadata that clients have no business seeing.
-- **Restore must re-establish quota identity.** Copying a repository back out of a snapshot restores file content but not its host context: ownership (`BORG_UID`/`BORG_GID` via `podman unshare`) and the XFS project ID must both be re-applied, as `00-ssh-create-user.sh` does at creation time. Skipping this leaves a working repository whose quota is silently no longer enforced — a failure mode that looks like success.
-- **`config.sh` stays the single source of truth (Chapter 9.1).** Snapshot root, schedule, and retention counts belong there, not hardcoded in scripts or a timer unit.
-
-### Retention
-
-Retention should follow how long each failure class takes to notice — accidental deletion is found within hours, a slow compromise possibly only after weeks — so a short dense window is not sufficient on its own; comparison needs enough history to answer *when* a change first appeared. Mutating operator-side operations should additionally take a named snapshot immediately beforehand and retain it until the result has been verified. This covers `borg check --repair` (11.3), any manual reclamation tooling (11.1), and equally the append-only transaction rollback used to undo a client's accidental archive deletion (Recovery, Section 1) — an operation that removes segment files by hand, on a repository whose contents the operator cannot read, and that is today made reversible only by moving those files to a quarantine directory instead of deleting them. A snapshot replaces that improvisation with a proper one.
+Shipped as `snapshots/70-create-snapshot.sh` (plus `71-timer-install.sh`), `75-list-snapshots.sh`, `76-delete-snapshots.sh`, and `77-restore-last-snapshot.sh`, plus `scripts/04-reattach-client.sh` for the one gap a `HOST_REPO_BASE`-only restore leaves behind (reconnecting `clients.conf`). See [Snapshots](docs/SNAPSHOTS.md) for scope, requirements, layout, and how to use each script, and [Verification](docs/VERIFICATION.md) Test 11 for the checks proving it holds — immutability survives even root, restore reconstructs the exact quota and project id, and deletion refuses a path outside `SNAPSHOT_BASE`.
 
 ## 11.6. Executable Verification Checks
 

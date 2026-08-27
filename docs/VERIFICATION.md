@@ -1,4 +1,4 @@
-> **Docs:** [Overview](../README.md) · [Design & Threat Model](../docs/DESIGN.md) · [Deployment](../docs/DEPLOYMENT.md) · [Operations](../docs/OPERATIONS.md) · [Recovery](../docs/RECOVERY.md) · [Verification](../docs/VERIFICATION.md) · [Best Practices](../docs/BEST_PRACTICES.md) · [Roadmap](../ROADMAP.md)
+> **Docs:** [Overview](../README.md) · [Design & Threat Model](../docs/DESIGN.md) · [Deployment](../docs/DEPLOYMENT.md) · [Operations](../docs/OPERATIONS.md) · [Snapshots](../docs/SNAPSHOTS.md) · [Recovery](../docs/RECOVERY.md) · [Verification](../docs/VERIFICATION.md) · [Best Practices](../docs/BEST_PRACTICES.md) · [Roadmap](../ROADMAP.md)
 
 ---
 
@@ -121,7 +121,7 @@ Throughout, replace `<server>` with your server host (a name or a bare IP),
 `clients.conf`, and `<repo>` with the repository URL assigned to it, e.g.
 `ssh://borgserver/repo/OWN/user1-os1-pc1`. Host paths appear as this project's
 own example layout: `/var/mnt/extern1` is the mount point of the storage volume
-and `/var/mnt/extern1/borg-server` is `HOST_REPO_BASE` from `scripts/config.sh`
+and `/var/mnt/extern1/borg-server` is `HOST_REPO_BASE`, derived in the repository root's `config.sh`
 — substitute your own.
 
 ### How client-side commands are written here
@@ -1692,6 +1692,103 @@ arrangement exist rather than being optional.
 
 ---
 
+## 11. Point-in-time snapshots survive host-side destruction
+
+**Claim** — [Snapshots](SNAPSHOTS.md) / [Roadmap](../ROADMAP.md) 11.5: a completed snapshot generation under `SNAPSHOT_BASE` is made immutable (`chattr +i`) and cannot be removed by an ordinary command, not even the operator's own `sudo rm -rf`, and restoring one reconstructs the client's XFS project id and enforced quota exactly as they were — not a freshly allocated approximation of them.
+
+**Why it matters** — this is the local, fast half of recovering from operator error or destructive host-side software ([Recovery](RECOVERY.md) Chapter 5). If a completed generation could be removed the same way its live source can, the rollback path is exposed to exactly the class of accident it exists to survive. And a restore that silently drops or mis-applies the quota leaves a repository that looks recovered but is no longer protected — the failure mode [`77-restore-last-snapshot.sh`](SNAPSHOTS.md#7-restoring-the-most-recent-snapshot--77-restore-last-snapshotsh)'s own header calls out by name.
+
+Three checks, each against a different part of the claim. All run on the host, against a disposable client — see [Snapshots](SNAPSHOTS.md) for `SNAPSHOT_BASE`'s default layout.
+
+### 11A — a completed generation resists deletion, even by root ✅
+
+**Run**
+
+```bash
+./snapshots/70-create-snapshot.sh
+GEN=$(ls -d /var/mnt/extern1/.snapshots/borg-server/<client>/*/ | tail -1)
+lsattr -d "$GEN"
+sudo rm -rf "$GEN"
+```
+
+**Pass** — `lsattr -d` shows the immutable flag (`i` in the fifth column), and the deletion fails, on the directory itself and every file under it:
+
+```
+rm: cannot remove '.../marker.txt': Operation not permitted
+```
+
+The generation and its contents are unchanged afterward.
+
+**Fail** — `lsattr` does not show `i`, or `rm` succeeds. Either means this generation is not actually protected. Check that `chattr +i` genuinely ran (the script's own read-back after setting it is what `70-create-snapshot.sh` exists to not skip) and that the kernel/filesystem combination supports `CAP_LINUX_IMMUTABLE` on this volume.
+
+**Negative test** — measured directly, both readings, against `FCOS-BorgBackupServer` (2026-08-27): a generation with the flag confirmed set by `lsattr` was attempted for deletion with `sudo rm -rf` and failed with `Operation not permitted` on every file it reached. The identical directory tree — same ownership, same mode, same content — deleted cleanly once `sudo chattr -R -i` was run against it first, which is exactly the two-step sequence `76-delete-snapshots.sh` performs deliberately, and only after its own confirmation prompt.
+
+**What this does not show** — protection against an attacker holding root who *clears the flag first*. `chattr -i` is reversible by root by design; a permanently unclearable copy is not the property this mechanism provides, and is not claimed to be — offsite mirroring, not snapshots, is the answer to a root-level host compromise (see [Snapshots](SNAPSHOTS.md), "What this does not protect against").
+
+### 11B — restore reconstructs the exact quota and project id ✅
+
+**Run** — against a client with at least one snapshot generation:
+
+```bash
+lsattr -p -d <live-repo>                            # note the project id
+df -kP <live-repo> | awk 'NR==2{print $2}'          # note the enforced KiB
+echo drift > <live-repo>/some-file-added-after-the-last-snapshot
+./snapshots/77-restore-last-snapshot.sh <client>    # type Y
+lsattr -p -d <live-repo>                            # must match
+df -kP <live-repo> | awk 'NR==2{print $2}'          # must match, exactly
+ls <live-repo>                                      # the drift file must be gone
+```
+
+**Pass** — the project id and enforced KiB read identical before and after, the script's own `[restore] Verified: quota identity matches what this client had before (...)` line appears, and the drift file is gone — the directory holds the snapshot's content, not whatever the live directory had accumulated since.
+
+**Fail** — the comparison doesn't fire: after a mismatch is introduced (see **Negative test**), the script prints no error and copies content back regardless, leaving a repository that looks recovered but is no longer held to its limit — silently, since nothing about a working repository announces that its quota stopped applying. A plain run of **Run** above cannot produce this by itself; the script's own check exists precisely to prevent a normal restore from ever reaching this state.
+
+**Negative test** — staged directly against `FCOS-BorgBackupServer` (2026-08-27), both readings:
+
+The passing direction is the drift-file measurement above: a disposable client (project id `1011`, a 2.0 GiB limit) restored cleanly, drift file gone, project id and enforced KiB (2,097,152) identical before and after.
+
+The failing direction needed a genuine race, not a sequential recipe — `OLD_ENFORCED_KIB` is read once early in the script and `NEW_ENFORCED_KIB` once near the end, and nothing between those two reads normally changes the project id's limit. So the script was started in the background, its output polled for the `[restore] Deleting current repository:` line, and the process was frozen with `kill -STOP` the instant that line appeared — reliable because the whole run is a fraction of a second and that line prints well before either quota is read. While frozen, `sudo xfs_quota -x -c 'limit -p bhard=999m 1011' /var/mnt/borg-repo` changed the *same* project id's limit out from under it (a plausible real event: nothing about `77-` locks a client's XFS project quota against a concurrent `02-change-user-quota.sh` or a manual `xfs_quota` call — only `SNAPSHOT_BASE/.lock` against other snapshot tooling). `kill -CONT` released it. The script's own comparison caught the mismatch and stopped before copying any content back:
+
+```
+ERROR: after re-applying project id 1011, the enforced quota on
+       '/var/mnt/borg-repo/repo/OWN/racetest01' is '1022976', not the original
+       2.0 GiB. The directory exists but is NOT
+       correctly quota-protected -- needs manual attention before this
+       client is used again.
+```
+
+The directory was left exactly as that message describes — present, empty, quota-mismatched, no snapshot content copied in — and the snapshot generation itself was untouched throughout. Restoring the tampered limit back to 2 GiB and re-running the identical restore, on the same client, immediately afterward, reproduced the passing direction again: `[restore] Verified: quota identity matches what this client had before (2.0 GiB)`, content restored.
+
+**What this does not show** — that the restored *content* is byte-correct beyond what this one drift file demonstrates; `cp -a --reflink=always`'s own copy correctness against a live, actively-written repository is upstream of this project's code, and was measured separately (see [Snapshots](SNAPSHOTS.md), "Creating snapshots").
+
+### 11C — deletion refuses to follow a path outside `SNAPSHOT_BASE` ✅
+
+**Run** — replace a generation with a symlink pointing outside `SNAPSHOT_BASE`, then delete it through the normal tooling:
+
+```bash
+mkdir -p /tmp/external-target && echo keep > /tmp/external-target/marker
+ln -s /tmp/external-target /var/mnt/extern1/.snapshots/borg-server/<client>/<a-valid-timestamp>
+./snapshots/76-delete-snapshots.sh <client> <that-timestamp> <that-timestamp>   # type Y
+cat /tmp/external-target/marker
+```
+
+**Pass** — refused before anything is touched:
+
+```
+ERROR: '/tmp/external-target' does not resolve inside SNAPSHOT_BASE
+       ('/var/mnt/extern1/.snapshots/borg-server') -- refusing to touch it.
+```
+
+`/tmp/external-target/marker` reads back unchanged.
+
+**Fail** — the external file is modified or removed. `SNAPSHOT_BASE`'s own canonicalization check (`cd ... && pwd -P`, resolving symlinks before anything is compared) is not doing its job, and this is the most dangerous code in the deployment trusting an unverified path.
+
+**Negative test** — measured directly against `FCOS-BorgBackupServer` (2026-08-27): the symlink above was created and `76-delete-snapshots.sh` was run against it with an affirmative `Y` at the confirmation prompt; it refused with the message shown under **Pass**, and the external file survived untouched. The positive direction is 11A's own deletions: the same run that produced 11A's evidence also deleted several genuine generations cleanly, so this check's refusal is measured against a tool that is otherwise known to actually delete what it is pointed at.
+
+**What this does not show** — resistance to an attacker who already has host-level write access to `SNAPSHOT_BASE` itself. The check is that a *generation name resolving somewhere else* is caught; a target that genuinely lives inside `SNAPSHOT_BASE` but was tampered with in place is a different threat this check says nothing about.
+
+---
+
 ## Summary checklist
 
 One row per check, not per test: a test with lettered checks is only complete
@@ -1724,27 +1821,19 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 | 8 | Keyfile-only encryption enforced | ✅ | ☐ |
 | 9 | Append-only enforced | ✅ | ☐ |
 | 10 | Repository destruction blocked | ✅ | ☐ |
+| 11A | A completed snapshot resists deletion, even by root | ✅ | ☐ |
+| 11B | Restore reconstructs the exact quota and project id | ✅ | ☐ |
+| 11C | Deletion refuses a path outside `SNAPSHOT_BASE` | ✅ | ☐ |
 
-Twenty-three ✅ and one `(✅)` out of twenty-four, as of a third bench run
-against `v0.1.0-beta.31` that staged the six checks still marked ⚠️ (1.5B,
-1.5C, 2, 3A, 4A, 4C) and confirmed each one's own failing state — following a
-second run that had already closed 0B, 1, 3B, 4B, 6 and 7, plus check 8's
-reverse direction. Every check on this page has now been reproduced in both
-directions where that is possible; 0A is the sole exception, capped at
-`(✅)` because its counter-example cannot be produced at all, not because
+Twenty-six ✅ and one `(✅)` out of twenty-seven — every check on this page is
+now either fully verified or capped, none still resting on a single
+successful run. 0A is the sole capped exception, at `(✅)` rather than plain
+✅, because its counter-example cannot be produced at all — not because
 nobody has tried (see "How to read a test"). That does not make the page
 complete — see [What this document does not cover](#what-this-document-does-not-cover)
 below, and 5.5A's own note on the one sub-case (`unreadable`) no recipe has
 reached — only that no row still rests on reasoning alone where measurement
 was possible.
-
-Each check's own section names, under **Negative test**, exactly what stands
-behind that mark — a specific staged failure and its result, or "not yet
-staged." Running this checklist through once, end to end, on a working
-deployment only ever exercises the positive direction, whatever the marker on
-each row says; that is a real and useful result, but it is not the same claim
-as ✅, and a report summarizing a run should say which one it is making rather
-than round every row up to "passed."
 
 A deployment that fails **0A** has not been verified at all — the remaining
 results describe an artifact of unknown origin, and **0B** is what keeps that
@@ -1752,11 +1841,11 @@ result true past the next `podman pull`. A deployment that fails either half of
 **0.5** is not a deployment yet: no client can use it, and every test below it
 is unrunnable. A deployment that fails any check from **1 through 5.5** should
 not be considered hardened. A deployment that fails **6–10** is not providing
-the guarantees this project exists to provide.
-
-There is no partial credit inside a test. 5A without 5B is a volume that says
-`prjquota` and enforces nothing; 1.5A without 1.5B is a daemon that reads
-correctly and behaves otherwise. That is the reason each letter has its own row.
+the guarantees this project exists to provide. A deployment that fails **11**
+is a narrower gap than any of those — every guarantee through 10 still holds —
+but it means [Recovery](RECOVERY.md) Chapter 5's local rollback is not
+actually available when an operator reaches for it, which is the moment its
+absence is most expensive to discover.
 
 ## What this document does not cover
 
@@ -1776,3 +1865,7 @@ correctly and behaves otherwise. That is the reason each letter has its own row.
   [Roadmap](../ROADMAP.md) 11.6, including why the client-side checks stay
   manual: driving them from the server would mean the server holding a client
   key.
+- **Unattended, retention-driven pruning of old snapshot generations** — does
+  not exist. Test 11 checks what the shipped `snapshots/` scripts actually do;
+  an age-based "keep the last N generations" mode remains an open question
+  (Roadmap 11.5), and there is nothing to verify until one is built.
