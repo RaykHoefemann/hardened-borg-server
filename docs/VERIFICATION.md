@@ -1796,11 +1796,11 @@ dropped (Roadmap 11.2).
 
 ## 11. Point-in-time snapshots survive host-side destruction
 
-**Claim** — [Snapshots](SNAPSHOTS.md) / [Roadmap](../ROADMAP.md) 11.5: a completed snapshot generation under `SNAPSHOT_BASE` is made immutable (`chattr +i`) and cannot be removed by an ordinary command, not even the operator's own `sudo rm -rf`, and restoring one reconstructs the client's XFS project id and enforced quota exactly as they were — not a freshly allocated approximation of them.
+**Claim** — [Snapshots](SNAPSHOTS.md) / [Roadmap](../ROADMAP.md) 11.5: a completed snapshot generation under `SNAPSHOT_BASE` is made immutable (`chattr +i`) and cannot be removed by an ordinary command, not even the operator's own `sudo rm -rf`, and restoring one reconstructs the client's XFS project id and enforced quota exactly as they were — not a freshly allocated approximation of them. And ([Snapshots](SNAPSHOTS.md) "Layout on disk") the tree under `SNAPSHOT_BASE` is `<client>/<timestamp>/` with a `<client>/.source-group` marker, `<client>` matching the same globally-unique name rule as the live repositories ([Design](DESIGN.md) Chapter 1.2.3).
 
 **Why it matters** — this is the local, fast half of recovering from operator error or destructive host-side software ([Recovery](RECOVERY.md) Chapter 5). If a completed generation could be removed the same way its live source can, the rollback path is exposed to exactly the class of accident it exists to survive. And a restore that silently drops or mis-applies the quota leaves a repository that looks recovered but is no longer protected — the failure mode [`77-restore-last-snapshot.sh`](SNAPSHOTS.md#7-restoring-the-most-recent-snapshot--77-restore-last-snapshotsh)'s own header calls out by name.
 
-Three checks, each against a different part of the claim. All run on the host, against a disposable client — see [Snapshots](SNAPSHOTS.md) for `SNAPSHOT_BASE`'s default layout.
+Four checks, each against a different part of the claim. All run on the host, against a disposable client — see [Snapshots](SNAPSHOTS.md) for `SNAPSHOT_BASE`'s default layout.
 
 ### 11A — a completed generation resists deletion, even by root ✅
 
@@ -1889,6 +1889,72 @@ ERROR: '/tmp/external-target' does not resolve inside SNAPSHOT_BASE
 
 **What this does not show** — resistance to an attacker who already has host-level write access to `SNAPSHOT_BASE` itself. The check is that a *generation name resolving somewhere else* is caught; a target that genuinely lives inside `SNAPSHOT_BASE` but was tampered with in place is a different threat this check says nothing about.
 
+### 11D — the snapshot tree matches the declared structure ⚠️
+
+The counterpart of 3D, for `SNAPSHOT_BASE`. `75-`/`76-`/`77-` all filter by the `YYYYMMDDTHHMMSSZ` name format, so anything that is not a generation directory — a stray file, a leftover from an interrupted run, a `.source-group` naming a group the client no longer sits under — is invisible to them and sits indefinitely.
+
+**Run** (on the host; needs read access to `SNAPSHOT_BASE` and `HOST_REPO_BASE`)
+
+```bash
+base=/var/mnt/extern1/.snapshots/borg-server   # your SNAPSHOT_BASE, as config.sh resolves it
+repo=/var/mnt/extern1/borg-server              # your HOST_REPO_BASE
+ts='[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z'
+
+# 1. top level: client-named directories, plus the .lock file — nothing else
+for e in "$base"/* "$base"/.*; do
+    [ -e "$e" ] || continue
+    n=${e##*/}
+    case "$n" in
+        .|..|.lock) continue ;;
+        ''|-*|*[!a-zA-Z0-9_-]*) echo "top level: unexpected '$n'" ;;
+        *) [ -d "$e" ] || echo "top level: '$n' is not a directory" ;;
+    esac
+done
+
+# 2. inside each client: <timestamp>/ generations and one .source-group file
+for c in "$base"/*/; do
+    [ -d "$c" ] || continue
+    cn=${c%/}; cn=${cn##*/}
+    for e in "$c"* "$c".*; do
+        [ -e "$e" ] || continue
+        n=${e##*/}
+        case "$n" in
+            .|..|.source-group) ;;
+            .creating-*) echo "$cn: staging dir from an interrupted run: $n" ;;
+            $ts) [ -d "$e" ] || echo "$cn: generation '$n' is not a directory" ;;
+            *) echo "$cn: unexpected entry '$n'" ;;
+        esac
+    done
+done
+
+# 3. every .source-group holds OWN or MIRROR and agrees with the live repo's group
+for f in "$base"/*/.source-group; do
+    [ -f "$f" ] || continue
+    cn=${f%/.source-group}; cn=${cn##*/}; g=$(cat "$f")
+    case "$g" in
+        OWN|MIRROR) ;;
+        *) echo "$cn: .source-group is '$g', not OWN or MIRROR"; continue ;;
+    esac
+    if [ ! -d "$repo/$g/$cn" ] && { [ -d "$repo/OWN/$cn" ] || [ -d "$repo/MIRROR/$cn" ]; }; then
+        echo "$cn: .source-group says '$g' but the live repository is under another group"
+    fi
+done
+```
+
+**Pass** — none of the three loops produces output.
+
+**Fail** —
+
+- `top level: unexpected` / `is not a directory` — something other than a client directory or the `.lock` file sits in `SNAPSHOT_BASE`. `70-create-snapshot.sh` only ever creates client directories and `.lock`.
+- `unexpected entry` inside a client — not a `<timestamp>` generation and not `.source-group`. `75-`/`76-` will never list it and `76-` will never clean it; it stays until removed by hand.
+- `staging dir from an interrupted run` — a `.creating-*` that outlived its run. `70-`'s next run for that client removes it (`sudo rm -rf`), so a persistent one means either that client has not been snapshotted since, or the cleanup lacked privilege.
+- `.source-group` mismatch — the client's generations were taken under a group its live repository no longer sits under; `77-restore-last-snapshot.sh` will refuse a restore (by design). This is the same cross-group name collision 3C/3D and `70-`'s pre-flight guard against, seen from the snapshot side.
+- `.source-group` not `OWN`/`MIRROR` — the file was hand-edited or written by something other than `70-`.
+
+**Negative test** — not yet staged. Planned: drop a stray file into `SNAPSHOT_BASE` and into a `<client>/`, leave a hand-made `.creating-*`, and set a `.source-group` to the wrong group; confirm each is reported and that clearing them clears the check.
+
+**What this does not show** — that a generation is actually immutable (11A) or that a restore reconstructs the repository (11B); this is structure only. A client directory under `SNAPSHOT_BASE` with generations but *no* live repository is legitimate — retained history of a removed client — and is not flagged.
+
 ---
 
 ## Summary checklist
@@ -1928,13 +1994,14 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 | 11A | A completed snapshot resists deletion, even by root | ✅ | ☐ |
 | 11B | Restore reconstructs the exact quota and project id | ✅ | ☐ |
 | 11C | Deletion refuses a path outside `SNAPSHOT_BASE` | ✅ | ☐ |
+| 11D | The snapshot tree matches the declared structure | ⚠️ | ☐ |
 
-Twenty-six ✅, one `(✅)` and two ⚠️ out of twenty-nine. 0A is the sole
+Twenty-six ✅, one `(✅)` and three ⚠️ out of thirty. 0A is the sole
 capped exception, at `(✅)` rather than plain ✅, because its counter-example
 cannot be produced at all — not because nobody has tried (see "How to read a
-test"). 3C and 3D are the two ⚠️: their procedures follow from the
+test"). 3C, 3D and 11D are the three ⚠️: their procedures follow from the
 implementation and the structure defined in [Design](DESIGN.md) Chapter
-1.2.3, but neither has had its failing direction staged against a live
+1.2.3, but none has had its failing direction staged against a live
 deployment yet. That does not make the page complete — see
 [What this document does not cover](#what-this-document-does-not-cover)
 below, and 5.5A's own note on the one sub-case (`unreadable`) no recipe has
