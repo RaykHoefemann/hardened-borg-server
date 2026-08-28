@@ -365,7 +365,7 @@ Documented as roadmap items, and **absent today**. A deployment must be planned 
 
 | Gap | Consequence today | Item |
 |---|---|---|
-| No offline export helper | Copying the hosted repositories to removable media is a hand-run `rsync` | 11.2 |
+| No offline export helper | Copying the operator's own (`OWN`) repositories to removable media is a hand-run `rsync` | 11.2 |
 | No scheduled integrity verification | On-disk corruption is detected when data is read, not before | 11.3 |
 
 Deliberately **not** on this list because it will not be built: automated pruning (11.1). Nothing is ever deleted; capacity is bounded by quotas and managed by monitoring instead ([Operations](OPERATIONS.md) 10).
