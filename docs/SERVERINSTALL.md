@@ -50,9 +50,11 @@ step 3.
 The server host only *runs* the pre-built container and the management
 scripts — it never builds the image itself, so it has no use for the full
 repository (`Dockerfile`, `entrypoint.sh`, CI workflows, docs, ...). Create a
-dedicated installation directory and copy in just the three directories the
-host actually needs — `config`, `scripts`, `systemd` — plus the repository
-root's `config.sh` and `VERSION`.
+dedicated installation directory and copy in the directories the host
+actually needs — `config`, `scripts`, `systemd`, and `snapshots` — plus the
+repository root's `config.sh` and `VERSION`. (`snapshots/` is the optional
+point-in-time snapshot tooling, [Snapshots](SNAPSHOTS.md); copy it now so it
+is there if you want it — it does nothing until you run it.)
 
 ```bash
 INSTALL_PATH=~/containers/borg-server
@@ -61,7 +63,8 @@ mkdir -p "$INSTALL_PATH"
 
 git clone --branch "$RELEASE" --depth 1 \
   https://github.com/RaykHoefemann/hardened-borg-server.git ~/tmp/hardened-borg-server
-cp -r ~/tmp/hardened-borg-server/config ~/tmp/hardened-borg-server/scripts ~/tmp/hardened-borg-server/systemd "$INSTALL_PATH"/
+cp -r ~/tmp/hardened-borg-server/config ~/tmp/hardened-borg-server/scripts \
+      ~/tmp/hardened-borg-server/systemd ~/tmp/hardened-borg-server/snapshots "$INSTALL_PATH"/
 cp ~/tmp/hardened-borg-server/config.sh ~/tmp/hardened-borg-server/VERSION "$INSTALL_PATH"/
 rm -rf ~/tmp/hardened-borg-server
 

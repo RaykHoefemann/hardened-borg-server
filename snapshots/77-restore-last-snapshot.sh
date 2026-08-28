@@ -41,7 +41,8 @@
 #      restores the snapshot's content into it.
 #
 # What is restored, and what is not: the repository's file content, its
-# host ownership, and its XFS project id (see "QUOTA IDENTITY" below).
+# host ownership, its XFS project id (see "QUOTA IDENTITY" below), and its
+# SELinux context (see "SELINUX CONTEXT" below).
 # NOT restored: nothing needs to be -- clients.conf and the SSH key are
 # untouched by this whole workflow, because the client's repository
 # directory never stopped existing. (Where it did stop existing, that is
@@ -63,6 +64,19 @@
 # it is sufficient to make the restored directory exactly as protected as
 # it was before, and the limit is verified read back before any content is
 # copied in.
+#
+# SELINUX CONTEXT. `cp -a` carries the SNAPSHOT's SELinux context onto the
+# restored files. On a `:Z`-mounted `/repo` that context is a per-container
+# MCS pair podman reassigns on every container start, so a snapshot taken
+# before a restart carries a pair that no longer matches the running
+# container -- and the client is then denied write access
+# (`LockFailed`/`Permission denied` on borg list/extract/create) until the
+# next restart relabels the mount. `borg check` misleadingly still succeeds.
+# So this script captures the live directory's own context BEFORE deleting
+# it and re-applies that exact context to the whole restored tree with
+# `chcon -R` afterward. Where SELinux is not enabled, or `chcon` fails, the
+# restore still completes and a warning names the container restart as the
+# fallback.
 #
 # WHY THIS SOURCES scripts/lib.sh. Re-applying ownership and a project id
 # needs exactly the repo_* helpers 00-ssh-create-user.sh already uses
@@ -294,6 +308,17 @@ case "$OLD_ENFORCED_KIB" in
         ;;
 esac
 
+# SELinux context of the live directory, read before deletion -- re-applied
+# to the restored tree below. See "SELINUX CONTEXT" in this script's header.
+SEL_CTX=""
+if command -v getenforce >/dev/null 2>&1 && [ "$(getenforce 2>/dev/null)" != "Disabled" ]; then
+    SEL_CTX=$(stat -c '%C' "$HOST_REPO" 2>/dev/null)
+    case "$SEL_CTX" in
+        *:*:*:*) ;;      # looks like user:role:type:level -- keep it
+        *) SEL_CTX="" ;;  # '?' / unset / no SELinux -- nothing to re-apply
+    esac
+fi
+
 echo "[restore] Deleting current repository: $HOST_REPO"
 if ! sudo rm -rf "$HOST_REPO"; then
     echo "ERROR: could not delete '$HOST_REPO'. Left as-is; nothing was restored."
@@ -326,6 +351,17 @@ if ! sudo cp -a --reflink=always "${LAST_GEN_DIR}"/. "$HOST_REPO"/.; then
     echo "       but its CONTENT may be incomplete -- needs manual attention"
     echo "       before this client is used again."
     exit 1
+fi
+
+if [ -n "$SEL_CTX" ]; then
+    echo "[restore] Re-applying SELinux context ($SEL_CTX)"
+    if ! sudo chcon -R "$SEL_CTX" "$HOST_REPO"; then
+        echo "WARNING: could not re-apply the SELinux context to '$HOST_REPO'."
+        echo "         The restore is complete, but on an SELinux-enforcing host the"
+        echo "         client may be denied write access (a lock/permission error)"
+        echo "         until the container is restarted, which relabels /repo."
+        echo "         Run ./scripts/92-container-restart.sh if that happens."
+    fi
 fi
 
 echo ""

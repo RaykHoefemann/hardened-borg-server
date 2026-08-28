@@ -229,7 +229,7 @@ skopeo inspect --format '{{.Digest}}' \
 podman pull "ghcr.io/raykhoefemann/hardened-borg-server:${NEW#v}"
 
 # 5. Replace only the release's own files — note that config/ is NOT copied
-cp -r ~/tmp/upgrade/scripts ~/tmp/upgrade/systemd "$INSTALL_PATH"/
+cp -r ~/tmp/upgrade/scripts ~/tmp/upgrade/systemd ~/tmp/upgrade/snapshots "$INSTALL_PATH"/
 cp ~/tmp/upgrade/config.sh ~/tmp/upgrade/VERSION "$INSTALL_PATH"/
 rm -rf ~/tmp/upgrade
 
@@ -301,6 +301,10 @@ podman pull "ghcr.io/raykhoefemann/hardened-borg-server:${OLD#v}"
 
 cp -r ~/tmp/rollback/scripts ~/tmp/rollback/systemd "$INSTALL_PATH"/
 cp ~/tmp/rollback/config.sh ~/tmp/rollback/VERSION "$INSTALL_PATH"/
+# snapshots/ only if the target release still has it — and drop a newer one
+# left over from before the rollback (its scripts source scripts/lib.sh)
+rm -rf "$INSTALL_PATH/snapshots"
+[ -d ~/tmp/rollback/snapshots ] && cp -r ~/tmp/rollback/snapshots "$INSTALL_PATH"/
 rm -rf ~/tmp/rollback
 
 $EDITOR config.sh                  # re-apply HOST_STORAGE_BASE

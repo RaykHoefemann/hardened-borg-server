@@ -190,7 +190,7 @@ Accidental `rm -rf` against a client's repository directory, a botched maintenan
 
 1. `./snapshots/75-list-snapshots.sh <client>` — find the affected client's most recent generation from before the incident.
 2. If the cause was a compromised client rather than plain operator error, `./snapshots/76-delete-snapshots.sh <client>` first, to remove any generation that might already carry tainted data — a snapshot of already-compromised data is not a safe rollback point.
-3. `./snapshots/77-restore-last-snapshot.sh <client>` — restores content, host ownership and the XFS project id in one step, verified before use.
+3. `./snapshots/77-restore-last-snapshot.sh <client>` — restores content, host ownership, the XFS project id and the SELinux context in one step, verified before use. If it prints a warning that it could not re-apply the SELinux context and the client then reports a lock/permission error, run `./scripts/92-container-restart.sh` once (it relabels `/repo`).
 
 **If no snapshot predates the incident** — the tooling was never set up, the incident happened before that day's scheduled snapshot ran, or it reached `SNAPSHOT_BASE` itself (see the caveat below) — the options fall back to, in order of preference:
 
