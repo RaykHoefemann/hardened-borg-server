@@ -9,7 +9,7 @@ limits are enforced by the host filesystem — not merely tracked. No web UI, no
 orchestration, no auxiliary interfaces: a small, predictable, privacy-preserving
 attack surface by design.
 
-> **Status:** `v0.1.0` is the current stable release. `v0.2.0-beta.3` (storage
+> **Status:** `v0.1.0` is the current stable release. `v0.2.0-beta.4` (storage
 > snapshots) is a pre-release — see [Deployment](docs/DEPLOYMENT.md).
 
 ---
