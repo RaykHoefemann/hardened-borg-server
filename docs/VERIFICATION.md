@@ -1797,11 +1797,11 @@ dropped (Roadmap 11.2).
 
 ## 11. Point-in-time snapshots survive host-side destruction
 
-**Claim** — [Snapshots](SNAPSHOTS.md) / [Roadmap](../ROADMAP.md) 11.5: a completed snapshot generation under `SNAPSHOT_BASE` is made immutable (`chattr +i`) and cannot be removed by an ordinary command, not even the operator's own `sudo rm -rf`, and restoring one reconstructs the client's XFS project id and enforced quota exactly as they were — not a freshly allocated approximation of them. And ([Snapshots](SNAPSHOTS.md) "Layout on disk") the tree under `SNAPSHOT_BASE` mirrors `HOST_REPO_BASE`: `<group>/<client>/<timestamp>/`, `<group>` one of `OWN`/`MIRROR` and `<client>` matching the same globally-unique name rule as the live repositories ([Design](DESIGN.md) Chapter 1.2.3).
+**Claim** — [Snapshots](SNAPSHOTS.md) / [Roadmap](../ROADMAP.md) 11.5: a completed snapshot generation under `SNAPSHOT_BASE` is made immutable (`chattr +i`) and cannot be removed by an ordinary command, not even the operator's own `sudo rm -rf`, and restoring one reconstructs the client's XFS project id and enforced quota exactly as they were — not a freshly allocated approximation of them. The tree under `SNAPSHOT_BASE` mirrors `HOST_REPO_BASE`: `<group>/<client>/<timestamp>/`, `<group>` one of `OWN`/`MIRROR` and `<client>` matching the same globally-unique name rule as the live repositories ([Design](DESIGN.md) Chapter 1.2.3). And ([Recovery](RECOVERY.md) Chapter 5) the whole path — snapshot, wipe, restore — returns a client's data unchanged.
 
 **Why it matters** — this is the local, fast half of recovering from operator error or destructive host-side software ([Recovery](RECOVERY.md) Chapter 5). If a completed generation could be removed the same way its live source can, the rollback path is exposed to exactly the class of accident it exists to survive. And a restore that silently drops or mis-applies the quota leaves a repository that looks recovered but is no longer protected — the failure mode [`77-restore-last-snapshot.sh`](SNAPSHOTS.md#7-restoring-the-most-recent-snapshot--77-restore-last-snapshotsh)'s own header calls out by name.
 
-Four checks, each against a different part of the claim. All run on the host, against a disposable client — see [Snapshots](SNAPSHOTS.md) for `SNAPSHOT_BASE`'s default layout.
+Five checks. 11A–11D run on the host against a disposable client and each test one part in isolation; 11E runs the whole loop once with a real client and real data. See [Snapshots](SNAPSHOTS.md) for `SNAPSHOT_BASE`'s default layout.
 
 ### 11A — a completed generation resists deletion, even by root ✅
 
@@ -1962,6 +1962,71 @@ done
 
 **What this does not show** — that a generation is actually immutable (11A) or that a restore reconstructs the repository (11B); this is structure only. A `<group>/<client>` directory with generations but *no* live repository is legitimate — retained history of a removed client — and is not flagged.
 
+### 11E — the snapshot → restore loop round-trips a client's data ⚠️
+
+11A–11D check parts in isolation. This runs the whole path once — client `borg create`, `70-create-snapshot.sh`, a host-side wipe, `77-restore-last-snapshot.sh`, client `borg extract` — and compares the bytes that come back to the bytes that went in.
+
+**Run**
+
+*On the client* — write a known payload into a fresh repository:
+
+```bash
+mkdir -p /tmp/e2e-orig
+head -c 20M /dev/urandom > /tmp/e2e-orig/blob          # incompressible
+seq 1 100000            > /tmp/e2e-orig/text            # compressible
+( cd /tmp/e2e-orig && find . -type f -exec sha256sum {} + | sort ) > /tmp/e2e-orig.sha256
+
+export BORG_REPO=ssh://borgserver/repo/OWN/<client>
+borg init --encryption=keyfile-blake2
+borg create ::before /tmp/e2e-orig
+borg list                                              # archive 'before' is there
+```
+
+*On the host* — snapshot, then destroy the live repository's contents:
+
+```bash
+./snapshots/70-create-snapshot.sh
+./snapshots/75-list-snapshots.sh <client>              # note the newest timestamp
+
+systemctl --user stop container_<CONTAINER>.service    # release any open handles (Recovery Ch. 5)
+podman unshare find <HOST_REPO_BASE>/OWN/<client> -mindepth 1 -delete
+podman unshare ls -A <HOST_REPO_BASE>/OWN/<client>     # must print nothing
+```
+
+*On the host* — restore from the snapshot, then bring the server back:
+
+```bash
+./snapshots/77-restore-last-snapshot.sh <client>       # type Y
+systemctl --user start container_<CONTAINER>.service
+```
+
+*On the client* — read the payload back and compare:
+
+```bash
+borg check ::
+borg list                                              # 'before' present, unchanged
+borg extract ::before                                  # recreates ./tmp/e2e-orig
+( cd tmp/e2e-orig && find . -type f -exec sha256sum {} + | sort ) | diff - /tmp/e2e-orig.sha256
+```
+
+Borg will note the repository is at an older transaction than the client's cache expects and ask to continue; answer yes, or clear `~/.cache/borg/` first.
+
+**Pass** —
+
+- `77-` prints `[restore] Verified: quota identity matches what this client had before (...)` and `[restore] Done.`
+- `borg check ::` reports no errors and `borg list` shows the `before` archive.
+- the `diff` of the two `sha256sum` manifests is empty — every file came back byte-for-byte.
+
+**Fail** —
+
+- `77-` refuses with `no existing repository directory found ...` — the wipe removed the directory itself, not just its contents. `77-` restores in place; re-run the wipe with `-mindepth 1` as shown.
+- `77-` aborts on the quota check (11B's failure mode) — the directory is left empty and quota-mismatched, nothing copied.
+- `borg check` errors, the archive is missing, or the `diff` is non-empty — the loop did not preserve the data. A clean 11A–11D with a failing 11E points at the `cp -a --reflink=always` in `70-` or the copy-back in `77-`, not at immutability, quota or structure.
+
+**Negative test** — not yet staged. Planned: run the sequence but skip the snapshot step, and confirm `77-` finds nothing and exits `1`; and tamper one file in the *restored* copy before the final `diff`, to confirm the comparison actually catches a difference.
+
+**What this does not show** — that restores keep working over time as the client's data changes; that is the client's ongoing restore-testing discipline ([Best Practices](BEST_PRACTICES.md) Chapter 7), not a one-time check of the tooling. `MIRROR` clients are not exercised here, but the snapshot path treats them identically.
+
 ---
 
 ## Summary checklist
@@ -2002,12 +2067,13 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 | 11B | Restore reconstructs the exact quota and project id | ✅ | ☐ |
 | 11C | Deletion refuses a path outside `SNAPSHOT_BASE` | ✅ | ☐ |
 | 11D | The snapshot tree matches the declared structure | ⚠️ | ☐ |
+| 11E | The snapshot → restore loop round-trips a client's data | ⚠️ | ☐ |
 
-Twenty-six ✅, one `(✅)` and three ⚠️ out of thirty. 0A is the sole
+Twenty-six ✅, one `(✅)` and four ⚠️ out of thirty-one. 0A is the sole
 capped exception, at `(✅)` rather than plain ✅, because its counter-example
 cannot be produced at all — not because nobody has tried (see "How to read a
-test"). 3C, 3D and 11D are the three ⚠️: their procedures follow from the
-implementation and the structure defined in [Design](DESIGN.md) Chapter
+test"). 3C, 3D, 11D and 11E are the four ⚠️: their procedures follow from
+the implementation and the structure defined in [Design](DESIGN.md) Chapter
 1.2.3, but none has had its failing direction staged against a live
 deployment yet. That does not make the page complete — see
 [What this document does not cover](#what-this-document-does-not-cover)
@@ -2028,9 +2094,11 @@ absence is most expensive to discover.
 
 ## What this document does not cover
 
-- **Restore testing** — that backups can actually be restored is a separate
-  and equally mandatory discipline; see [Best Practices](BEST_PRACTICES.md)
-  Chapter 7 and [Recovery](RECOVERY.md) Section 4.
+- **Ongoing restore testing** — that backups *keep* restoring as a client's
+  data changes is a separate, recurring discipline; see
+  [Best Practices](BEST_PRACTICES.md) Chapter 7 and [Recovery](RECOVERY.md)
+  Section 4. Check 11E is a one-time round-trip of the snapshot tooling, not a
+  substitute for that.
 - **Verifying a client-side offsite target** — a client that keeps its own
   independent offsite copy (Roadmap 11.2) has to check that the foreign target
   enforces append-only, a different problem with a different answer because you
