@@ -24,8 +24,8 @@ Architecture overview and how to run the server — from an ad-hoc test containe
 
 ## 5.2. Backup Flows
 
-- Client → Server (SSH / optionally VPN)
-- Server → Server (mirror/offsite replication)
+- Client → Server (SSH / optionally VPN) — own devices (`OWN`) and external partners (`MIRROR`); a partner's own server connects here as a client too
+- Server → removable media — the operator's manual offline export ([Roadmap](../ROADMAP.md) 11.2). The server never pushes to another server; offsite redundancy is a client-side second `borg create` target (see [Roadmap](../ROADMAP.md) 11.2, [Client Usage](CLIENTUSE.md) Chapter 9)
 
 ---
 
