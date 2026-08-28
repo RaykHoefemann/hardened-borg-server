@@ -23,6 +23,8 @@ All client access is config-driven. Nothing is provisioned automatically beyond 
   - `MIRROR` – external clients (e.g. friends, offsite partners)
 - **Quota:** mandatory, format `<number>G` (e.g. `10G`, `50G`). There is no `unlimited` value — every client must have an explicit quota.
 
+The repository path structure — `<repo>` is always `/repo/<group>/<client>`, `<client>` is globally unique across groups — is defined once in [Design](DESIGN.md) Chapter 1.2.3 and is the source of truth for every script, test and document here.
+
 **Example:**
 
 ```
@@ -80,7 +82,7 @@ clients.conf + keys/ + server_info.conf ---> hardened-borg-server ---> Repositor
 
 ## 7.5. Backing up the configuration
 
-The three items above — `clients.conf`, `config/keys/`, and `server_info.conf` — live under `HOST_CONFIG_BASE`, which is a **different tree from `HOST_REPO_BASE`**. Repository mirroring (Chapter 11.2) replicates repositories only, so it would not carry them. Nothing else backs them up automatically.
+The three items above — `clients.conf`, `config/keys/`, and `server_info.conf` — live under `HOST_CONFIG_BASE`, which is a **different tree from `HOST_REPO_BASE`**. There is no server-side replication that would carry them (Chapter 11.2), and the offline export helper copies repositories only. Nothing backs them up automatically.
 
 **Back them up separately.** Together they are a few kilobytes.
 

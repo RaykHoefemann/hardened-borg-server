@@ -50,7 +50,7 @@ set -euo pipefail
 REPO="$1"
 CONFIG="$REPO/config"
 
-if ! echo "$REPO" | grep -qE '^/[a-zA-Z0-9/_-]+$'; then
+if ! echo "$REPO" | grep -qE '^(/[a-zA-Z0-9_][a-zA-Z0-9_-]*)+$'; then
     echo "DENY: invalid repo path" >&2
     exit 1
 fi

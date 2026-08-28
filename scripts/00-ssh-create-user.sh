@@ -133,7 +133,7 @@ mkdir -p "$(dirname "$CONF")"
 touch "$CONF"
 
 case "$USERNAME" in
-    *[!a-zA-Z0-9_-]*) echo "ERROR: Invalid username '$USERNAME' (only a-z, 0-9, _, - allowed)"; exit 1 ;;
+    ''|-*|*[!a-zA-Z0-9_-]*) echo "ERROR: Invalid username '$USERNAME' (must be non-empty, must not start with '-', only a-z, 0-9, _, - allowed)"; exit 1 ;;
 esac
 
 # validate group

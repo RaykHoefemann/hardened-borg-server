@@ -111,9 +111,10 @@ fi
 # Same rule 70-/75- apply to a directory name before it is ever used to
 # build a path under SNAPSHOT_BASE.
 case "$CLIENT" in
-    *[!a-zA-Z0-9_-]*)
-        echo "ERROR: '$CLIENT' contains characters outside a-z, 0-9, _, - and"
-        echo "       cannot be trusted as a path component under SNAPSHOT_BASE."
+    ''|-*|*[!a-zA-Z0-9_-]*)
+        echo "ERROR: '$CLIENT' must be non-empty, must not start with '-', and may"
+        echo "       use only a-z, 0-9, _, - -- it is a path component under"
+        echo "       SNAPSHOT_BASE and cannot be trusted otherwise."
         exit 1
         ;;
 esac
@@ -146,6 +147,24 @@ if [ ! -d "$CLIENT_DIR" ]; then
     echo "No snapshots found for client '$CLIENT' under $SNAPSHOT_BASE."
     echo "Nothing to delete."
     exit 0
+fi
+
+# Soft check: DESIGN.md 1.2.3 requires client names to be unique across
+# groups, and 70-create-snapshot.sh refuses to run when they are not -- but
+# an out-of-band directory can still create that state after snapshots
+# already exist. If it holds now, ${SNAPSHOT_BASE}/<client>/ may not be
+# attributable to a single client. Warn; do not block (the operator may be
+# deleting exactly to clean this up).
+_live_group_count=0
+for _d in "${HOST_REPO_BASE%/}"/*/"${CLIENT}"; do
+    [ -d "$_d" ] || continue
+    _live_group_count=$((_live_group_count + 1))
+done
+if [ "$_live_group_count" -gt 1 ]; then
+    echo "WARNING: client '$CLIENT' has a live repository under more than one"
+    echo "         group. These generations may not all belong to the same"
+    echo "         client -- see DESIGN.md 1.2.3. Review before confirming."
+    echo ""
 fi
 
 LIST_SCRIPT="$(dirname "$0")/75-list-snapshots.sh"

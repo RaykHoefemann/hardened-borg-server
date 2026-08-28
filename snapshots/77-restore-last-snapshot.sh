@@ -121,9 +121,10 @@ fi
 CLIENT="$1"
 
 case "$CLIENT" in
-    *[!a-zA-Z0-9_-]*)
-        echo "ERROR: '$CLIENT' contains characters outside a-z, 0-9, _, - and"
-        echo "       cannot be trusted as a path component."
+    ''|-*|*[!a-zA-Z0-9_-]*)
+        echo "ERROR: '$CLIENT' must be non-empty, must not start with '-', and may"
+        echo "       use only a-z, 0-9, _, - -- it cannot be trusted as a path"
+        echo "       component otherwise."
         exit 1
         ;;
 esac
@@ -197,6 +198,26 @@ if [ -z "$GROUP" ]; then
     echo "that is already on disk, not recreate one that is not (docs/SNAPSHOTS.md)."
     exit 1
 fi
+
+# Cross-check the resolved group against the one 70-create-snapshot.sh
+# recorded when these snapshots were taken. A mismatch means the live
+# directory found for '$CLIENT' belongs to a different client of the same
+# name than the one these generations came from -- only possible if the
+# globally-unique-name invariant (DESIGN.md 1.2.3) has been violated.
+# Refuse rather than restore one client's data into another's directory.
+SRC_GROUP_FILE="${SNAP_CLIENT_DIR}/.source-group"
+if [ -f "$SRC_GROUP_FILE" ]; then
+    SRC_GROUP="$(cat "$SRC_GROUP_FILE" 2>/dev/null)"
+    if [ -n "$SRC_GROUP" ] && [ "$SRC_GROUP" != "$GROUP" ]; then
+        echo "ERROR: these snapshots were taken from group '$SRC_GROUP', but the"
+        echo "       live repository found for '$CLIENT' is under '$GROUP'. Two"
+        echo "       clients share the name '$CLIENT' across groups -- restoring"
+        echo "       would put one client's data into the other's directory. See"
+        echo "       DESIGN.md 1.2.3; resolve the collision first. Nothing was restored."
+        exit 1
+    fi
+fi
+
 HOST_REPO="${HOST_REPO_BASE}/${GROUP}/${CLIENT}"
 
 # ---------------------------------------------------------------------------

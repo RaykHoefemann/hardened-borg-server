@@ -29,8 +29,8 @@ Disable the client's timer, or remove its key from `clients.conf` and restart th
 | Client lost its encryption key | [3](#3-a-client-lost-its-key) | **No** — permanent loss |
 | Client needs its data back (normal restore) | [4](#4-a-client-restoring-its-own-data) | Yes — client-side, routine |
 | Operator destroyed repository data on the host | [5](#5-operator-side-data-loss-on-the-server) | Yes, in seconds, if a snapshot predates the incident — see section |
-| Storage volume lost entirely | [6](#6-total-loss-of-the-storage-volume) | Only from offsite |
-| Getting data back from the offsite mirror | [7](#7-recovering-from-the-offsite-mirror) | Not implemented yet |
+| Storage volume lost entirely | [6](#6-total-loss-of-the-storage-volume) | Only from a client-side offsite copy |
+| Getting data back from an offsite copy | [7](#7-recovering-from-an-offsite-copy) | Client-side only — this server does not mirror |
 | Client cannot initialize — `DENY: no repository segments found` | — | Nothing lost — not a recovery case, see [Operations](OPERATIONS.md) Chapter 9.12 |
 
 The last row is a signpost rather than a section. An interrupted `borg init` leaves a repository directory the server refuses on every later attempt, but it holds no backup and nothing needs recovering — the repair is to clear the directory's contents, which Operations Chapter 9.12 describes step by step. It is listed here because that is not obvious from the client's report, and because clearing it the wrong way (removing the directory instead of its contents) silently drops the client's XFS project quota.
@@ -195,7 +195,7 @@ Accidental `rm -rf` against a client's repository directory, a botched maintenan
 **If no snapshot predates the incident** — the tooling was never set up, the incident happened before that day's scheduled snapshot ran, or it reached `SNAPSHOT_BASE` itself (see the caveat below) — the options fall back to, in order of preference:
 
 1. **The clients still hold their source data.** For repositories whose clients are healthy, the fastest correct answer is often to let the clients re-upload. Archive history before the incident is lost, but current data is not.
-2. **The offsite mirror** — Roadmap 11.2, not implemented (see section 7).
+2. **A client-side offsite copy**, if the affected client keeps one (see section 7). This server does not mirror its own repositories — Roadmap 11.2.
 3. Nothing else. Repository data destroyed on the host, with nothing to restore it from, is destroyed.
 
 The append-only guarantee does **not** help here either way: it constrains what clients may do over the protocol, not what the operator or a process with host access can do to the files directly. Snapshots are what closes that specific gap — but only within their own boundary: a snapshot lives on the **same physical storage** as the data it protects, as a sibling directory (`SNAPSHOT_BASE`) next to `HOST_REPO_BASE`, not a second copy anywhere else. A destructive command scoped to one client's directory leaves the snapshots untouched; one that reaches the whole storage volume takes them down with it — see section 6.
@@ -206,22 +206,22 @@ The append-only guarantee does **not** help here either way: it constrains what 
 
 Disk failure, filesystem corruption, or loss of the machine — anything that takes the whole storage volume with it, `HOST_REPO_BASE` and `SNAPSHOT_BASE` (and every snapshot it holds) alike.
 
-Snapshots do not help here, by design — they live on the same storage as the origin (see [Snapshots](SNAPSHOTS.md), "What this does not protect against"). This is precisely and exclusively what the offsite copy is for.
+Snapshots do not help here, by design — they live on the same storage as the origin (see [Snapshots](SNAPSHOTS.md), "What this does not protect against"). This is precisely and exclusively what an offsite copy is for — and, with server-side mirroring dropped (Roadmap 11.2), that copy is one the client keeps, or the operator's own offline export stored elsewhere.
 
 With no offsite copy in place, repositories are lost and the clients' own source data is all that remains.
 
 ---
 
-## 7. Recovering from the offsite mirror
+## 7. Recovering from an offsite copy
 
-**Not implemented.** Mirroring this server's own repositories to a foreign backup server is Roadmap item 11.2.
+**This server does not create one.** Mirroring its own hosted repositories to a foreign backup server was planned as Roadmap item 11.2 and has been **dropped** — the reasoning is in that entry: the server holds no repository key, so it could only ever ship an opaque file-level copy, and no file-copy transport gives the append-only guarantee such a copy would need to survive a compromise of this host.
 
-Two properties of that design determine what recovery will look like, and both are worth knowing in advance because they shape what an operator should arrange *now*:
+Offsite redundancy is therefore the **client's** responsibility, and recovery from it is entirely client-side:
 
-- The mirrored repository is a byte-for-byte replica, so a client's key opens it exactly as it opens the original. Recovery does not depend on this server existing at all — a client with its key can restore directly from the foreign server.
-- The foreign target must enforce append-only against this server (Roadmap 11.2). Without that, a compromise of this host reaches the offsite copy through the replication credentials, and section 5 and section 6 both lose their answer.
+- A client that keeps its own independent offsite copy — a second `borg create` target, or `borg serve` against a foreign server it trusts — restores from it with its own key, exactly as from any repository. This server does not need to exist for that recovery to work.
+- The operator's own **offline export** (Roadmap 11.2, the manual removable-media helper) is a copy of the *hosted* repositories that the operator physically stores off-site. It restores the server's data after a total loss, but every repository in it is still ciphertext: each client needs its own key and passphrase to read its own repository back.
 
-Until 11.2 ships, an operator wanting offsite redundancy has to arrange it outside this project.
+An operator wanting offsite redundancy for the hosted data has to arrange it outside this project — or rely on clients keeping their own.
 
 ---
 
@@ -232,7 +232,7 @@ Worth stating in one place, because these are the cases where preparation is the
 | Loss | Why nothing can be done |
 |---|---|
 | Client key or passphrase | No key material exists server-side, by design |
-| Repository data destroyed on the host, no snapshot, no mirror | Nothing else holds a copy |
-| Storage volume lost, no offsite copy | Same |
+| Repository data destroyed on the host, no snapshot, no offsite copy | Nothing else holds a copy |
+| Storage volume lost, no offsite copy (client-side, or the operator's offline export) | Same |
 
 Everything else in this document is recoverable.

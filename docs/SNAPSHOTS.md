@@ -10,11 +10,15 @@ Point-in-time snapshots of `HOST_REPO_BASE` — the storage this server's client
 - destructive software running on the host outside the rootless container,
 - a bug in this server's own privileged, mutating operations (`borg check --repair`, manual reclamation tooling).
 
-**This is not a second copy, and it is not a substitute for offsite mirroring** — see "What this does not protect against" at the end for the boundary in full.
+**This is not a second copy, and it is not a substitute for an offsite copy** — see "What this does not protect against" at the end for the boundary in full.
+
+**This tooling is optional.** Borg and this server run without it, and nothing in the mandatory security model (Design, Chapters 1–3) depends on it. An operator may decline it and then accepts that host-side damage to the repositories — the three classes above — has no fast local recovery path, only whatever off-server copy exists. The same holds for the off-server copy strategy as a whole (Best Practices, Chapter 10): it is recommended, not enforced, and declining it means carrying the corresponding risk — site loss, a root-level host compromise — yourself.
 
 ## 1. Scope
 
 Only `HOST_REPO_BASE` — client repositories — is snapshotted. `HOST_CONFIG_BASE` (`clients.conf`, `config/keys/`) and `HOST_LOG_BASE` are deliberately out of scope: they live inside the git checkout, not on the quota-enforcing storage volume, and are cheap to reconstruct. If a client's directory survives a `HOST_REPO_BASE`-only restore but its `clients.conf` entry does not, that is what [`04-reattach-client.sh`](OPERATIONS.md#921-04-reattach-clientsh) is for.
+
+The repository path structure this tooling walks and restores into — `HOST_REPO_BASE/<group>/<client>`, with `<client>` globally unique across groups — is defined in [Design](DESIGN.md) Chapter 1.2.3 and is a precondition, not an assumption: see "Layout on disk" below for how each script enforces or checks it.
 
 This is also not a general-purpose, multi-container host snapshot tool. If this host runs other containers with their own data on the same physical disk, each needs its own, independently-scheduled equivalent — this tooling only ever touches its own `${CONTAINER}` branch (see "Layout" below), by construction.
 
@@ -26,16 +30,21 @@ This is also not a general-purpose, multi-container host snapshot tool. If this 
 - `snapshots/config.sh` sources the repository root's `config.sh` for all of this; there is nothing snapshot-specific to configure there today.
 - **Volume sizing must account for retention depth.** Space a later `borg compact` would free is not returned to the filesystem while any snapshot still references those segments — immutable snapshots pin blocks, the same consideration a thin pool would impose, without the pool.
 
-**Why reflinks, not hardlinks or a block-layer snapshot.** A hardlink shares the same inode as the live file — Borg's in-place appends to the newest segment would silently mutate the "snapshot" itself, and `chattr +i` would be unusable, since setting it on the copy would set it on the live file the server still needs to write. A block-layer snapshot (LVM thin, Stratis) additionally survives filesystem-level corruption or an accidental `mkfs` against the origin, which reflinks do not — but against an attacker holding root it is no stronger (`lvremove` is as easy as `chattr -R -i`), and that one extra class of protection is exactly what offsite mirroring (11.2) already exists to cover. Reflinks are independent inodes that merely share blocks — copy-on-write breaks the sharing on the first write, so the copy is a true point-in-time view that can be made immutable on its own, at the cost this tooling actually needs to pay and no more.
+**Why reflinks, not hardlinks or a block-layer snapshot.** A hardlink shares the same inode as the live file — Borg's in-place appends to the newest segment would silently mutate the "snapshot" itself, and `chattr +i` would be unusable, since setting it on the copy would set it on the live file the server still needs to write. A block-layer snapshot (LVM thin, Stratis) additionally survives filesystem-level corruption or an accidental `mkfs` against the origin, which reflinks do not — but against an attacker holding root it is no stronger (`lvremove` is as easy as `chattr -R -i`), and that one extra class of protection is exactly what an offsite copy covers — which, per Roadmap 11.2, is the client's to keep, not this server's to make. Reflinks are independent inodes that merely share blocks — copy-on-write breaks the sharing on the first write, so the copy is a true point-in-time view that can be made immutable on its own, at the cost this tooling actually needs to pay and no more.
 - Root, for a narrow set of privileged operations — see "Privileges" below.
 
 ## 3. Layout on disk
 
 ```
 ${SNAPSHOT_BASE}/<client>/<timestamp>/
+${SNAPSHOT_BASE}/<client>/.source-group
 ```
 
 Nested by **client first, timestamp second** — not the reverse. A generation-first layout (`<timestamp>/<client>/...`) would make the timestamp, not the client, the smallest unit that could be pruned, so removing one compromised client's history would mean touching every other client's snapshots for the same window too. Client-first nesting turns "remove everything belonging to client X" — the actual operation needed for a compromised client, a client's own repository reset, or complete client removal — into clearing the immutable flag and deleting once under `${SNAPSHOT_BASE}/<client>/`, full stop, with every other client's history structurally untouched.
+
+**The client name alone is the key — no group.** Live repositories are `HOST_REPO_BASE/<group>/<client>` ([Design](DESIGN.md) Chapter 1.2.3), but the snapshot tree drops the group, because the group is not part of a client's identity: [Design](DESIGN.md) 1.2.3 requires client names to be globally unique across `OWN` and `MIRROR`, and the provisioning scripts enforce it. This layout depends on that. `70-create-snapshot.sh` refuses the whole run if it finds a name under two groups; `77-restore-last-snapshot.sh` refuses a restore whose target group disagrees with the `.source-group` marker; `76-delete-snapshots.sh` warns. [Verification](VERIFICATION.md) checks 3C and 3D are the standing test that the invariant holds.
+
+`.source-group` — one line, the group the client's live repository sat under when the snapshot was taken. Written and refreshed by every `70-` run, never made immutable. It exists so `77-` can confirm it is restoring into the right place even after the live directory is gone (the case restore exists for).
 
 Timestamps are `YYYYMMDDTHHMMSSZ` (UTC, ISO-8601 basic, e.g. `20260825T210335Z`) — the exact value every script below both produces and accepts, so one is always copy-pasteable out of another's output.
 
@@ -145,6 +154,6 @@ operator ALL=(root) NOPASSWD: /usr/bin/cp, /usr/sbin/chattr, /usr/bin/rm
 
 ## What this does not protect against
 
-- **Media failure, filesystem corruption, or site loss.** A snapshot lives on the same storage as the origin. Offsite mirroring (ROADMAP.md 11.2) is the only answer here, and it is mandatory regardless of whether this tooling is in use.
-- **An attacker holding root on this host.** Root can clear the immutable flag exactly as easily as it can destroy anything else on the filesystem. Protection against a root-level compromise is never local — it is the surviving copy sitting where this machine has no authority to destroy it, i.e. offsite mirroring again, and only if the remote target genuinely enforces append-only against this server.
+- **Media failure, filesystem corruption, or site loss.** A snapshot lives on the same storage as the origin. An offsite copy is the only answer here. Server-side mirroring was dropped (ROADMAP.md 11.2), so that copy is one the client keeps — or the operator's own offline export, physically stored elsewhere — and it is necessary regardless of whether this tooling is in use.
+- **An attacker holding root on this host.** Root can clear the immutable flag exactly as easily as it can destroy anything else on the filesystem. Protection against a root-level compromise is never local — it is the surviving copy sitting where this machine has no authority to destroy it: a client-side offsite copy, or an air-gapped offline export the operator has physically disconnected. This server pushing to a foreign target is not among the options — it was dropped precisely because no file-copy transport it could use gives the append-only guarantee such a copy needs (ROADMAP.md 11.2).
 - **Genuine tamper detection.** There is no structural comparison between generations — a "does an existing segment's size or hash disagree with what it was last time" check was designed, scrutinized, and dropped: append-only already prevents a compromised client from producing that signal in the first place, and the server's own mutating operations (`borg check --repair`, reclamation tooling) would trip the same signal a real problem would, making it noise rather than a diagnosis. What this tooling gives the operator is fast, local rollback and a minimal safety net against their own mistakes — not a substitute for the broader protection offsite/offline copies provide.

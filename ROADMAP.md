@@ -22,72 +22,34 @@ The consequence is deliberate, and is documented as normal operation rather than
 
 What this does **not** rule out is a **manual, operator-side** reclamation tool for exceptional situations. Space stranded by repeatedly failed backups (Operations, Chapter 10.4) currently has no answer other than the transaction rollback in [Recovery](docs/RECOVERY.md) Section 1, which is designed for accidents rather than for cleanup. Any such tool would be a deliberate, attended action — never a schedule, and never reachable from a client connection.
 
-## 11.2. Mirroring Own Repositories to a Foreign Backup Server
+## 11.2. Replicating Own Repositories Off-Server — foreign-server mirroring dropped; manual offline export planned
 
-The ability for this server to push/replicate the repositories it hosts to a **different, external backup server** for offsite redundancy — the reverse direction of the existing `MIRROR` client group (Chapter 7.1), which is about *receiving* backups from external/friend clients, not sending this server's own hosted data elsewhere.
+Two things have lived under this number. The first — this server replicating its hosted repositories to a **different, external backup server** for live offsite redundancy — was planned and is now **dropped**. The entry is kept, as 11.1 is, so the decision and its reasoning stay on record. What replaces it is smaller and stays inside the trust boundary: a **manual, operator-side helper for copying repositories onto removable media**.
 
-This replication is planned as an **exact 1:1 copy** of the repository — a full, byte-for-byte replica, not a selective or filtered transfer. There is no point in this pipeline where the server can inspect, redact, or otherwise limit what the foreign server receives: it gets literally the same repository this server holds.
+### Why foreign-server mirroring is dropped
 
-This makes client-side encryption not just a good idea but an absolute precondition for this feature: the foreign backup server is, by definition, outside this project's trust boundary — a third party whose own security this project has no control over. The entire confidentiality of the mirrored copy depends on the client having already encrypted every archive with a client-held key **before** it ever reached this server in the first place. As with any repository handled by this project, the client-held keyfile encryption model (Chapter 2.1.2) is expected to carry over unchanged: a mirrored copy remains only as readable as the original — the encryption key stays with whoever holds it today, not with either server. An unencrypted repository must never be mirrored this way, since doing so would hand the foreign server a complete, plaintext copy of everything.
+The feature only meant something if the foreign server enforced append-only against this one. An offsite copy that accepts deletions is not a second copy in any meaningful sense: an attacker with root here inherits whatever replication credentials this server holds, so if those credentials permit deletion, one compromise destroys the local data and the remote copy in the same session. That requirement cannot be met inside this project's model:
 
-### The foreign server must enforce append-only (mandatory)
+- **This server holds no repository key** (Chapter 2.1.2). The only replication mechanism available to it is a file-level copy of the opaque repository directory — `rsync`/`rclone`, never the Borg protocol, because every archive-moving Borg operation (`borg create`, `borg transfer` in Borg 2.x) must open the manifest and needs the key. This is not a limitation a newer Borg lifts; it follows from the key never being on the server. `borg serve --append-only` is therefore never in the path — "the foreign side enforces append-only" could only mean a pull-based fetch, or filesystem-level immutability and versioning on the remote.
+- **rsync has no append-only mode.** `rrsync -no-del` blocks `--delete` and `--remove*`, but nothing stops a hostile or buggy sender from overwriting existing files in place, and `rrsync` can filter client options off but cannot force `--ignore-existing` on. Borg's committed segments are frozen by the protocol; rsynced files are not.
+- Closing that gap means trusting the foreign operator's storage layer — remote snapshots, ZFS/btrfs, WORM — which is exactly the third-party integrity this project declines to assume. An unverified remote is a copy that happens to be far away, not an offsite backup.
+- The same reasoning runs backwards, so **this project does not offer an inbound rsync mirror endpoint to third parties either.** It could not be locked down to the standard `borg serve` meets — rsync is a large C codebase with a running CVE history, against a narrow purpose-built protocol — and offering it would undercut the standard the rest of the server holds to.
 
-Encryption protects the mirrored copy's confidentiality. It does nothing for its **survival**, and that is a separate, equally hard requirement: the foreign server MUST refuse deletions from this server. Mirroring to a target that accepts deletions does not produce a second copy in any meaningful sense.
+**Offsite redundancy is therefore delegated to the client.** Only the client holds the key, so only the client can make a second, genuinely independent copy: another `borg create` target, or `borg serve` against a foreign server *the client* trusts. This is documented as a client recommendation ([Client Use](docs/CLIENTUSE.md), [Best Practices](docs/BEST_PRACTICES.md)), not built as a server feature. The `MIRROR` client group (Chapter 7.1) already covers the one adjacent thing this server does safely — *receiving* backups from external clients over the same forced-command `borg serve` path every other client uses.
 
-The reason is the threat this copy exists to answer. Snapshots (11.5) explicitly do not cover an attacker holding root on this host, because root can clear an immutable flag or destroy a block-layer snapshot just as easily. The offsite copy is the designated answer to that scenario — but only if it is beyond this host's reach. An attacker with root here inherits whatever replication credentials this server holds, and if those credentials permit deletion, one compromise destroys the local data and the offsite copy in the same session. The remote copy would then protect against fire and disk failure, not against compromise, and the scope boundary drawn in 11.5 would be hollow.
+The append-only verification procedure this entry used to carry (probe archive, `borg delete` + `borg compact`, then measure whether physical space is reclaimed — the only signal that discriminates, since Borg refuses nothing and warns nothing) is still useful to a client setting up its own offsite target, and now lives in [Client Use](docs/CLIENTUSE.md) Chapter 9.
 
-Two consequences follow directly:
+### What replaces it: a manual offline export helper
 
-- **Enforcement must live on the foreign side.** This server cannot usefully restrict itself: any local flag, config value, or wrapper limiting outbound deletion is advisory only, because the same root that mounts the attack can change it. The guarantee has to be that the *remote* refuses the operation, exactly as this server's own wrapper refuses it for its clients (Chapter 1.2.4).
-- **Or the flow is inverted.** A pull-based design, in which the foreign server fetches and this server holds no outbound credentials at all, satisfies the requirement by construction and is the stronger form where the remote operator can be persuaded to run it.
+A host-side script that copies the hosted repository directories onto a mounted block device (`rsync -a --delete`), for an air-gapped copy the operator physically disconnects and can store elsewhere. This stays inside the project's trust boundary — the operator's own disk, in the operator's hands — so the append-only problem above does not apply: the immutability is physical (the medium is unplugged), not a protocol property. It is the "offline" half of the offline/offsite split; the "offsite" half is the client's job, above.
 
-This is the same guarantee this project already provides to its own clients, applied one level up: when mirroring outward, **this server is the client**, and it must be treated with exactly the distrust it applies to everyone connecting to it. Where the foreign server runs this project too, the property already exists and only needs to be configured deliberately. Where it is a third party's infrastructure, append-only must be **verified before the target is used**, not assumed from a description — an unverified remote is not an offsite backup, it is a copy that happens to be far away.
+Scope and constraints:
 
-Practical consequence to plan for: an append-only remote never reclaims space on its own. Compaction there becomes a coordinated, deliberate operator action on the foreign side, subject to the same reasoning this project applies to every mutating operation — it must not be reachable from the replication connection.
-
-### Verifying the guarantee
-
-Every intuitive check fails here, because Borg reports nothing. Measured against an append-only repository: `borg delete` exits 0, the archive stops appearing in `borg list`, and `borg compact` exits 0 with no output either. Nothing is refused and nothing warns — the client-visible behaviour is indistinguishable from that of an unprotected target. An operator who deletes a test archive and watches it vanish, or who waits for `compact` to be rejected as confirmation that the guarantee holds, is misled in both directions.
-
-The only criterion that discriminates is whether **physical space is reclaimed**. Run before the first mirror, while the target repository is still empty, the signal is unambiguous (measured with Borg 1.2.8):
-
-| | unprotected target | append-only target |
-|---|---|---|
-| after `borg init` | 42,293 B | 42,293 B |
-| after a 1 MB probe archive | 1,092,326 B | 1,092,377 B |
-| after `borg delete` + `borg compact` | 42,329 B | 1,093,846 B |
-
-The protected repository does not merely keep the data — it grows slightly, because the deletion transaction is itself appended.
-
-The procedure:
-
-1. read the repository's physical size
-2. create a throwaway archive of ~1 MB of incompressible data (`head -c 1M /dev/urandom`)
-3. confirm the size grew
-4. `borg delete` that archive
-5. run `borg compact`
-6. read the size again — a return to the starting value means the target accepts real deletions and is unusable as the offsite copy 11.5 depends on
-
-Three points counterintuitive enough to be worth recording:
-
-- **Step 5 is not optional.** Since Borg 1.2 an ordinary repository does not release space on `delete` either. A procedure that omits `compact` reports every target as protected, including the ones that are not.
-- **One megabyte is sufficient, and a larger probe buys nothing** — including against a target that is not empty. Every `borg create` writes into fresh segment files rather than extending existing ones, so the probe archive sits alone in its own segment; deleting it leaves that segment essentially fully unused, far above the threshold `borg compact` requires before it rewrites a segment (`--threshold`, default 10%).
-- **The probe data must be incompressible.** Deduplication and compression would otherwise reduce a nominal megabyte to a few kilobytes and leave the measurement in the noise. Since the probe cannot be removed from a correctly configured target, it stays there permanently — which is the reason to keep it small.
-
-#### The measurement channel is the hard part
-
-Steps 1 and 6 are the ones without a general solution, and this shapes the whole feature: **Borg offers no way to read a remote repository's physical size.** Verified against Borg 1.2.8:
-
-- `borg info` reports live archive and chunk statistics, not occupied segments. After the deletion, the protected and the unprotected repository report byte-identical output — `All archives: 0 B`, empty chunk index. The field that would discriminate does not exist.
-- `borg config <repo> append_only` refuses remote repositories outright (`Repository must be local`), so the repository-level flag cannot be read across the wire. It would not be conclusive anyway: server-side `borg serve --append-only` is a property of the connection and is not written into the repository config.
-- No `borg debug` subcommand exposes repository size, and debug commands are not a basis for an operational procedure regardless.
-- Shell access on the target, which would settle it with `du`, is precisely what a hardened server does not grant.
-
-Physical usage therefore has to come from a channel the target deliberately provides. This project's `info` channel (Chapter 8) is exactly such a channel — it reports live usage read from the enforcing XFS project quota, the filesystem's own accounting rather than Borg's — and is the reference for what a verifiable mirror target has to offer. Against a target exposing nothing comparable, the only remaining option is to obtain the figure from the remote operator out of band; the client cannot establish the guarantee by itself.
-
-This consequence should be stated plainly rather than worked around: **the ability to verify this guarantee is a criterion for choosing a mirror partner**, not an afterthought once one has been chosen. And verification is not a one-time acceptance test — the remote's configuration can change at any point without announcing itself, so it belongs on the same recurring schedule as restore testing (BEST_PRACTICES Chapter 7).
-
-The mirror image of this check applies to this server's own append-only guarantee. That guarantee rests entirely on every key being bound to the forced command generated by `build_authorized_keys.sh`; a single `authorized_keys` line lacking the `command="/borg-wrapper.sh …"` prefix silently exempts that key, and nothing else in the system would look wrong. Regeneration on container start limits how long such a line can survive, but an explicit read-only audit — every non-comment line carries the prefix, line count matches the configured clients — is worth having alongside the remote test.
+- **Manual and attended.** No timer, no schedule, no client-facing surface — the category of `99-container-status.sh`. Nothing about it is reachable from a client connection (Chapter 1.2.6).
+- **The copy is ciphertext.** A keyfile-mode repository copied this way cannot be restored without the client's exported key and passphrase (Chapter 2.1.1), which exist only on the client. The helper produces half of a usable offline backup; the client-side key archive ([Best Practices](docs/BEST_PRACTICES.md) Chapter 2.1) is the other half. The server cannot hold that half without becoming the key escrow the same chapter rules out.
+- **Not against a live repository.** Run it in an idle window, or from a storage snapshot (11.5). Borg repositories are transactional — a copy taken mid-commit rolls back to the last committed transaction on next access rather than tearing — but a coordinated quiet window is cleaner still.
+- **`borg check --repository-only` on the copy** validates it structurally without a key, exactly as for the primary (11.3).
+- **Destination-agnostic, but only removable media is supported.** The same `rsync` invocation can point anywhere the operator can write. Doing so is the operator's own decision and carries every caveat above; it is not a mirroring feature and is not documented as one.
 
 ## 11.3. Automated Integrity Verification (`borg check`)
 
@@ -123,7 +85,7 @@ This is a **deployment/lifecycle change only** — it does not alter client-faci
 
 ## 11.5. Point-in-Time Snapshots of the Storage Volume — done
 
-Point-in-time snapshots of `HOST_REPO_BASE`, with a client-scoped restore path, closing the one gap append-only cannot: destructive action originating on the *host* side rather than over a client's connection (operator error, destructive host-side software, a bug in this server's own privileged operations). Not a second copy and not a substitute for offsite mirroring (11.2), which remains mandatory regardless.
+Point-in-time snapshots of `HOST_REPO_BASE`, with a client-scoped restore path, closing the one gap append-only cannot: destructive action originating on the *host* side rather than over a client's connection (operator error, destructive host-side software, a bug in this server's own privileged operations). Not a second copy, and not a substitute for an offsite copy — which, now that server-side foreign mirroring is dropped (11.2), is wholly a client-side responsibility and remains necessary regardless of snapshots.
 
 Shipped as `snapshots/70-create-snapshot.sh` (plus `71-timer-install.sh`), `75-list-snapshots.sh`, `76-delete-snapshots.sh`, and `77-restore-last-snapshot.sh`, plus `scripts/04-reattach-client.sh` for the one gap a `HOST_REPO_BASE`-only restore leaves behind (reconnecting `clients.conf`). See [Snapshots](docs/SNAPSHOTS.md) for scope, requirements, layout, and how to use each script, and [Verification](docs/VERIFICATION.md) Test 11 for the checks proving it holds — immutability survives even root, restore reconstructs the exact quota and project id, and deletion refuses a path outside `SNAPSHOT_BASE`.
 

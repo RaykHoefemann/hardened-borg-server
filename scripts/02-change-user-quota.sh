@@ -74,8 +74,8 @@ fi
 
 # validate username charset (defensive: keeps the grep pattern safe)
 case "$USERNAME" in
-    *[!a-zA-Z0-9_-]*)
-        echo "ERROR: Invalid username '$USERNAME' (only a-z, 0-9, _, - allowed)"
+    ''|-*|*[!a-zA-Z0-9_-]*)
+        echo "ERROR: Invalid username '$USERNAME' (must be non-empty, must not start with '-', only a-z, 0-9, _, - allowed)"
         exit 1
         ;;
 esac

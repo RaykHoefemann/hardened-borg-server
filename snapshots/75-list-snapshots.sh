@@ -106,9 +106,10 @@ fi
 # operator typo containing e.g. '/' or '..' must not be allowed to walk this
 # script's path construction anywhere outside SNAPSHOT_BASE.
 case "$CLIENT" in
-    *[!a-zA-Z0-9_-]*)
-        echo "ERROR: '$CLIENT' contains characters outside a-z, 0-9, _, - and"
-        echo "       cannot be trusted as a path component under SNAPSHOT_BASE."
+    ''|-*|*[!a-zA-Z0-9_-]*)
+        echo "ERROR: '$CLIENT' must be non-empty, must not start with '-', and may"
+        echo "       use only a-z, 0-9, _, - -- it is a path component under"
+        echo "       SNAPSHOT_BASE and cannot be trusted otherwise."
         exit 1
         ;;
 esac

@@ -186,8 +186,32 @@ Before production deployment:
 
 - validate client isolation in test environment
 - simulate restore scenarios
-- test mirror/offsite replication
+- if relying on local snapshots (Chapter 10.1): exercise a restore
 - if using the optional VPN/firewall layer (Chapter 4–5): verify firewall and VPN rules, confirm SSH is only reachable as intended
+
+---
+
+# 🔁 10. Redundancy: local snapshots and off-server copies (SHOULD)
+
+Neither of the following is required for the server to run, or for the mandatory guarantees (Chapters 1–3) to hold. Both are recommended, and declining either means carrying the corresponding risk yourself.
+
+## 10.1. Local snapshots of the storage volume
+
+The `snapshots/` scripts (see [Snapshots](SNAPSHOTS.md); [Roadmap](../ROADMAP.md) 11.5) give a fast local rollback for host-side damage to the repositories that append-only cannot see — operator error, destructive host-side software, a bug in the server's own privileged operations. They are optional; Borg runs without them.
+
+- **If you use them:** schedule them, and rehearse a restore ([Test Environment](TESTENV.md) Chapter 14, [Verification](VERIFICATION.md) Test 11).
+- **If you decline them:** host-side loss of a repository has no local recovery path. The only fallback is whatever off-server copy exists (10.2), and recovery is then a full re-seed rather than a seconds-long rollback.
+
+A snapshot is not a second copy: it lives on the same storage as the origin, and a root-level compromise or loss of the volume takes it down with everything else.
+
+## 10.2. Off-server copies
+
+Off-server redundancy splits in two, and this server produces only one half:
+
+- **Offsite — a copy on remote infrastructure — is the client's responsibility.** Only the client holds the key, so only the client can make a second, genuinely independent copy: a second `borg create` target, or `borg serve` against a foreign server it trusts. This server does not replicate its hosted repositories to a foreign one; the reasoning is in [Roadmap](../ROADMAP.md) 11.2. A client that keeps no such copy has no protection against site loss or a root-level compromise of this host. See [Client Usage](CLIENTUSE.md) Chapter 9 for how to make one and how to check the target enforces append-only.
+- **Offline — a copy on removable media — is the operator's to make**, with the manual export helper ([Roadmap](../ROADMAP.md) 11.2): a byte copy of the hosted repositories onto a disk that is then physically disconnected and, ideally, stored elsewhere. Every repository in it is still ciphertext — each client's key and passphrase are needed to read its own data back — so an offline export is only useful alongside the key custody of Chapter 2.1.
+
+Declining both means a site loss, or an attacker with root on this host, is unrecoverable for any client that also keeps no copy of its own.
 
 ---
 

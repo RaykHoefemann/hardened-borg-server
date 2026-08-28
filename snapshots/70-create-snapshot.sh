@@ -155,10 +155,10 @@ snapshot_client() {
     _sc_group="$(basename "$(dirname "$_sc_client_dir")")"
 
     case "$_sc_username" in
-        *[!a-zA-Z0-9_-]*)
-            echo "ERROR: skipping '$_sc_client_dir' -- name contains characters"
-            echo "       outside a-z, 0-9, _, - and cannot be trusted as a"
-            echo "       path component under SNAPSHOT_BASE."
+        ''|-*|*[!a-zA-Z0-9_-]*)
+            echo "ERROR: skipping '$_sc_client_dir' -- name must be non-empty,"
+            echo "       must not start with '-', and may use only a-z, 0-9, _, -"
+            echo "       to be trusted as a path component under SNAPSHOT_BASE."
             return 1
             ;;
     esac
@@ -170,6 +170,13 @@ snapshot_client() {
     echo "[snapshot] ${_sc_username} (${_sc_group}): starting"
 
     mkdir -p "$_sc_snap_dir"
+
+    # Record which group this client's live repository sits under. A sibling
+    # of the generation directories, never made immutable, rewritten each
+    # run. 77-restore-last-snapshot.sh reads it back to confirm it is
+    # restoring into the group these snapshots actually came from, even if
+    # the live directory was destroyed (DESIGN.md 1.2.3).
+    printf '%s\n' "$_sc_group" > "${_sc_snap_dir}/.source-group"
 
     # A .creating-* left behind by a run that never reached the mv below
     # (crash, kill, disk full mid-copy). It was never renamed to a real
@@ -309,6 +316,29 @@ if ! xfs_info "$SNAP_MOUNT" 2>/dev/null | grep -q 'reflink=1'; then
     echo "       filesystem with reflink support (xfs_info must report"
     echo "       reflink=1). This mechanism requires it (see docs/SNAPSHOTS.md,"
     echo "       \"Why reflinks\"). Nothing was done."
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# The snapshot layout keys on the client name alone (${SNAPSHOT_BASE}/<client>/,
+# docs/SNAPSHOTS.md "Layout on disk"), so it depends on what DESIGN.md 1.2.3
+# already guarantees: a client name is unique across groups. If two group
+# directories hold a client of the same name, the second would collide with
+# the first on ${SNAPSHOT_BASE}/<client>/<timestamp> -- every run, silently,
+# with a misleading "duplicate timestamp" error per collision. Refuse the
+# whole run once, with an accurate message, instead.
+_dupes="$(
+    for _d in "${HOST_REPO_BASE}"/*/*; do
+        [ -d "$_d" ] || continue
+        basename "$_d"
+    done | sort | uniq -d
+)"
+if [ -n "$_dupes" ]; then
+    echo "ERROR: these client names exist under more than one group:"
+    printf '%s\n' "$_dupes" | sed 's/^/         /'
+    echo "       The snapshot layout requires globally unique client names --"
+    echo "       see DESIGN.md 1.2.3 and VERIFICATION.md check 3C. Resolve the"
+    echo "       collision before snapshotting. Nothing was done."
     exit 1
 fi
 

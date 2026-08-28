@@ -144,20 +144,23 @@ while IFS=":" read -r name group repo quota; do
         \#*) continue ;;
     esac
 
-    # Validate name (used in file path)
-    if ! echo "$name" | grep -qE '^[a-zA-Z0-9_-]+$'; then
+    # Validate name (used in file path). Must not be empty or start with '-'
+    # (a leading dash could be read as an option flag downstream).
+    if ! echo "$name" | grep -qE '^[a-zA-Z0-9_][a-zA-Z0-9_-]*$'; then
         log "[ERROR] Invalid name '$name' – skipping"
         continue
     fi
 
-    # Validate group
-    if ! echo "$group" | grep -qE '^[a-zA-Z0-9_-]+$'; then
+    # Validate group (same rule)
+    if ! echo "$group" | grep -qE '^[a-zA-Z0-9_][a-zA-Z0-9_-]*$'; then
         log "[ERROR] Invalid group '$group' for '$name' – skipping"
         continue
     fi
 
-    # Validate repo path (used in forced command)
-    if ! echo "$repo" | grep -qE '^/[a-zA-Z0-9/_-]+$'; then
+    # Validate repo path (used in forced command). Each '/'-separated segment
+    # must start with an alphanumeric or underscore, so no segment can be
+    # read as an option.
+    if ! echo "$repo" | grep -qE '^(/[a-zA-Z0-9_][a-zA-Z0-9_-]*)+$'; then
         log "[ERROR] Invalid repo path for '$name': '$repo' – skipping"
         continue
     fi

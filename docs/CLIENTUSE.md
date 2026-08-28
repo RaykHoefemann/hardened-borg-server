@@ -436,6 +436,104 @@ monthly or quarterly is more realistic than nightly for a large repository.
 
 ---
 
+## 9. Keep your own offsite copy
+
+The server holds no key of yours and **does not replicate your repository
+anywhere.** If its site is lost, or an attacker gains root on the server
+host, the repository there is gone — and the operator's local snapshots,
+which live on the same storage, go with it. The only copy that survives that
+is one **you** keep, somewhere the server cannot reach.
+
+Only you can make one, because only you hold the key. Two ways:
+
+**A second, independent repository.** Add another `borg create` target — a
+Borg server you trust, a friend's box, a rented account — initialised with
+its own keyfile:
+
+```bash
+borg init --encryption=keyfile-blake2 ssh://second-target/./user1-os1-pc1
+borg create ssh://second-target/./user1-os1-pc1::'{hostname}-{now:%Y-%m-%dT%H:%M:%S}' /home /etc
+```
+
+Genuinely separate: its own key, its own chunk history, no shared-corruption
+path with the copy on the primary server. Export *its* key offline too
+(Chapter 3.2) — a second repository you cannot open is not a backup. The two
+`borg create` runs each re-walk the source but, with the files cache,
+re-chunk only what changed; compression, encryption and segment writes then
+happen once per repository.
+
+**Or a byte copy of the primary repository** with `rsync`/`rclone`, if the
+second target is only storage rather than a Borg server. Cheaper, but it
+propagates any corruption and the copy shares the primary's key and
+repository ID. Run it only while nothing is writing to the source.
+
+### If the second target must survive a compromise of the first
+
+Then it has to **enforce append-only against you** — refuse deletions, not
+just accept and ignore them. A target that honours a `borg delete` is not a
+second copy in any meaningful sense: whatever reaches the first repository
+through a compromise of your machine reaches the second one too.
+
+Verifying this is harder than it looks, because **Borg reports nothing**.
+Against an append-only target, `borg delete` still exits 0, the archive
+still disappears from `borg list`, and `borg compact` still exits 0 with no
+output. Nothing is refused; nothing warns. Waiting for `compact` to be
+rejected, or watching a test archive vanish, misleads you either way.
+
+The only signal that discriminates is whether **physical space is
+reclaimed**. Run this while the target repository is still empty (measured
+with Borg 1.2.8):
+
+| | unprotected target | append-only target |
+|---|---|---|
+| after `borg init` | 42,293 B | 42,293 B |
+| after a 1 MB probe archive | 1,092,326 B | 1,092,377 B |
+| after `borg delete` + `borg compact` | 42,329 B | 1,093,846 B |
+
+An append-only repository does not merely keep the data — it grows
+slightly, because the deletion transaction is itself appended.
+
+The procedure:
+
+1. read the target repository's physical size
+2. create a throwaway archive of ~1 MB of incompressible data
+   (`head -c 1M /dev/urandom > probe && borg create ::probe ./probe`)
+3. confirm the size grew
+4. `borg delete ::probe`
+5. run `borg compact`
+6. read the size again — a return to the starting value means the target
+   accepts real deletions and cannot protect you against a compromise of
+   your own machine
+
+Three things that trip people up:
+
+- **Step 5 is not optional.** Since Borg 1.2 an ordinary repository does not
+  release space on `delete` either; skip `compact` and every target looks
+  protected.
+- **1 MB is enough**, even against a non-empty target. Each `borg create`
+  writes fresh segment files, so the probe sits alone in its own segment;
+  deleting it leaves that segment almost entirely unused, well past the 10%
+  `borg compact` needs before it rewrites one.
+- **The probe must be incompressible.** Compression and dedup would
+  otherwise shrink a nominal megabyte into the measurement noise. Since the
+  probe cannot be deleted from a correct target, keep it small — it stays
+  there for good.
+
+The hard part is steps 1 and 6: **Borg gives you no way to read a remote
+repository's physical size.** `borg info` reports archive and chunk
+statistics, not occupied segments, and reads identically for a protected
+and an unprotected repo after the deletion. `borg config <repo>
+append_only` refuses remote repositories outright. Shell access with `du`
+is exactly what a hardened target does not grant. You need a size figure the
+target deliberately exposes — if it also runs this project, its `info`
+channel reports filesystem-enforced usage — or you get the figure from that
+target's operator out of band. **Whether you can verify the guarantee is a
+criterion for choosing the target**, not an afterthought, and you re-check
+it on the same schedule as your restore tests (Chapter 8): the target's
+configuration can change without telling you.
+
+---
+
 ## What your operator cannot do for you
 
 | Situation | Who can act |
@@ -447,3 +545,4 @@ monthly or quarterly is more realistic than nightly for a large repository.
 | Interrupted `borg init` — `DENY: no repository segments found` | Operator clears the directory; you re-initialize, losing nothing (Chapter 3.1) |
 | `DENY: repository directory missing – needs operator action` | **Operator only**, and they have a script for it. Your repository directory is not on the server; nothing you retry will change that, and the server will not create one on its own — doing so would leave you with no storage quota at all. Report the message. What the repair restores is your *access*: whatever was in the repository went with the directory, so you will be initializing a fresh one (Chapter 3.1) |
 | Verifying archive contents | **Only you** — the server has no key |
+| An offsite copy against site loss or a server compromise | **Only you** — the server keeps no copy elsewhere and does not replicate (Chapter 9) |

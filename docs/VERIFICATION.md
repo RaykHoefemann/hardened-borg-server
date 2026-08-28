@@ -36,7 +36,7 @@ periodically thereafter.
 > would have caught the same property failing (see **Negative test** under
 > each entry), nor that nothing outside this page's scope is wrong (see
 > [What this document does not cover](#what-this-document-does-not-cover) at
-> the end). Read "24 of 24 passed" as "no defect found in what this page
+> the end). Read "every check passed" as "no defect found in what this page
 > measures," not as "no defect exists."
 
 ## How to read a test
@@ -881,7 +881,9 @@ what tests 7 and 9 measure on your deployment.
 ## 3. Every key is bound to the forced command
 
 **Claim** — [Operations](OPERATIONS.md): `build_authorized_keys.sh` generates
-every entry as `command="/borg-wrapper.sh <repo>",restrict <key>`.
+every entry as `command="/borg-wrapper.sh <repo>",restrict <key>`, and
+[Design](DESIGN.md) Chapter 1.2.3: `<repo>` is always `/repo/<group>/<client>`,
+with `<group>` one of `OWN`/`MIRROR` and `<client>` globally unique.
 
 **Why it matters** — this is the single point on which every other guarantee
 depends. One line without the prefix exempts that key from append-only, path
@@ -890,8 +892,10 @@ nothing else in the system would look wrong. Losing only `restrict` is the
 smaller half of that and still real: the wrapper keeps gating the command, while
 the key regains forwarding, TTY allocation and agent access from SSH itself.
 
-Two different questions, asked separately: whether every key is gated at all,
-and whether each gated key points where `clients.conf` says it should.
+Four questions, asked separately: whether every key is gated at all (3A),
+whether each gated key points where `clients.conf` says it should (3B),
+whether `clients.conf` itself is well-formed against the path structure
+(3C), and whether the on-disk tree matches that structure (3D).
 
 ### 3A — every entry carries the forced command and `restrict` ✅
 
@@ -976,6 +980,103 @@ show it behaves accordingly.
 > The file is regenerated from `clients.conf` on every container start and
 > swapped atomically, so a manually added line does not survive a restart.
 > That limits exposure; it does not remove the need to check.
+
+### 3C — every `clients.conf` entry is well-formed against the path structure ⚠️
+
+3B checks that `authorized_keys` and `clients.conf` *agree*; it does not check
+that either is well-formed. A `clients.conf` line whose `<repo>` field is not
+`/repo/<group>/<name>` — or whose group is neither `OWN` nor `MIRROR`, or whose
+name is reused — is copied faithfully into `authorized_keys`, so 3B passes over
+it.
+
+**Run** (on the host)
+
+```bash
+awk -F: '
+  /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+  {
+    if ($2 != "OWN" && $2 != "MIRROR") print "bad group:  " $0
+    if ($3 != "/repo/" $2 "/" $1)      print "bad repo:   " $0
+    if (seen[$1]++)                    print "dup name:   " $0
+  }
+' config/clients.conf
+```
+
+**Pass** — no output.
+
+**Fail** — each line printed names the break:
+
+- `bad group` — a `<group>` outside `{OWN, MIRROR}`. The provisioning scripts
+  never write one; `build_authorized_keys.sh` still renders the key (it only
+  checks the character set), aiming the forced command at a path no snapshot,
+  quota or reattach tooling expects.
+- `bad repo` — `<repo>` is not `/repo/<group>/<name>`. It is copied verbatim
+  into `command="/borg-wrapper.sh <repo>"`, so the client is served from, and
+  `--restrict-to-path`-confined to, whatever this says — another client's
+  directory included. 3B compares this field against `authorized_keys` and
+  passes, because both carry the same wrong value.
+- `dup name` — the same `<client>` on two lines. `config/keys/<name>.pub` is
+  one file, the info-channel path collides, and `SNAPSHOT_BASE/<name>/` cannot
+  hold two clients' histories apart (`70-`/`76-`/`77-` refuse when they detect
+  it — see [Snapshots](SNAPSHOTS.md)). The provisioning scripts refuse a name
+  already in the file; this only appears from a hand edit or a merge.
+
+Fix the line, restart the container to regenerate `authorized_keys`, and re-run
+3B and 7 for any client whose `<repo>` had pointed elsewhere.
+
+**Negative test** — not yet staged. Planned: append `x:OWN:/repo/OWN/y:50G`
+(repo ≠ name) and a second line reusing an existing name under the other group;
+confirm the check prints one line for each while 3A and 3B stay green against
+the same file.
+
+**What this does not show** — that the on-disk directories exist or match (3D),
+and that the wrapper behind `command=` is the shipped one (test 0; tests 1, 2,
+7 for behaviour).
+
+### 3D — the on-disk repository tree matches the declared structure ⚠️
+
+**Run** (on the host; needs read access to `HOST_REPO_BASE` — run under
+`podman unshare` or as the user that owns the storage)
+
+```bash
+base=/var/mnt/extern1/borg-server        # your HOST_REPO_BASE, as config.sh resolves it
+
+# 1. top level: exactly the group dirs, nothing else
+ls -A "$base" | grep -vE '^(OWN|MIRROR)$'
+
+# 2. one level down: every entry is a directory
+find "$base"/OWN "$base"/MIRROR -mindepth 1 -maxdepth 1 ! -type d 2>/dev/null
+
+# 3. the <group>/<client> set on disk == the set clients.conf declares
+diff <(cd "$base" && find OWN MIRROR -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort) \
+     <(awk -F: '!/^[[:space:]]*#/ && NF {print $2"/"$1}' config/clients.conf | sort)
+```
+
+**Pass** — none of the three commands produces output.
+
+**Fail** —
+
+- output from command 1 or 2 — the tree has drifted from `/repo/<group>/<client>`.
+  A client directory directly under `HOST_REPO_BASE`, or a stray file where a
+  client directory belongs, is invisible to `build_authorized_keys.sh` (it
+  renders from `clients.conf`, not the tree) and mis-swept by `70-create-snapshot.sh`,
+  which walks exactly `HOST_REPO_BASE/*/*`.
+- a `<` line from the `diff` — a directory on disk that `clients.conf` does not
+  declare. Legitimately this is a client mid-`04-reattach-client.sh` (directory
+  present, entry not yet rewritten); anything else is an orphan.
+- a `>` line from the `diff` — a client `clients.conf` declares with no
+  directory yet. Legitimately this is a client provisioned but not yet given a
+  repository (`build_authorized_keys.sh` logs `[WARN] Repository directory
+  '<repo>' is missing`); `03-provision-client.sh` is the way forward.
+
+**Negative test** — not yet staged. Planned: create
+`HOST_REPO_BASE/OWN/<name>/../loose-dir` at the top level and a stray file under
+a group directory; confirm each is reported and that removing them clears the
+check.
+
+**What this does not show** — that each directory *contains* a valid Borg
+repository (the client's `borg check`; [Design](DESIGN.md) Chapter 2.1, Roadmap
+11.3), or that its quota is the configured one (check 5.5A).
 
 ---
 
@@ -1679,8 +1780,9 @@ a correctly aimed test 10.
 
 **What this does not show** — protection against the operator. This is a
 statement about what a *client* can do; anyone with host access can remove the
-repository directory outright, which is why off-site copies and the mirror
-arrangement exist rather than being optional.
+repository directory outright, which is why local snapshots and an off-site
+copy matter — the latter kept by the client, since server-side mirroring was
+dropped (Roadmap 11.2).
 
 > Verified, in both readings, against `v0.1.0-beta.29` with a Borg 1.2.8 client.
 > Against the client's own keyfile repository the command stops at
@@ -1723,7 +1825,7 @@ The generation and its contents are unchanged afterward.
 
 **Negative test** — measured directly, both readings, against `FCOS-BorgBackupServer` (2026-08-27): a generation with the flag confirmed set by `lsattr` was attempted for deletion with `sudo rm -rf` and failed with `Operation not permitted` on every file it reached. The identical directory tree — same ownership, same mode, same content — deleted cleanly once `sudo chattr -R -i` was run against it first, which is exactly the two-step sequence `76-delete-snapshots.sh` performs deliberately, and only after its own confirmation prompt.
 
-**What this does not show** — protection against an attacker holding root who *clears the flag first*. `chattr -i` is reversible by root by design; a permanently unclearable copy is not the property this mechanism provides, and is not claimed to be — offsite mirroring, not snapshots, is the answer to a root-level host compromise (see [Snapshots](SNAPSHOTS.md), "What this does not protect against").
+**What this does not show** — protection against an attacker holding root who *clears the flag first*. `chattr -i` is reversible by root by design; a permanently unclearable copy is not the property this mechanism provides, and is not claimed to be — an off-site copy, not snapshots, is the answer to a root-level host compromise, and it is client-side since server-side mirroring was dropped (see [Snapshots](SNAPSHOTS.md), "What this does not protect against").
 
 ### 11B — restore reconstructs the exact quota and project id ✅
 
@@ -1809,6 +1911,8 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 | 2 | Default-deny on commands | ✅ | ☐ |
 | 3A | Every entry carries the forced command and `restrict` | ✅ | ☐ |
 | 3B | Every entry points at the repository `clients.conf` assigns | ✅ | ☐ |
+| 3C | Every `clients.conf` entry is well-formed against the path structure | ⚠️ | ☐ |
+| 3D | The on-disk repository tree matches the declared structure | ⚠️ | ☐ |
 | 4A | Podman itself is rootless | ✅ | ☐ |
 | 4B | The container is a user service | ✅ | ☐ |
 | 4C | The container's processes belong to an unprivileged user | ✅ | ☐ |
@@ -1825,15 +1929,16 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 | 11B | Restore reconstructs the exact quota and project id | ✅ | ☐ |
 | 11C | Deletion refuses a path outside `SNAPSHOT_BASE` | ✅ | ☐ |
 
-Twenty-six ✅ and one `(✅)` out of twenty-seven — every check on this page is
-now either fully verified or capped, none still resting on a single
-successful run. 0A is the sole capped exception, at `(✅)` rather than plain
-✅, because its counter-example cannot be produced at all — not because
-nobody has tried (see "How to read a test"). That does not make the page
-complete — see [What this document does not cover](#what-this-document-does-not-cover)
+Twenty-six ✅, one `(✅)` and two ⚠️ out of twenty-nine. 0A is the sole
+capped exception, at `(✅)` rather than plain ✅, because its counter-example
+cannot be produced at all — not because nobody has tried (see "How to read a
+test"). 3C and 3D are the two ⚠️: their procedures follow from the
+implementation and the structure defined in [Design](DESIGN.md) Chapter
+1.2.3, but neither has had its failing direction staged against a live
+deployment yet. That does not make the page complete — see
+[What this document does not cover](#what-this-document-does-not-cover)
 below, and 5.5A's own note on the one sub-case (`unreadable`) no recipe has
-reached — only that no row still rests on reasoning alone where measurement
-was possible.
+reached.
 
 A deployment that fails **0A** has not been verified at all — the remaining
 results describe an artifact of unknown origin, and **0B** is what keeps that
@@ -1852,10 +1957,11 @@ absence is most expensive to discover.
 - **Restore testing** — that backups can actually be restored is a separate
   and equally mandatory discipline; see [Best Practices](BEST_PRACTICES.md)
   Chapter 7 and [Recovery](RECOVERY.md) Section 4.
-- **Verifying a foreign mirror target** — checking that someone *else's*
-  server enforces append-only is a different problem with a different answer,
-  because you cannot read its physical usage. See [Roadmap](../ROADMAP.md)
-  11.2.
+- **Verifying a client-side offsite target** — a client that keeps its own
+  independent offsite copy (Roadmap 11.2) has to check that the foreign target
+  enforces append-only, a different problem with a different answer because you
+  cannot read its physical usage. The probe procedure for it is in
+  [Client Use](CLIENTUSE.md) Chapter 9.
 - **Host hardening itself** — SELinux enforcing, immutable OS, kernel
   isolation. Those are host-layer properties this project asserts as
   requirements but does not implement; verify them with the tooling of the OS

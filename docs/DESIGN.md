@@ -132,9 +132,21 @@ This project enforces security at the application level:
 
 ### 1.2.3. Repository Isolation
 
-- Each client mapped to a dedicated repository path
-- Access enforced via configuration + forced commands
-- No cross-repository filesystem access via application layer
+Every client is bound to exactly one repository path, and that path is the isolation boundary — enforced three times over: by the forced command generated from `clients.conf`, by SSH `restrict`, and by Borg's own `--restrict-to-path` (see 1.2.1 and Chapter 2.2).
+
+**The repository path is fixed by structure, not chosen per client:**
+
+```
+/repo/<group>/<client>
+```
+
+- **`/repo/`** — the container's repository mount (`CONTAINER_REPO_BASE`). On the host the same directory is `HOST_REPO_BASE/<group>/<client>`; the two are one bind mount, so every host-side script and the container operate on the identical path.
+- **`<group>`** — exactly **`OWN`** (the operator's own devices) or **`MIRROR`** (external partners, e.g. friends). `00-ssh-create-user.sh`, `03-provision-client.sh` and `04-reattach-client.sh` accept no other value; `build_authorized_keys.sh` additionally constrains it to `[A-Za-z0-9_-]+` at render time.
+- **`<client>`** — the client's name: `[A-Za-z0-9_-]`, non-empty, and not starting with `-` (a leading dash could be read as an option flag downstream). Every script that accepts a client name enforces this charset, and so does `build_authorized_keys.sh` at render time. The name is also **globally unique across both groups** — the provisioning scripts each refuse a name already present in `clients.conf`, regardless of group. A name is therefore a complete identifier on its own: the key file (`config/keys/<client>.pub`), the info-channel file (`/run/borg-info/repo/<group>/<client>.txt`) and the snapshot tree (`SNAPSHOT_BASE/<client>/`, see [Snapshots](SNAPSHOTS.md)) all key on it without repeating the group.
+
+**`clients.conf` is the declaration.** Each line is `name:group:repo:quota`, and `repo` MUST be exactly `/repo/<group>/<name>` — not a free field. `build_authorized_keys.sh` copies it verbatim into the forced command, so a value departing from the structure is a misconfiguration, not a customization. Verification checks 3B–3D hold the three representations — `clients.conf`, `authorized_keys`, and the on-disk tree — to the same structure.
+
+**Inside `<group>/<client>` is an opaque Borg repository** (`data/`, `config`, `index.*`, `hints.*`, …). The server never reads it (Chapter 2.1). The XFS project quota that bounds the client is set on the `<group>/<client>` directory itself (1.1.3). No cross-repository filesystem access exists through the application layer.
 
 ### 1.2.4. Append-Only Semantics
 
@@ -307,7 +319,7 @@ Beyond the repositories themselves, the server generates control files from conf
 As with the host security layer (Chapter 1.1), some parts of integrity live below this application and are the operator's responsibility:
 
 - The storage filesystem (XFS) protects its own metadata with CRCs but does **not** checksum file *data* blocks. Detection of data-block corruption therefore relies on Borg's per-chunk authentication and on `borg check` (3.1, 3.3), not on the filesystem itself.
-- Protection against physical media failure — redundancy, scrubbing, replacing failing disks — is a host/storage concern (e.g. RAID and disk monitoring), outside this project's scope in the same way host hardening is (Chapter 1.1). This application makes corruption *detectable*; keeping a second copy so that detected corruption is also *recoverable* is what the offsite mirroring roadmap item (Chapter 11.2) and the operator's own storage design are for.
+- Protection against physical media failure — redundancy, scrubbing, replacing failing disks — is a host/storage concern (e.g. RAID and disk monitoring), outside this project's scope in the same way host hardening is (Chapter 1.1). This application makes corruption *detectable*; keeping a second copy so that detected corruption is also *recoverable* is the operator's own storage design (RAID, a second local copy, the manual offline export of Chapter 11.2) and, for redundancy beyond the host, a client-side offsite copy — this server does not replicate to a foreign one (Chapter 11.2).
 
 ---
 
@@ -331,8 +343,9 @@ It exists because those boundaries are otherwise scattered across five documents
 | One client exhausts storage for the others | Enforcing XFS project quota (1.1.3) | Tests 5, 5.5 |
 | Undetected modification of stored data | Borg per-chunk authentication tags, verified on read (3.1) | — |
 | Password guessing, credential reuse | Key-only SSH; passwords and root login disabled (1.2.1) | Test 1.5 |
+| Operator error or host-side software destroys a repository's files | Point-in-time reflink snapshots of `HOST_REPO_BASE`, client-scoped restore (11.5) | Test 11 |
 
-The residual risk across this entire table is the same single point: every one of these properties depends on the client's key being bound to the forced command. One `authorized_keys` line without it voids all of them simultaneously, and nothing else in the system would look wrong. That is why Test 3 exists.
+The residual risk across every row but the last is the same single point: those properties depend on the client's key being bound to the forced command. One `authorized_keys` line without it voids all of them simultaneously, and nothing else in the system would look wrong. That is why Test 3 exists. The snapshot row is the exception — it is host-side tooling that answers accident and non-malicious host-side damage rather than a client acting against the server, and it depends instead on the immutable flag holding and the snapshot volume being intact (Test 11).
 
 ## 4.2. Handed to the operator
 
@@ -352,8 +365,7 @@ Documented as roadmap items, and **absent today**. A deployment must be planned 
 
 | Gap | Consequence today | Item |
 |---|---|---|
-| No offsite replication | Site loss, or loss of the storage volume, means total loss | 11.2 |
-| No snapshots of the storage volume | Operator error against the repositories has no local recovery path | 11.5 |
+| No offline export helper | Copying the hosted repositories to removable media is a hand-run `rsync` | 11.2 |
 | No scheduled integrity verification | On-disk corruption is detected when data is read, not before | 11.3 |
 
 Deliberately **not** on this list because it will not be built: automated pruning (11.1). Nothing is ever deleted; capacity is bounded by quotas and managed by monitoring instead ([Operations](OPERATIONS.md) 10).
@@ -365,7 +377,8 @@ Not gaps, and not roadmap items. These follow from the design and would require 
 | Situation | Why nothing can be done |
 |---|---|
 | Client loses its key or passphrase | No key material, escrow or recovery path exists server-side — that absence *is* the privacy guarantee (2.1.1) |
-| Attacker holds root on the host | Nothing hosted on a system defends it against its own root. The answer is a copy the machine cannot reach, i.e. an append-only offsite target (11.2) |
+| Attacker holds root on the host | Nothing hosted on a system defends it against its own root. The answer is a copy the machine cannot reach — the operator's air-gapped offline export (11.2), or a client-side offsite copy. This server does not push to a foreign target: doing so safely would require trusting that target's storage integrity or holding outbound credentials an attacker would inherit (11.2) |
+| Site loss with no client-side offsite copy | Server-side foreign mirroring was dropped for the reason in the row above. Only the client holds the key, so only the client can keep an independent offsite copy; without one, loss of the site or the storage volume is total (11.2) |
 | Metadata visible to the server | Repository sizes, backup timing and client names are necessarily known to the server. Only *contents* are protected |
 | Space stranded by failed backups | Append-only forbids reclaiming uncommitted segments; raising the quota does not recover them ([Operations](OPERATIONS.md) 10.4) |
 
@@ -373,6 +386,6 @@ Not gaps, and not roadmap items. These follow from the design and would require 
 
 If you are evaluating whether to run this: 4.1 is what you get, 4.2 is what you must build yourself, 4.3 is what you must plan around, and 4.4 is what you must accept.
 
-A deployment that satisfies 4.1 but not 4.2 is not secure — the application layer alone was never sufficient (1.3). A deployment that satisfies both but ignores 4.3 is secure and will still lose everything to a failed disk.
+A deployment that satisfies 4.1 but not 4.2 is not secure — the application layer alone was never sufficient (1.3). A deployment that satisfies both is hardened, and still loses everything to a failed disk or a lost site unless a copy is kept off this server — which, per 4.4, is the client's to keep, since this server does not replicate.
 
 ---

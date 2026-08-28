@@ -27,7 +27,8 @@ version — or once you are **running** this project and want to rehearse an
 upgrade or a recovery on the real OS before doing it for real. It is
 deliberately built to grow: adding another client is one more VM of the same
 shape, and the same approach extends to a second server VM standing in for
-an offsite mirror ([Roadmap](../ROADMAP.md) 11.2).
+the foreign server a client mirrors to for its own offsite copy
+([Roadmap](../ROADMAP.md) 11.2).
 
 Both are throwaway. Neither touches hardware or software you use for
 anything else, and both are meant to be discarded and rebuilt freely.
@@ -319,8 +320,9 @@ None of them should ever touch a VM this lab did not create.
 
 **Extending it.** Another client is one more VM of the same shape as Chapter
 15. A second server VM, provisioned the same way as Chapter 11, stands in for
-an offsite mirror target ([Roadmap](../ROADMAP.md) 11.2) — nothing below is
-specific to there being exactly one of each.
+the foreign server a client keeps its own offsite copy on
+([Roadmap](../ROADMAP.md) 11.2) — nothing below is specific to there being
+exactly one of each.
 
 ---
 
@@ -795,15 +797,17 @@ end.
 
 ```bash
 CLIENT=client1
-SNAP=/var/mnt/borg-repo/snapshots/<last-known-good>
+GROUP=OWN                                       # OWN or MIRROR — see Design 1.2.3
+REPO=/var/mnt/borg-repo/repo/$GROUP/$CLIENT      # HOST_REPO_BASE/<group>/<client>
+SNAP=$SNAPSHOT_BASE/$CLIENT/<last-known-good>    # SNAPSHOT_BASE from config.sh; then <client>/<timestamp>
 
 # 1. Remove the garbage -- frees the quota, not yet the disk space.
 #    find rather than "rm -rf dir/*": also catches dotfiles and doesn't hit
 #    the command-line length limit.
-find /var/mnt/borg-repo/repo/$CLIENT -mindepth 1 -delete
+find "$REPO" -mindepth 1 -delete
 
 # 2. Write back from the last known-good snapshot (reflink, costs nothing)
-cp -a --reflink=always "$SNAP/$CLIENT/." /var/mnt/borg-repo/repo/$CLIENT/
+cp -a --reflink=always "$SNAP/." "$REPO/"
 
 # 3. Delete every snapshot from the incident onward -- only now is the
 #    space actually freed
@@ -811,6 +815,15 @@ for s in <affected snapshots>; do
     chattr -R -i "$s" && rm -rf "$s"
 done
 ```
+
+The shipped `76-delete-snapshots.sh` and `77-restore-last-snapshot.sh` do
+exactly steps 1–3 — with path-safety checks, an immutable-flag read-back, and
+quota/project-id reconstruction on restore — and resolve every path from
+`config.sh` rather than hard-coding one. For a compromised client the order is
+`76-` first (drop any generation that may already carry tainted data), then
+`77-` (restore what remains); `77-` also refuses if the client's `.source-group`
+marker disagrees with the group its live directory sits under. Use them once
+you have understood what the hand-run form above is doing.
 
 Step 3 deliberately comes **last**: every snapshot stays in place until the
 restore is confirmed to have worked. Get "last known-good" wrong and delete

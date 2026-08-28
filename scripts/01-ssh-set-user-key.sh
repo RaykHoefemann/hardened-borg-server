@@ -25,6 +25,13 @@ fi
 USERNAME="$1"
 INPUT="$2"
 
+case "$USERNAME" in
+    ''|-*|*[!a-zA-Z0-9_-]*)
+        echo "ERROR: Invalid username '$USERNAME' (must be non-empty, must not start with '-', only a-z, 0-9, _, - allowed)"
+        exit 1
+        ;;
+esac
+
 # check if user exists
 if ! grep -q "^${USERNAME}:" "$CONF"; then
     echo "ERROR: user '$USERNAME' does not exists in clients.conf!"
