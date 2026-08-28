@@ -1016,10 +1016,11 @@ awk -F: '
   directory included. 3B compares this field against `authorized_keys` and
   passes, because both carry the same wrong value.
 - `dup name` — the same `<client>` on two lines. `config/keys/<name>.pub` is
-  one file, the info-channel path collides, and `SNAPSHOT_BASE/<name>/` cannot
-  hold two clients' histories apart (`70-`/`76-`/`77-` refuse when they detect
-  it — see [Snapshots](SNAPSHOTS.md)). The provisioning scripts refuse a name
-  already in the file; this only appears from a hand edit or a merge.
+  one file and the info-channel path collides; the snapshot tooling takes
+  `<client>` alone and resolves the group by glob, so `75-`/`76-`/`77-` refuse
+  a name that resolves under two groups rather than guessing (see
+  [Snapshots](SNAPSHOTS.md)). The provisioning scripts refuse a name already in
+  the file; this only appears from a hand edit or a merge.
 
 Fix the line, restart the container to regenerate `authorized_keys`, and re-run
 3B and 7 for any client whose `<repo>` had pointed elsewhere.
@@ -1796,7 +1797,7 @@ dropped (Roadmap 11.2).
 
 ## 11. Point-in-time snapshots survive host-side destruction
 
-**Claim** — [Snapshots](SNAPSHOTS.md) / [Roadmap](../ROADMAP.md) 11.5: a completed snapshot generation under `SNAPSHOT_BASE` is made immutable (`chattr +i`) and cannot be removed by an ordinary command, not even the operator's own `sudo rm -rf`, and restoring one reconstructs the client's XFS project id and enforced quota exactly as they were — not a freshly allocated approximation of them. And ([Snapshots](SNAPSHOTS.md) "Layout on disk") the tree under `SNAPSHOT_BASE` is `<client>/<timestamp>/` with a `<client>/.source-group` marker, `<client>` matching the same globally-unique name rule as the live repositories ([Design](DESIGN.md) Chapter 1.2.3).
+**Claim** — [Snapshots](SNAPSHOTS.md) / [Roadmap](../ROADMAP.md) 11.5: a completed snapshot generation under `SNAPSHOT_BASE` is made immutable (`chattr +i`) and cannot be removed by an ordinary command, not even the operator's own `sudo rm -rf`, and restoring one reconstructs the client's XFS project id and enforced quota exactly as they were — not a freshly allocated approximation of them. And ([Snapshots](SNAPSHOTS.md) "Layout on disk") the tree under `SNAPSHOT_BASE` mirrors `HOST_REPO_BASE`: `<group>/<client>/<timestamp>/`, `<group>` one of `OWN`/`MIRROR` and `<client>` matching the same globally-unique name rule as the live repositories ([Design](DESIGN.md) Chapter 1.2.3).
 
 **Why it matters** — this is the local, fast half of recovering from operator error or destructive host-side software ([Recovery](RECOVERY.md) Chapter 5). If a completed generation could be removed the same way its live source can, the rollback path is exposed to exactly the class of accident it exists to survive. And a restore that silently drops or mis-applies the quota leaves a repository that looks recovered but is no longer protected — the failure mode [`77-restore-last-snapshot.sh`](SNAPSHOTS.md#7-restoring-the-most-recent-snapshot--77-restore-last-snapshotsh)'s own header calls out by name.
 
@@ -1891,35 +1892,47 @@ ERROR: '/tmp/external-target' does not resolve inside SNAPSHOT_BASE
 
 ### 11D — the snapshot tree matches the declared structure ⚠️
 
-The counterpart of 3D, for `SNAPSHOT_BASE`. `75-`/`76-`/`77-` all filter by the `YYYYMMDDTHHMMSSZ` name format, so anything that is not a generation directory — a stray file, a leftover from an interrupted run, a `.source-group` naming a group the client no longer sits under — is invisible to them and sits indefinitely.
+The counterpart of 3D, for `SNAPSHOT_BASE`. The tree mirrors `HOST_REPO_BASE` — `<group>/<client>/<timestamp>/` — and `75-`/`76-`/`77-` filter by the `YYYYMMDDTHHMMSSZ` name format, so anything that is not a group directory, a client directory, or a generation directory is invisible to them and sits indefinitely.
 
-**Run** (on the host; needs read access to `SNAPSHOT_BASE` and `HOST_REPO_BASE`)
+**Run** (on the host; needs read access to `SNAPSHOT_BASE`)
 
 ```bash
 base=/var/mnt/extern1/.snapshots/borg-server   # your SNAPSHOT_BASE, as config.sh resolves it
-repo=/var/mnt/extern1/borg-server              # your HOST_REPO_BASE
 ts='[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z'
 
-# 1. top level: client-named directories, plus the .lock file — nothing else
+# 1. top level: only OWN/ and MIRROR/ directories, plus the .lock file
 for e in "$base"/* "$base"/.*; do
     [ -e "$e" ] || continue
     n=${e##*/}
     case "$n" in
-        .|..|.lock) continue ;;
-        ''|-*|*[!a-zA-Z0-9_-]*) echo "top level: unexpected '$n'" ;;
-        *) [ -d "$e" ] || echo "top level: '$n' is not a directory" ;;
+        .|..|.lock|OWN|MIRROR) ;;
+        *) echo "top level: unexpected '$n'" ;;
     esac
 done
 
-# 2. inside each client: <timestamp>/ generations and one .source-group file
-for c in "$base"/*/; do
+# 2. one level down: client directories, names matching the client charset
+for g in "$base"/OWN "$base"/MIRROR; do
+    [ -d "$g" ] || continue
+    for c in "$g"/*; do
+        [ -e "$c" ] || continue
+        n=${c##*/}
+        case "$n" in
+            ''|-*|*[!a-zA-Z0-9_-]*) echo "${g##*/}: bad client name '$n'" ;;
+            *) [ -d "$c" ] || echo "${g##*/}: '$n' is not a directory" ;;
+        esac
+    done
+done
+
+# 3. inside each client: <timestamp>/ generations only
+#    (a .creating-* directory is an interrupted run — reported, not fatal)
+for c in "$base"/OWN/*/ "$base"/MIRROR/*/; do
     [ -d "$c" ] || continue
     cn=${c%/}; cn=${cn##*/}
     for e in "$c"* "$c".*; do
         [ -e "$e" ] || continue
         n=${e##*/}
         case "$n" in
-            .|..|.source-group) ;;
+            .|..) ;;
             .creating-*) echo "$cn: staging dir from an interrupted run: $n" ;;
             $ts) [ -d "$e" ] || echo "$cn: generation '$n' is not a directory" ;;
             *) echo "$cn: unexpected entry '$n'" ;;
@@ -1927,33 +1940,27 @@ for c in "$base"/*/; do
     done
 done
 
-# 3. every .source-group holds OWN or MIRROR and agrees with the live repo's group
-for f in "$base"/*/.source-group; do
-    [ -f "$f" ] || continue
-    cn=${f%/.source-group}; cn=${cn##*/}; g=$(cat "$f")
-    case "$g" in
-        OWN|MIRROR) ;;
-        *) echo "$cn: .source-group is '$g', not OWN or MIRROR"; continue ;;
-    esac
-    if [ ! -d "$repo/$g/$cn" ] && { [ -d "$repo/OWN/$cn" ] || [ -d "$repo/MIRROR/$cn" ]; }; then
-        echo "$cn: .source-group says '$g' but the live repository is under another group"
-    fi
+# 4. no client name appears under both groups
+for c in "$base"/OWN/*/; do
+    [ -d "$c" ] || continue
+    cn=${c%/}; cn=${cn##*/}
+    [ -d "$base/MIRROR/$cn" ] && echo "client '$cn' exists under both OWN and MIRROR"
 done
 ```
 
-**Pass** — none of the three loops produces output.
+**Pass** — none of the four blocks produces output.
 
 **Fail** —
 
-- `top level: unexpected` / `is not a directory` — something other than a client directory or the `.lock` file sits in `SNAPSHOT_BASE`. `70-create-snapshot.sh` only ever creates client directories and `.lock`.
-- `unexpected entry` inside a client — not a `<timestamp>` generation and not `.source-group`. `75-`/`76-` will never list it and `76-` will never clean it; it stays until removed by hand.
+- `top level: unexpected` — something other than `OWN/`, `MIRROR/` or `.lock` sits in `SNAPSHOT_BASE`. `70-create-snapshot.sh` creates only the two group directories (via `mkdir -p`) and `.lock`.
+- `bad client name` / `is not a directory` — an entry under a group directory that is not a well-formed client directory.
+- `unexpected entry` inside a client — not a `<timestamp>` generation. `75-`/`76-` never list it and `76-` never cleans it; it stays until removed by hand.
 - `staging dir from an interrupted run` — a `.creating-*` that outlived its run. `70-`'s next run for that client removes it (`sudo rm -rf`), so a persistent one means either that client has not been snapshotted since, or the cleanup lacked privilege.
-- `.source-group` mismatch — the client's generations were taken under a group its live repository no longer sits under; `77-restore-last-snapshot.sh` will refuse a restore (by design). This is the same cross-group name collision 3C/3D and `70-`'s pre-flight guard against, seen from the snapshot side.
-- `.source-group` not `OWN`/`MIRROR` — the file was hand-edited or written by something other than `70-`.
+- output from block 4 — the same client name under both groups. Under [Design](DESIGN.md) 1.2.3 the provisioning scripts make this impossible; a snapshot tree that has it was populated before the rule or out of band. `75-`/`76-`/`77-` refuse such a client — they resolve the group by glob and will not guess.
 
-**Negative test** — not yet staged. Planned: drop a stray file into `SNAPSHOT_BASE` and into a `<client>/`, leave a hand-made `.creating-*`, and set a `.source-group` to the wrong group; confirm each is reported and that clearing them clears the check.
+**Negative test** — not yet staged. Planned: create `SNAPSHOT_BASE/loose-file`, a stray file under `OWN/<client>/`, a hand-made `.creating-*`, and a same-named client directory under both groups; confirm each is reported and that clearing them clears the check.
 
-**What this does not show** — that a generation is actually immutable (11A) or that a restore reconstructs the repository (11B); this is structure only. A client directory under `SNAPSHOT_BASE` with generations but *no* live repository is legitimate — retained history of a removed client — and is not flagged.
+**What this does not show** — that a generation is actually immutable (11A) or that a restore reconstructs the repository (11B); this is structure only. A `<group>/<client>` directory with generations but *no* live repository is legitimate — retained history of a removed client — and is not flagged.
 
 ---
 

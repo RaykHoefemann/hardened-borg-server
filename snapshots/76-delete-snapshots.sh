@@ -17,9 +17,9 @@
 # Omitting both deletes this client's ENTIRE snapshot history -- the
 # intended way to handle a compromised client, a client's own repository
 # reset, or complete/residue-free removal of a client, in one pass, without
-# touching any other client's history (the client-first layout is what
-# makes that one pass sufficient -- see docs/SNAPSHOTS.md, "Layout on
-# disk").
+# touching any other client's history (SNAPSHOT_BASE/<group>/<client>/ is
+# the single prunable unit -- see docs/SNAPSHOTS.md, "Layout on disk"). The
+# group is resolved from the tree, not passed in.
 #
 # What this does, in order:
 #
@@ -141,31 +141,30 @@ if [ -n "$FROM" ] && [ -n "$TO" ] && expr "$FROM" '>' "$TO" >/dev/null; then
     exit 1
 fi
 
-CLIENT_DIR="${SNAPSHOT_BASE}/${CLIENT}"
+# Resolve the client's group from the snapshot tree
+# (SNAPSHOT_BASE/<group>/<client>/, the same shape as HOST_REPO_BASE). The
+# client name is unique across groups (DESIGN.md 1.2.3), so this matches
+# exactly one -- if it ever matched two, refuse rather than delete either.
+GROUP=""
+for _d in "${SNAPSHOT_BASE}"/*/"${CLIENT}"; do
+    [ -d "$_d" ] || continue
+    if [ -n "$GROUP" ]; then
+        echo "ERROR: client '$CLIENT' has snapshots under more than one group"
+        echo "       ('$GROUP' and '$(basename "$(dirname "$_d")")'). The name"
+        echo "       must be unique across groups -- see DESIGN.md 1.2.3."
+        echo "       Refusing to delete without an unambiguous target."
+        exit 1
+    fi
+    GROUP="$(basename "$(dirname "$_d")")"
+done
 
-if [ ! -d "$CLIENT_DIR" ]; then
+if [ -z "$GROUP" ]; then
     echo "No snapshots found for client '$CLIENT' under $SNAPSHOT_BASE."
     echo "Nothing to delete."
     exit 0
 fi
 
-# Soft check: DESIGN.md 1.2.3 requires client names to be unique across
-# groups, and 70-create-snapshot.sh refuses to run when they are not -- but
-# an out-of-band directory can still create that state after snapshots
-# already exist. If it holds now, ${SNAPSHOT_BASE}/<client>/ may not be
-# attributable to a single client. Warn; do not block (the operator may be
-# deleting exactly to clean this up).
-_live_group_count=0
-for _d in "${HOST_REPO_BASE%/}"/*/"${CLIENT}"; do
-    [ -d "$_d" ] || continue
-    _live_group_count=$((_live_group_count + 1))
-done
-if [ "$_live_group_count" -gt 1 ]; then
-    echo "WARNING: client '$CLIENT' has a live repository under more than one"
-    echo "         group. These generations may not all belong to the same"
-    echo "         client -- see DESIGN.md 1.2.3. Review before confirming."
-    echo ""
-fi
+CLIENT_DIR="${SNAPSHOT_BASE}/${GROUP}/${CLIENT}"
 
 LIST_SCRIPT="$(dirname "$0")/75-list-snapshots.sh"
 if [ ! -x "$LIST_SCRIPT" ]; then

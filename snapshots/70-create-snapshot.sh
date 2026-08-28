@@ -6,8 +6,13 @@
 # HOST_REPO_BASE (see docs/SNAPSHOTS.md for the full picture). For each
 # client:
 #
-#   ${SNAPSHOT_BASE}/<client>/<timestamp>/
+#   ${SNAPSHOT_BASE}/<group>/<client>/<timestamp>/
 #
+#   - the snapshot tree mirrors HOST_REPO_BASE/<group>/<client> exactly
+#     (DESIGN.md 1.2.3), so an operator reads one the way they read the
+#     other, and two clients of the same name in different groups can never
+#     collide here even if the "globally unique name" rule is somehow
+#     violated out of band
 #   - copied from ${HOST_REPO_BASE}/<group>/<client> with
 #     `cp -a --reflink=always` (cheap: blocks are shared with the live
 #     repository until either side diverges)
@@ -154,6 +159,8 @@ snapshot_client() {
     _sc_username="$(basename "$_sc_client_dir")"
     _sc_group="$(basename "$(dirname "$_sc_client_dir")")"
 
+    # Both path components are validated before use, since both become
+    # directory names under SNAPSHOT_BASE.
     case "$_sc_username" in
         ''|-*|*[!a-zA-Z0-9_-]*)
             echo "ERROR: skipping '$_sc_client_dir' -- name must be non-empty,"
@@ -162,21 +169,22 @@ snapshot_client() {
             return 1
             ;;
     esac
+    case "$_sc_group" in
+        ''|-*|*[!a-zA-Z0-9_-]*)
+            echo "ERROR: skipping '$_sc_client_dir' -- group '$_sc_group' must be"
+            echo "       non-empty, must not start with '-', and may use only"
+            echo "       a-z, 0-9, _, - to be trusted as a path component."
+            return 1
+            ;;
+    esac
 
-    _sc_snap_dir="${SNAPSHOT_BASE}/${_sc_username}"
+    _sc_snap_dir="${SNAPSHOT_BASE}/${_sc_group}/${_sc_username}"
     _sc_staging="${_sc_snap_dir}/.creating-${TIMESTAMP}"
     _sc_final="${_sc_snap_dir}/${TIMESTAMP}"
 
-    echo "[snapshot] ${_sc_username} (${_sc_group}): starting"
+    echo "[snapshot] ${_sc_group}/${_sc_username}: starting"
 
     mkdir -p "$_sc_snap_dir"
-
-    # Record which group this client's live repository sits under. A sibling
-    # of the generation directories, never made immutable, rewritten each
-    # run. 77-restore-last-snapshot.sh reads it back to confirm it is
-    # restoring into the group these snapshots actually came from, even if
-    # the live directory was destroyed (DESIGN.md 1.2.3).
-    printf '%s\n' "$_sc_group" > "${_sc_snap_dir}/.source-group"
 
     # A .creating-* left behind by a run that never reached the mv below
     # (crash, kill, disk full mid-copy). It was never renamed to a real
@@ -320,33 +328,10 @@ if ! xfs_info "$SNAP_MOUNT" 2>/dev/null | grep -q 'reflink=1'; then
 fi
 
 # ---------------------------------------------------------------------------
-# The snapshot layout keys on the client name alone (${SNAPSHOT_BASE}/<client>/,
-# docs/SNAPSHOTS.md "Layout on disk"), so it depends on what DESIGN.md 1.2.3
-# already guarantees: a client name is unique across groups. If two group
-# directories hold a client of the same name, the second would collide with
-# the first on ${SNAPSHOT_BASE}/<client>/<timestamp> -- every run, silently,
-# with a misleading "duplicate timestamp" error per collision. Refuse the
-# whole run once, with an accurate message, instead.
-_dupes="$(
-    for _d in "${HOST_REPO_BASE}"/*/*; do
-        [ -d "$_d" ] || continue
-        basename "$_d"
-    done | sort | uniq -d
-)"
-if [ -n "$_dupes" ]; then
-    echo "ERROR: these client names exist under more than one group:"
-    printf '%s\n' "$_dupes" | sed 's/^/         /'
-    echo "       The snapshot layout requires globally unique client names --"
-    echo "       see DESIGN.md 1.2.3 and VERIFICATION.md check 3C. Resolve the"
-    echo "       collision before snapshotting. Nothing was done."
-    exit 1
-fi
-
-# ---------------------------------------------------------------------------
 # One snapshot generation for this whole run. Every client that gets a
-# snapshot this run gets the same label -- the client-first layout
+# snapshot this run gets the same label -- the group/client layout
 # (docs/SNAPSHOTS.md, "Layout on disk") means this carries no grouping
-# meaning across clients, it is purely "when this run happened".
+# meaning, it is purely "when this run happened".
 # ---------------------------------------------------------------------------
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 

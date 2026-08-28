@@ -143,12 +143,27 @@ check_timestamp_format() {
     esac
 }
 
-SNAP_CLIENT_DIR="${SNAPSHOT_BASE}/${CLIENT}"
-if [ ! -d "$SNAP_CLIENT_DIR" ]; then
+# Resolve the client's group from the snapshot tree
+# (SNAPSHOT_BASE/<group>/<client>/, the same shape as HOST_REPO_BASE). The
+# client name is unique across groups (DESIGN.md 1.2.3), so this matches
+# exactly one -- if it ever matched two, refuse rather than guess.
+SNAP_GROUP=""
+for D in "${SNAPSHOT_BASE}"/*/"${CLIENT}"; do
+    [ -d "$D" ] || continue
+    if [ -n "$SNAP_GROUP" ]; then
+        echo "ERROR: client '$CLIENT' has snapshots under more than one group"
+        echo "       ('$SNAP_GROUP' and '$(basename "$(dirname "$D")")'). The name"
+        echo "       must be unique across groups -- see DESIGN.md 1.2.3."
+        exit 1
+    fi
+    SNAP_GROUP="$(basename "$(dirname "$D")")"
+done
+if [ -z "$SNAP_GROUP" ]; then
     echo "No snapshots found for client '$CLIENT' under $SNAPSHOT_BASE."
     echo "Nothing to restore from."
     exit 1
 fi
+SNAP_CLIENT_DIR="${SNAPSHOT_BASE}/${SNAP_GROUP}/${CLIENT}"
 
 # Newest generation: same skip rule as 75-/76- (a stale .creating-* or
 # SNAPSHOT_BASE's own .lock never matches the timestamp format), sorted
@@ -199,23 +214,19 @@ if [ -z "$GROUP" ]; then
     exit 1
 fi
 
-# Cross-check the resolved group against the one 70-create-snapshot.sh
-# recorded when these snapshots were taken. A mismatch means the live
-# directory found for '$CLIENT' belongs to a different client of the same
-# name than the one these generations came from -- only possible if the
-# globally-unique-name invariant (DESIGN.md 1.2.3) has been violated.
-# Refuse rather than restore one client's data into another's directory.
-SRC_GROUP_FILE="${SNAP_CLIENT_DIR}/.source-group"
-if [ -f "$SRC_GROUP_FILE" ]; then
-    SRC_GROUP="$(cat "$SRC_GROUP_FILE" 2>/dev/null)"
-    if [ -n "$SRC_GROUP" ] && [ "$SRC_GROUP" != "$GROUP" ]; then
-        echo "ERROR: these snapshots were taken from group '$SRC_GROUP', but the"
-        echo "       live repository found for '$CLIENT' is under '$GROUP'. Two"
-        echo "       clients share the name '$CLIENT' across groups -- restoring"
-        echo "       would put one client's data into the other's directory. See"
-        echo "       DESIGN.md 1.2.3; resolve the collision first. Nothing was restored."
-        exit 1
-    fi
+# The snapshot tree and the live repository tree must agree on the group.
+# A mismatch means the live directory found for '$CLIENT' belongs to a
+# different client of the same name than the one these generations came
+# from -- only possible if the globally-unique-name invariant (DESIGN.md
+# 1.2.3) has been violated. Refuse rather than restore one client's data
+# into another's directory.
+if [ "$GROUP" != "$SNAP_GROUP" ]; then
+    echo "ERROR: these snapshots are under group '$SNAP_GROUP', but the live"
+    echo "       repository found for '$CLIENT' is under '$GROUP'. Two clients"
+    echo "       share the name '$CLIENT' across groups -- restoring would put"
+    echo "       one client's data into the other's directory. See DESIGN.md"
+    echo "       1.2.3; resolve the collision first. Nothing was restored."
+    exit 1
 fi
 
 HOST_REPO="${HOST_REPO_BASE}/${GROUP}/${CLIENT}"

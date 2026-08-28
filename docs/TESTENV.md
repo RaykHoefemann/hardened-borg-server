@@ -799,7 +799,7 @@ end.
 CLIENT=client1
 GROUP=OWN                                       # OWN or MIRROR — see Design 1.2.3
 REPO=/var/mnt/borg-repo/repo/$GROUP/$CLIENT      # HOST_REPO_BASE/<group>/<client>
-SNAP=$SNAPSHOT_BASE/$CLIENT/<last-known-good>    # SNAPSHOT_BASE from config.sh; then <client>/<timestamp>
+SNAP=$SNAPSHOT_BASE/$GROUP/$CLIENT/<last-known-good>   # SNAPSHOT_BASE from config.sh; then <group>/<client>/<timestamp>
 
 # 1. Remove the garbage -- frees the quota, not yet the disk space.
 #    find rather than "rm -rf dir/*": also catches dotfiles and doesn't hit
@@ -821,9 +821,10 @@ exactly steps 1–3 — with path-safety checks, an immutable-flag read-back, an
 quota/project-id reconstruction on restore — and resolve every path from
 `config.sh` rather than hard-coding one. For a compromised client the order is
 `76-` first (drop any generation that may already carry tainted data), then
-`77-` (restore what remains); `77-` also refuses if the client's `.source-group`
-marker disagrees with the group its live directory sits under. Use them once
-you have understood what the hand-run form above is doing.
+`77-` (restore what remains). Both take `<client>` alone and resolve the group
+from the tree (`SNAPSHOT_BASE/<group>/<client>/`); `77-` refuses if the
+snapshot tree and the live repository disagree on the group. Use them once you
+have understood what the hand-run form above is doing.
 
 Step 3 deliberately comes **last**: every snapshot stays in place until the
 restore is confirmed to have worked. Get "last known-good" wrong and delete
