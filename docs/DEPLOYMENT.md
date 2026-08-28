@@ -204,7 +204,7 @@ Run it outside a backup window: the restart interrupts any transfer in progress,
 
 ```bash
 cd "$INSTALL_PATH"
-NEW=v0.2.0
+NEW=v0.2.0-beta.1
 
 # 1. Record where you are, so you can tell afterwards that something changed
 ./scripts/99-container-status.sh | head -10
@@ -255,8 +255,8 @@ The `diff`s in step 6 are the point of the backup: each shows both your own sett
 The report opens with two pairs, and an upgrade has to move both ([Operations](OPERATIONS.md) Chapter 9.11). `Host scripts` and `Running version` must both name the new release; `Configured image` and `Running image` must both carry the digest resolved in step 4:
 
 ```
-Host scripts:     0.2.0
-Running version:  0.2.0
+Host scripts:     0.2.0-beta.1
+Running version:  0.2.0-beta.1
 Configured image: ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest from step 4>
 Running image:    ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest from step 4>
 ```

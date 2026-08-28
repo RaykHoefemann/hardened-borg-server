@@ -56,7 +56,7 @@ root's `config.sh` and `VERSION`.
 
 ```bash
 INSTALL_PATH=~/containers/borg-server
-RELEASE=v0.2.0
+RELEASE=v0.2.0-beta.1
 mkdir -p "$INSTALL_PATH"
 
 git clone --branch "$RELEASE" --depth 1 \
