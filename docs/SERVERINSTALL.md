@@ -75,7 +75,7 @@ is there if you want it — it does nothing until you run it.)
 
 ```bash
 INSTALL_PATH=~/containers/borg-server
-RELEASE=v1.0.0-beta.1
+RELEASE=v1.0.0
 mkdir -p "$INSTALL_PATH"
 
 git clone --branch "$RELEASE" --depth 1 \
