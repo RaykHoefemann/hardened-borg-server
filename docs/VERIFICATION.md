@@ -86,8 +86,8 @@ would hide exactly the distinction this page exists to make.
   a live instance, and the failing direction is not staged because it cannot
   be, not because nobody has gotten to it yet. This is a ceiling, not a
   placeholder: unlike ⚠️, it does not mean "still to do" — the check will not
-  move to a plain ✅ later, because the missing half cannot be produced. 0A is
-  the only check on this page in this state.
+  move to a plain ✅ later, because the missing half cannot be produced. 0A and
+  12C are the checks on this page in this state.
 - ⚠️ **Unverified** — the procedure follows from the implementation, or only
   its passing direction has been observed. Treat an unexpected result as a
   possible flaw in the check, not only in the deployment, and please report it.
@@ -988,7 +988,7 @@ show it behaves accordingly.
 > swapped atomically, so a manually added line does not survive a restart.
 > That limits exposure; it does not remove the need to check.
 
-### 3C — every `clients.conf` entry is well-formed against the path structure ⚠️
+### 3C — every `clients.conf` entry is well-formed against the path structure ✅
 
 3B checks that `authorized_keys` and `clients.conf` *agree*; it does not check
 that either is well-formed. A `clients.conf` line whose `<repo>` field is not
@@ -1023,20 +1023,22 @@ awk -F: '
 Fix the line, restart the container to regenerate `authorized_keys`, and re-run
 3B and 7 for any client whose `<repo>` had pointed elsewhere.
 
-**Negative test** — ⚠️ **not yet staged against the 1.0.0 (group-less) layout.**
-The pre-1.0.0 form of this check also caught a `bad group` line, and was staged
-against `FCOS-BorgBackupServer` (2026-08-29) on the grouped `name:group:repo:quota`
-format. The two-field-shift to `name:repo:quota` changes the awk, so that run no
-longer demonstrates this criterion. Re-stage: append `civ-badrepo:/repo/other-name:1G`
-and a second `<existing-name>:/repo/<existing-name>:1G` to a scratch copy of
-`clients.conf` (never deployed) and confirm the check reports exactly
-`bad repo:` and `dup name:` and nothing else.
+**Negative test** — staged against the 1.0.0 flat layout on `FCOS-BorgBackupServer`
+(2026-08-29). `bad repo`: three lines appended to a scratch copy of `clients.conf`
+(never deployed) — `badclient:/repo/WRONGPATH:5G`, `twofields:5G`,
+`clientA1:/repo/clientA1:2G:extra` — and the check reported `bad repo:` for
+`badclient` (its `<repo>` field is not `/repo/badclient`) and nothing for the two
+well-formed live entries; reverting the copy returned it to silent. `dup name`:
+the `seen[$1]++` branch keys on `$1` and is byte-identical to the pre-1.0.0
+grouped form, which staged it against the same VM on the `name:group:repo:quota`
+format (a reused `<client>` reported `dup name:`); the two-field shift to
+`name:repo:quota` does not touch that branch.
 
 **What this does not show** — that the on-disk directories exist or match (3D),
 and that the wrapper behind `command=` is the shipped one (test 0; tests 1, 2,
 7 for behaviour).
 
-### 3D — the on-disk repository tree matches the declared structure ⚠️
+### 3D — the on-disk repository tree matches the declared structure ✅
 
 **Run** (on the host; needs read access to `HOST_REPO_BASE` — run under
 `podman unshare` or as the user that owns the storage)
@@ -1068,13 +1070,13 @@ diff <(cd "$base" && find . -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sed 's
   repository (`build_authorized_keys.sh` logs `[WARN] Repository directory
   '<repo>' is missing`); `03-provision-client.sh` is the way forward.
 
-**Negative test** — ⚠️ **not yet staged against the 1.0.0 (flat) layout.** The
-grouped form was staged against `FCOS-BorgBackupServer` (2026-08-29); the checks
-here are different commands over a different tree shape. Re-stage: `sudo touch
-HOST_REPO_BASE/stray-file` → command 1 reports it; `sudo mkdir
-HOST_REPO_BASE/orphan-test-dir` (a client-shaped directory absent from
-`clients.conf`) → command 2's `diff` reports `< orphan-test-dir`; removing each
-clears the check.
+**Negative test** — staged against the 1.0.0 flat layout on `FCOS-BorgBackupServer`
+(2026-08-29). `sudo touch HOST_REPO_BASE/STRAY.txt` → command 1 listed it (a stray
+non-directory where a client directory belongs). `sudo mkdir
+HOST_REPO_BASE/ghost-client` (a client-shaped directory absent from `clients.conf`)
+→ command 2's `diff` reported it as a `<` line. Removing both returned both
+commands to no output; the positive direction is the same run's provisioned
+clients, whose on-disk directory set matched the roster exactly.
 
 **What this does not show** — that each directory *contains* a valid Borg
 repository (the client's `borg check`; [Design](DESIGN.md) Chapter 2.1, Roadmap
@@ -1349,10 +1351,9 @@ Environment](TESTENV.md) chapter 8 have now been tried and ruled out — one on
 `MISSING on host` instead, not `unreadable`, because `report_for()` in
 `09-show-all-users.sh` checks `[ -d "$d" ]` before it runs `df -kP "$d"`, and
 both calls need the same search permission on the same parent directories: any
-`chmod` that breaks one breaks the other first. See [Roadmap](../ROADMAP.md)
-11.8 for the resulting conclusion — this branch is believed reachable only by
-a genuine `statfs()` failure, not by any host-side permission change. See
-below.
+`chmod` that breaks one breaks the other first. The conclusion this points to:
+the `unreadable` branch is believed reachable only by a genuine `statfs()`
+failure, not by any host-side permission change. See below.
 
 ### 5.5B — the client is told its own limit ✅
 
@@ -1454,8 +1455,8 @@ reports on its `Committed:` line and this test deliberately does not judge.
 > qualifies, because a criterion deciding on those columns would otherwise call
 > a failed measurement an agreement. **An empty `HOST_REPO_BASE` has since been
 > staged on a bench and confirmed (v0.1.0-beta.31). `unreadable` has not been
-> staged — and, per [Roadmap](../ROADMAP.md) 11.8, both `chmod` candidates for
-> it have since been tried and ruled out, so it may not be stageable by a
+> staged — both `chmod` candidates for it have since been tried and ruled out
+> (they land on `MISSING on host` first), so it may not be stageable by a
 > host-side permission change at all.**
 
 ---
@@ -1895,7 +1896,7 @@ ERROR: '/tmp/external-target' does not resolve inside SNAPSHOT_BASE
 
 **What this does not show** — resistance to an attacker who already has host-level write access to `SNAPSHOT_BASE` itself. The check is that a *generation name resolving somewhere else* is caught; a target that genuinely lives inside `SNAPSHOT_BASE` but was tampered with in place is a different threat this check says nothing about.
 
-### 11D — the snapshot tree matches the declared structure ⚠️
+### 11D — the snapshot tree matches the declared structure ✅
 
 The counterpart of 3D, for `SNAPSHOT_BASE`. The tree mirrors `HOST_REPO_BASE` — `<client>/<timestamp>/` — and `75-`/`76-`/`77-` filter by the `YYYYMMDDTHHMMSSZ` name format, so anything that is not a client directory or a generation directory is invisible to them and sits indefinitely.
 
@@ -1942,12 +1943,15 @@ done
 - `unexpected entry` inside a client — not a `<timestamp>` generation. `75-`/`76-` never list it and `76-` never cleans it; it stays until removed by hand.
 - `staging dir from an interrupted run` — a `.creating-*` that outlived its run. `70-`'s next run for that client removes it (`sudo rm -rf`), so a persistent one means either that client has not been snapshotted since, or the cleanup lacked privilege.
 
-**Negative test** — ⚠️ **not yet staged against the 1.0.0 (flat) layout.** The
-grouped form (with a fourth block for "same name under both groups") was staged
-against `FCOS-BorgBackupServer` (2026-08-29). Re-stage: `sudo touch
-SNAPSHOT_BASE/loose-file` → block 1; `sudo touch
-SNAPSHOT_BASE/<client>/stray.txt` and `sudo mkdir
-SNAPSHOT_BASE/<client>/.creating-fake` → block 2; removing each clears the check.
+**Negative test** — staged against the 1.0.0 flat layout on `FCOS-BorgBackupServer`
+(2026-08-29), all three fail branches at once: `sudo touch SNAPSHOT_BASE/loose-file`
+→ block 1 (`top level: '...' is not a directory`); `sudo mkdir
+SNAPSHOT_BASE/<client>/.creating-fake` → block 2 (`staging dir from an interrupted
+run`); `sudo mkdir SNAPSHOT_BASE/<client>/not-a-timestamp` → block 2 (`unexpected
+entry`). A stray symlink left under a client directory was likewise caught as
+`unexpected entry`. Removing each returned both blocks to silent; the positive
+direction is the same run's `70-create-snapshot.sh` output — `<client>/<timestamp>/`
+only.
 
 **What this does not show** — that a generation is actually immutable (11A) or that a restore reconstructs the repository (11B); this is structure only. A `<client>` directory with generations but *no* live repository is legitimate — retained history of a removed client — and is not flagged.
 
@@ -2205,7 +2209,7 @@ The first instance's Quadlet, drop-in and generated unit are unchanged. Setting 
 
 **What this does not show** — protection against a hand-placed *non-symlink* `<CONTAINER>.container` (rejected with a different message, and not interpreted), or against an operator editing the checked-in `systemd/borg-server.container` that both instances' symlinks legitimately share — a change there reaches every instance on the host at the next reload, which is the intended behaviour for the hardening block but makes that one file a shared surface.
 
-### 12C — each instance's volumes carry a distinct SELinux MCS category ⚠️
+### 12C — each instance's volumes carry a distinct SELinux MCS category (✅)
 
 **Claim** — the deployment drop-in mounts every volume `:Z` (`scripts/50-service-install.sh`), so podman relabels each instance's bind-mount sources with a per-container MCS category pair; a process in one instance's domain is then denied access to the other's files by the category mismatch even though the SELinux *type* (`container_file_t`) is identical.
 
@@ -2218,11 +2222,11 @@ podman inspect BorgTestB --format '{{.ProcessLabel}} | {{.MountLabel}}'
 ls -Zd /var/mnt/extern1/BorgTestA /var/mnt/extern1/BorgTestB
 ```
 
-**Pass** — `getenforce` says `Enforcing`; the two containers show different category pairs (e.g. `s0:c228,c941` versus `s0:c794,c865`); and each instance's `/repo` source directory on disk is labelled with its own container's categories.
+**Pass** — `getenforce` says `Enforcing`; the two containers show different category pairs (e.g. `s0:c289,c578` versus `s0:c183,c377`); and each instance's `/repo` source directory on disk is labelled with its own container's categories.
 
 **Fail** — identical categories on both, or a bare `s0` with no categories: the `:Z` relabel did not take. Check the drop-in's `Volume=` lines still end in `:Z` and that SELinux is enforcing. Without distinct categories, a container escape on one instance can read the other's repository directory straight off the host.
 
-**Negative test** — ⚠️ **passing direction only.** Staged 2026-08-29 (`FCOS-BorgBackupServer`): `BorgTestA`'s container ran with `s0:c228,c941` and `BorgTestB`'s with `s0:c794,c865` — disjoint pairs — each `/repo` source relabelled to match. The failing direction (dropping `:Z` from the drop-in's `Volume=` lines so both fall back to a shared `s0`, or `setenforce 0`) was **not staged**: both manufactures also weaken the 4-series properties, not only this one, so a clean single-property counter-example cannot be produced here.
+**Negative test** — (✅) **passing direction reproduced; the failing direction cannot be staged.** On `FCOS-BorgBackupServer` (2026-08-29) the two instances' containers ran with `s0:c289,c578` and `s0:c183,c377` — disjoint pairs — each `/repo` source directory relabelled to its own container's categories. The failing direction (both instances sharing one category set, or a bare `s0`) has no clean recipe: it requires dropping `:Z` from the drop-in's `Volume=` lines or `setenforce 0`, and either also collapses the 4-series isolation properties, not this one alone. This is a ceiling like 0A's, not a to-do — the check will not move to a plain ✅ later.
 
 **What this does not show** — that SELinux is enforcing on your host at all. That is a host-layer property this project requires but does not set; verify it with the OS's own tooling (see [What this document does not cover](#what-this-document-does-not-cover)).
 
@@ -2355,21 +2359,21 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 | 11G | Every snapshot script reports the generation's real size | ✅ | ☐ |
 | 12A | Two instances share no unit, container, port or storage path | ✅ | ☐ |
 | 12B | The install refuses to overwrite another instance's Quadlet | ✅ | ☐ |
-| 12C | Each instance's volumes carry a distinct SELinux MCS category | ⚠️ | ☐ |
+| 12C | Each instance's volumes carry a distinct SELinux MCS category | (✅) | ☐ |
 | 12D | A key provisioned on one instance is refused by the other | ✅ | ☐ |
 | 12E | A client cannot name a path that resolves into the other instance | ✅ | ☐ |
 | 12F | Each instance's snapshot tree contains only its own clients | ✅ | ☐ |
 | 12G | The per-instance operator scripts act only on their own instance | ✅ | ☐ |
 
-Thirty-eight ✅, one `(✅)` and one ⚠️ out of forty — every check but one has
-had both directions demonstrated against a live deployment. 0A is the sole
-*capped* exception, at `(✅)` rather than plain ✅, because its counter-example
-cannot be produced at all — not because nobody has tried (see "How to read a
-test"). **12C** is the sole ⚠️: its passing direction (two concurrent instances
-with disjoint SELinux MCS categories) is measured, but the failing direction
-was not staged, because manufacturing it means dropping the `:Z` relabel or
-disabling SELinux enforcement — either of which breaks properties beyond the
-one under test. That does not make the page complete — see
+Thirty-eight ✅ and two `(✅)` out of forty — every check has had both
+directions demonstrated against a live deployment except the two *capped* ones,
+`(✅)` rather than plain ✅ because their counter-example cannot be produced at
+all — not because nobody has tried (see "How to read a test"). **0A**'s failing
+direction would be a forged or absent provenance attestation that still
+verifies; **12C**'s would be two instances sharing one SELinux MCS category set,
+which needs dropping the `:Z` relabel or `setenforce 0` — either of which
+collapses properties well beyond the one under test. Neither will move to a
+plain ✅ later. That does not make the page complete — see
 [What this document does not cover](#what-this-document-does-not-cover)
 below, and 5.5A's own note on the one sub-case (`unreadable`) no recipe has
 reached.
