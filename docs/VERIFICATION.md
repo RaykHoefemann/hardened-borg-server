@@ -108,10 +108,16 @@ run at all. It needs no registry credential of any kind, and an unusable one
 already stored will stop it; see the note under that test. `jq` is optional,
 and only for the machine-readable form of the result shown there.
 
+Test 12 applies only if you run more than one instance on one host, and needs a
+**second instance** installed alongside the first — another checkout with a
+distinct `CONTAINER` and `SSH_PORT` ([Deployment](DEPLOYMENT.md) 6.2.4) — plus
+one client provisioned on each. Skip it if you run a single instance.
+
 No hardware to spare? [Test Environment](TESTENV.md) builds a throwaway bench
-on one VM that covers every test on this page, and shows how to make each test
-*fail* on purpose — a test that has only ever passed has not been shown to
-discriminate.
+on one VM that covers every test on this page (test 12 wants a second instance
+on the same bench — another checkout, a different `CONTAINER` and `SSH_PORT`),
+and shows how to make each test *fail* on purpose — a test that has only ever
+passed has not been shown to discriminate.
 
 Several tests leave roughly 1 MB behind permanently — under a correctly
 functioning server you cannot delete it, which is precisely the point.
@@ -2136,6 +2142,172 @@ both matching `sudo du -sh` ground truth on their respective generations. `76-de
 
 ---
 
+## 12. Instances on one host cannot reach into each other
+
+**Claim** — [Deployment](DEPLOYMENT.md) 6.2.4 and [Design](DESIGN.md) Chapter 1.2.3: with client groups removed in 1.0.0, running a **second instance** of this project is the supported way to hold clients of different trust levels apart, and that is only a real boundary if the two instances share nothing one could use to observe or disturb the other. Every per-instance resource is namespaced by `CONTAINER` (repo-root `config.sh`): the Quadlet `<CONTAINER>.container`, its `<CONTAINER>.container.d/` drop-in, the generated `<CONTAINER>.service`, `ContainerName=<CONTAINER>`, `HOST_REPO_BASE` (`HOST_STORAGE_BASE/<CONTAINER>/`), `SNAPSHOT_BASE` (`HOST_STORAGE_BASE/.snapshots/<CONTAINER>/`), and the snapshot timer. `SSH_PORT` (`scripts/config.sh`) is not derived and must be set distinct. A client authenticates only against the `authorized_keys` of the instance it was provisioned on, and `borg serve --restrict-to-path` confines it to that instance's `/repo` no matter what path it sends.
+
+**Why it matters** — a single instance shares one SSH daemon, one container, one repository tree and one snapshot tree across every client in it; that is precisely why groups — which only ever partitioned *paths* inside that one shared surface — were dropped rather than kept. "Run a second instance instead" buys nothing if the second instance is not sealed: if a key from instance A logs into instance B, or a client on A can name a path that resolves into B's tree, or A's snapshot tooling can list or delete B's generations, then two instances carry the full cost of two deployments at the security of one.
+
+Seven checks. 12A–12C are host-side and establish that the two installations share no unit, name, port or SELinux label; 12D is run from the client machines and checks that authentication does not cross; 12E checks the repository-path boundary from a client; 12F and 12G check that the snapshot tree and the per-instance operator scripts each see only their own instance. All were staged together on 2026-08-29 against `FCOS-BorgBackupServer`, with two bench instances — `CONTAINER=btest` on port 2225 and `CONTAINER=btwo` on port 2226, both built from the 1.0.0 branch — running concurrently, alongside and without disturbing the unrelated production instance on port 2222. Throughout this test, `<A>` and `<B>` are the two `CONTAINER` values, `2222`/`2223` their ports, and `<client-A>`/`<client-B>` one client provisioned on each; client commands use per-instance ssh aliases `borgserver-A` / `borgserver-B` (each carrying that instance's host, port and key), the two-instance form of the `borgserver` alias from [Client Usage](CLIENTUSE.md) chapter 1.
+
+### 12A — the two instances share no unit, container, port or storage path ✅
+
+**Run** (host-side)
+
+```bash
+systemctl --user is-active <A>.service <B>.service
+readlink ~/.config/containers/systemd/<A>.container \
+         ~/.config/containers/systemd/<B>.container
+ss -ltnp 2>/dev/null | grep -E ':(2222|2223)\b'
+podman ps --format '{{.Names}}  {{.Ports}}'
+ls -d /var/mnt/extern1/<A>            /var/mnt/extern1/<B>
+ls -d /var/mnt/extern1/.snapshots/<A> /var/mnt/extern1/.snapshots/<B>
+```
+
+**Pass** — both services report `active`; the two `.container` files are separate paths (they may be symlinks to the *same* checked-in `systemd/borg-server.container` — that is expected, the install name is the namespace, not the source file); `ss` shows `2222` and `2223` bound by two different processes; `podman ps` lists containers `<A>` and `<B>`, each publishing only its own port; and the four storage paths are four distinct directories.
+
+**Fail** — anything one instance shares with the other: a single generated `.service` for both, one container answering on both ports, or `<A>` and `<B>` resolving `HOST_REPO_BASE` or `SNAPSHOT_BASE` to the same directory. A shared `HOST_REPO_BASE` collapses the two rosters into one tree and 12E/12F cannot hold.
+
+**Negative test** — the deliberate collision (a second checkout re-using the first's `CONTAINER`) is 12B; this structural check is its clean-state counterpart. Passing direction staged 2026-08-29 (`FCOS-BorgBackupServer`): `btest.service` (2225) and `btwo.service` (2226) both `active` concurrently, with separate `*.container`, `*.service`, `ContainerName`, repo tree and snapshot tree, each container publishing only its own port — the production instance on 2222 untouched throughout (`clients.conf` md5 and 11-key roster identical before and after, container uptime uninterrupted).
+
+**What this does not show** — that the two data volumes are also isolated at the OS layer (12C), or that a host-root actor cannot reach both — it can, by design (see 7's closing note: this project isolates instances and clients from each other, not from the host).
+
+### 12B — the install refuses to overwrite another instance's Quadlet ✅
+
+**Run** — from a second checkout whose repo-root `config.sh` still carries the *first* instance's `CONTAINER` value (the mistake this catches):
+
+```bash
+# checkout B, CONTAINER still = <A>
+./scripts/50-service-install.sh
+```
+
+**Pass** — refused before the symlink or drop-in is written:
+
+```
+ERROR: '/.../<A>.container' already exists and points at
+       '/.../checkout-A/systemd/borg-server.container', not this checkout's
+       '/.../checkout-B/systemd/borg-server.container'.
+       CONTAINER='<A>' is already in use by another installation of this
+       project on this host. Give this one a distinct CONTAINER (and
+       SSH_PORT) in config.sh, or run ./scripts/51-service-uninstall.sh
+       from the other checkout first.
+```
+
+The first instance's Quadlet, drop-in and generated unit are unchanged. Setting `CONTAINER=<B>` and a distinct `SSH_PORT`, then re-running, installs the second instance cleanly.
+
+**Fail** — the second install completes and `~/.config/containers/systemd/<A>.container` now points at checkout B; the first instance's next `daemon-reload` or restart silently comes up on checkout B's code and drop-in (its image pin, its bind mounts). `50-service-install.sh`'s `readlink -f` comparison of the existing symlink's target against this checkout's source is what must catch this.
+
+**Negative test** — staged 2026-08-29 (`FCOS-BorgBackupServer`), both directions: `50-service-install.sh` run from the `btwo` checkout with `CONTAINER=btest` left in place refused with the message above and left `btest`'s files untouched; the same script with `CONTAINER=btwo` then installed the second instance cleanly and `btwo.service` was generated.
+
+**What this does not show** — protection against a hand-placed *non-symlink* `<CONTAINER>.container` (rejected with a different message, and not interpreted), or against an operator editing the checked-in `systemd/borg-server.container` that both instances' symlinks legitimately share — a change there reaches every instance on the host at the next reload, which is the intended behaviour for the hardening block but makes that one file a shared surface.
+
+### 12C — each instance's volumes carry a distinct SELinux MCS category ⚠️
+
+**Claim** — the deployment drop-in mounts every volume `:Z` (`scripts/50-service-install.sh`), so podman relabels each instance's bind-mount sources with a per-container MCS category pair; a process in one instance's domain is then denied access to the other's files by the category mismatch even though the SELinux *type* (`container_file_t`) is identical.
+
+**Run** (host-side; needs SELinux enforcing)
+
+```bash
+getenforce
+podman inspect <A> --format '{{.ProcessLabel}} | {{.MountLabel}}'
+podman inspect <B> --format '{{.ProcessLabel}} | {{.MountLabel}}'
+ls -Zd /var/mnt/extern1/<A> /var/mnt/extern1/<B>
+```
+
+**Pass** — `getenforce` says `Enforcing`; the two containers show different category pairs (e.g. `s0:c228,c941` versus `s0:c794,c865`); and each instance's `/repo` source directory on disk is labelled with its own container's categories.
+
+**Fail** — identical categories on both, or a bare `s0` with no categories: the `:Z` relabel did not take. Check the drop-in's `Volume=` lines still end in `:Z` and that SELinux is enforcing. Without distinct categories, a container escape on one instance can read the other's repository directory straight off the host.
+
+**Negative test** — ⚠️ **passing direction only.** Staged 2026-08-29 (`FCOS-BorgBackupServer`): `btest`'s container ran with `s0:c228,c941` and `btwo`'s with `s0:c794,c865` — disjoint pairs — each `/repo` source relabelled to match. The failing direction (dropping `:Z` from the drop-in's `Volume=` lines so both fall back to a shared `s0`, or `setenforce 0`) was **not staged**: both manufactures also weaken the 4-series properties, not only this one, so a clean single-property counter-example cannot be produced here.
+
+**What this does not show** — that SELinux is enforcing on your host at all. That is a host-layer property this project requires but does not set; verify it with the OS's own tooling (see [What this document does not cover](#what-this-document-does-not-cover)).
+
+### 12D — a key provisioned on one instance is refused by the other ✅
+
+**Run** — from the machine holding `<client-A>`'s key, aim its SSH at instance B's port, then at its own for a control:
+
+```bash
+ssh -i ~/.ssh/borg_backup -p 2223 borg@<server> info    # B's port, A's key
+ssh -i ~/.ssh/borg_backup -p 2222 borg@<server> info    # control: A's port, A's key
+```
+
+Then the mirror image from `<client-B>`'s machine: `-p 2222` (A) must be refused, `-p 2223` (B) must work.
+
+**Pass** — each cross-instance attempt is rejected at authentication:
+
+```
+borg@<server>: Permission denied (publickey).
+```
+
+and each control returns that instance's info channel with its own `user:` line. Instance B's `authorized_keys` is generated only from B's `clients.conf`; A's key is not in it, and vice versa.
+
+**Fail** — a cross-instance attempt gets *past* authentication — any output beyond the `Permission denied` line, whether an info block, a `DENY:` from the wrapper, or a borg protocol error. A key that authenticates against both instances is a shared trust root and the boundary is gone.
+
+**Negative test** — staged 2026-08-29 (`FCOS-BorgBackupServer`) in **both** directions: `bc1` (a `btest` client key) against `btwo` on 2226 → `Permission denied (publickey)`; `tw1` (a `btwo` client key) against `btest` on 2225 → `Permission denied (publickey)`; each key against its own instance returned that instance's `info` with the correct `user:`. The keys were disposable pairs generated for the run; the production roster on 2222 was not involved.
+
+**What this does not show** — isolation for keys not tested; this is measured per key from the machine that holds it, the same limit as 7. It says nothing about the operator, who can reach both instances.
+
+### 12E — a client cannot name a repository path that resolves into the other instance ✅
+
+**Run** — from `<client-A>` (authenticated to instance A), point borg at a repository path belonging to a client of instance B, and at a traversal that would climb out of A's tree:
+
+```bash
+borg list ssh://borgserver-A/repo/<client-B>
+borg list ssh://borgserver-A/repo/<client-A>/../<client-B>
+```
+
+**Pass** — both refused by the forced command before any repository is opened:
+
+```
+Repository path not allowed: /repo/<client-B>
+```
+
+The path `<client-B>` only exists inside instance B's `/repo`; instance A's container has a different `/repo` bind mount (`HOST_STORAGE_BASE/<A>/`) with no such directory, and `--restrict-to-path` pins the client to the single path its `authorized_keys` line names regardless.
+
+**Fail** — either listing is accepted, or fails with a borg "repository does not exist" rather than the wrapper's `Repository path not allowed` refusal — the path was evaluated instead of rejected. Cross-instance path access means the `command=` restriction or the bind-mount separation is not holding.
+
+**Negative test** — staged 2026-08-29 (`FCOS-BorgBackupServer`): `bc1`, authenticated to `btest`, asked for `/repo/tw1` (a `btwo` client) and for the traversal `/repo/bc1/../tw1` — both returned `Repository path not allowed: /repo/tw1`. The positive direction is `bc1`'s own repository, reachable throughout the same session.
+
+**What this does not show** — path isolation for a client not tested from the machine that holds its key; 3B is the file-wide check that every `authorized_keys` line still names the path `clients.conf` assigns, on each instance separately.
+
+### 12F — each instance's snapshot tree contains only its own clients ✅
+
+**Run** (host-side, after provisioning at least one client on each instance and taking a snapshot from each checkout)
+
+```bash
+./snapshots/70-create-snapshot.sh                                   # from checkout A
+( cd /path/to/checkout-B && ./snapshots/70-create-snapshot.sh )
+ls /var/mnt/extern1/.snapshots/<A>/
+ls /var/mnt/extern1/.snapshots/<B>/
+```
+
+**Pass** — `.snapshots/<A>/` holds only instance A's client directories and `.snapshots/<B>/` only instance B's; neither `70-` run created, touched or descended into the other's tree. Each run's `SNAPSHOT_BASE` is `HOST_STORAGE_BASE/.snapshots/<CONTAINER>/`, and its per-client loop iterates `HOST_REPO_BASE/*` for its own `<CONTAINER>` only.
+
+**Fail** — a client of one instance appears under the other's `.snapshots/` tree, or one `70-` run reports iterating the other instance's repositories. The two would then share generation history and 12G's deletion boundary could not hold.
+
+**Negative test** — staged 2026-08-29 (`FCOS-BorgBackupServer`): with both instances provisioned, `70-` run from each checkout produced `.snapshots/btest/` containing only the `bc*` clients and `.snapshots/btwo/` only the `tw*` clients; 11F's reflink measurement on the `btest` tree (7 generations, disk usage unchanged) was taken in the same session and did not see the `btwo` generations at all.
+
+**What this does not show** — that a generation is immutable (11A) or restores correctly (11B/11E); this is the *cross-instance* boundary of the snapshot tree only, layered on top of test 11's within-instance guarantees.
+
+### 12G — the per-instance operator scripts act only on their own instance ✅
+
+**Run** — from checkout A, run the roster and the snapshot-deletion tools against a client that belongs to **instance B**:
+
+```bash
+./scripts/09-show-all-users.sh
+./snapshots/76-delete-snapshots.sh <client-B> <a-B-timestamp> <a-B-timestamp>
+```
+
+**Pass** — `09-` from checkout A lists only instance A's clients (its count matches A's `clients.conf`, not the sum of both); `76-` from checkout A reports `No snapshots found for client '<client-B>' under /var/mnt/extern1/.snapshots/<A>` and touches nothing. Every script resolves its target under its own checkout's `HOST_REPO_BASE` / `SNAPSHOT_BASE`, so a name that only exists in the other instance is simply absent.
+
+**Fail** — `09-` from checkout A shows instance B's clients, or `76-` from checkout A finds and offers to delete `<client-B>`'s generations. Either means a script is reading a path derived from something other than its own `config.sh`.
+
+**Negative test** — staged 2026-08-29 (`FCOS-BorgBackupServer`): `09-show-all-users.sh` from the `btest` checkout listed 7 clients (its own roster) and from the `btwo` checkout 2 clients (its own); `76-delete-snapshots.sh bc1` run from the `btwo` checkout reported `No snapshots found for client 'bc1' under .../.snapshots/btwo` and `btest`'s `bc1` generations were verified untouched afterward.
+
+**What this does not show** — that the scripts are correct *within* an instance — that is tests 5.5, 11D, 11G and others. This is only that they do not reach across the `CONTAINER` boundary.
+
+---
+
 ## Summary checklist
 
 One row per check, not per test: a test with lettered checks is only complete
@@ -2177,12 +2349,23 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 | 11E | The snapshot → restore loop round-trips a client's data | ✅ | ☐ |
 | 11F | Repeated snapshot/delete/restore cycles add no additional disk usage | ✅ | ☐ |
 | 11G | Every snapshot script reports the generation's real size | ✅ | ☐ |
+| 12A | Two instances share no unit, container, port or storage path | ✅ | ☐ |
+| 12B | The install refuses to overwrite another instance's Quadlet | ✅ | ☐ |
+| 12C | Each instance's volumes carry a distinct SELinux MCS category | ⚠️ | ☐ |
+| 12D | A key provisioned on one instance is refused by the other | ✅ | ☐ |
+| 12E | A client cannot name a path that resolves into the other instance | ✅ | ☐ |
+| 12F | Each instance's snapshot tree contains only its own clients | ✅ | ☐ |
+| 12G | The per-instance operator scripts act only on their own instance | ✅ | ☐ |
 
-Thirty-two ✅ and one `(✅)` out of thirty-three — every check has had both
-directions demonstrated against a live deployment. 0A is the sole capped
-exception, at `(✅)` rather than plain ✅, because its counter-example cannot
-be produced at all — not because nobody has tried (see "How to read a
-test"). That does not make the page complete — see
+Thirty-eight ✅, one `(✅)` and one ⚠️ out of forty — every check but one has
+had both directions demonstrated against a live deployment. 0A is the sole
+*capped* exception, at `(✅)` rather than plain ✅, because its counter-example
+cannot be produced at all — not because nobody has tried (see "How to read a
+test"). **12C** is the sole ⚠️: its passing direction (two concurrent instances
+with disjoint SELinux MCS categories) is measured, but the failing direction
+was not staged, because manufacturing it means dropping the `:Z` relabel or
+disabling SELinux enforcement — either of which breaks properties beyond the
+one under test. That does not make the page complete — see
 [What this document does not cover](#what-this-document-does-not-cover)
 below, and 5.5A's own note on the one sub-case (`unreadable`) no recipe has
 reached.
@@ -2197,7 +2380,13 @@ the guarantees this project exists to provide. A deployment that fails **11**
 is a narrower gap than any of those — every guarantee through 10 still holds —
 but it means [Recovery](RECOVERY.md) Chapter 5's local rollback is not
 actually available when an operator reaches for it, which is the moment its
-absence is most expensive to discover.
+absence is most expensive to discover. **12** applies only if you run more than
+one instance on one host: a deployment that fails any of its checks is running
+instances that are not sealed off from each other, so the 1.0.0 answer to
+separating trust levels — "run a second instance" ([Deployment](DEPLOYMENT.md)
+6.2.4) — is not delivering what it promises, and those clients would be safer
+consolidated onto one instance with eyes open than split across two that leak
+into each other.
 
 ## What this document does not cover
 
