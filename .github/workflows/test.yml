@@ -81,6 +81,23 @@ jobs:
       - name: Host scripts (01, 09)
         run: tests/host-scripts.sh
 
+  snapshot-scripts:
+    name: snapshots/ (70, 75, 76, 77)
+    runs-on: ubuntu-latest
+    # Not a substitute for VERIFICATION.md's 11A-11G, which are measured
+    # against a real deployment with real XFS quotas, real chattr
+    # immutability and real SELinux -- none of which this runner has. This
+    # job fakes sudo/chattr/lsattr/xfs_quota/podman/cp/xfs_info the same way
+    # the host-side job above already fakes sudo/xfs_quota/lsattr/podman/df
+    # for 00-/02-, so the same class of logic bug (issue #35) is caught on
+    # every push instead of only at the next manual VM verification.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: snapshots/ scripts
+        run: tests/snapshot-scripts.sh
+
   release-consistency:
     name: release identifiers agree
     runs-on: ubuntu-latest
