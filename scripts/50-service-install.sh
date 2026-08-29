@@ -3,8 +3,8 @@
 # 50-service-install.sh
 # ----------------------
 # Installs the Podman Quadlet for the Borg server container and generates its
-# deployment drop-in from config.sh. (ROADMAP 11.4: replaces the hand-written
-# systemd/container.service template + generated EnvironmentFile.)
+# deployment drop-in from config.sh. (Since 1.0.0 this replaces the hand-written
+# systemd/container.service template + generated EnvironmentFile; see DEPLOYMENT 6.2.)
 #
 # Two files land under ~/.config/containers/systemd/, from which
 # `systemctl --user daemon-reload` makes podman-system-generator produce the

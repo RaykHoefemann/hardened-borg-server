@@ -25,7 +25,7 @@ Architecture overview and how to run the server — from an ad-hoc test containe
 ## 5.2. Backup Flows
 
 - Client → Server (SSH / optionally VPN) — your own devices and any external partners; a partner's own server connects here as a client too
-- Server → removable media — the operator's manual offline export ([Roadmap](../ROADMAP.md) 11.2). The server never pushes to another server; offsite redundancy is a client-side second `borg create` target (see [Roadmap](../ROADMAP.md) 11.2, [Client Usage](CLIENTUSE.md) Chapter 9)
+- Server → removable media — the operator's manual offline export ([Roadmap](../ROADMAP.md) 11.2). The server never pushes to another server ([Design](../docs/DESIGN.md) Chapter 4.6); offsite redundancy is a client-side second `borg create` target (see [Client Usage](CLIENTUSE.md) Chapter 9)
 
 ---
 
@@ -52,7 +52,7 @@ Useful for testing, but the container does not survive a reboot or a logout, and
 
 ## 6.2. Persistent Deployment via systemd (Recommended)
 
-For production use, the container runs as a **rootless systemd user service** rather than being started manually. It is deployed as a **Podman Quadlet** (ROADMAP 11.4): a checked-in `.container` file that `podman-system-generator` turns into a real `.service` unit at `systemctl --user daemon-reload`. This needs **podman ≥ 5.0** (Quadlet drop-in directories); Fedora CoreOS has satisfied this since well before this project's supported baseline.
+For production use, the container runs as a **rootless systemd user service** rather than being started manually. It is deployed as a **Podman Quadlet**: a checked-in `.container` file that `podman-system-generator` turns into a real `.service` unit at `systemctl --user daemon-reload`. This needs **podman ≥ 5.0** (Quadlet drop-in directories); Fedora CoreOS has satisfied this since well before this project's supported baseline.
 
 The checked-in `systemd/borg-server.container` carries only host-independent values — the runtime settings and the container hardening:
 
@@ -181,7 +181,7 @@ Three files in an installation are yours, not the release's, and a careless upgr
 
 > ⚠️ **Do not re-run SERVERINSTALL step 1 against an existing installation.** `cp -r` merges into existing directories and overwrites same-named files, so copying `config/` would replace your `server_info.conf` with the template, and copying `scripts/` would replace your `scripts/config.sh`; the plain `cp` of the repository root's `config.sh` overwrites it unconditionally, the same way. Your `clients.conf` and `config/keys/` survive only because the repository does not ship them.
 
-> ⚠️ **One-time step whenever the installed unit changes shape** — most consequentially the **Quadlet migration** (ROADMAP 11.4): the old install put a symlinked `.service` in `~/.config/systemd/user/` plus a rendered unit and `EnvironmentFile` under `systemd/`; the new one is a Podman Quadlet in `~/.config/containers/systemd/` generating `<CONTAINER>.service`. The `51-service-uninstall.sh` in the *new* release only knows about the Quadlet, so it cannot remove the old unit — and if step 7 below installs the Quadlet while the old unit is still running, the two collide on the container name and the published port. The same applies to the earlier rename from the fixed `container-borg-server.service` to `container_<CONTAINER>.service`. **Before step 5 overwrites `scripts/`, tear the currently installed unit down with the `51-service-uninstall.sh` you still have — it targets whatever this checkout installed:**
+> ⚠️ **One-time step whenever the installed unit changes shape** — most consequentially the **Quadlet migration** (new in 1.0.0): the old install put a symlinked `.service` in `~/.config/systemd/user/` plus a rendered unit and `EnvironmentFile` under `systemd/`; the new one is a Podman Quadlet in `~/.config/containers/systemd/` generating `<CONTAINER>.service`. The `51-service-uninstall.sh` in the *new* release only knows about the Quadlet, so it cannot remove the old unit — and if step 7 below installs the Quadlet while the old unit is still running, the two collide on the container name and the published port. The same applies to the earlier rename from the fixed `container-borg-server.service` to `container_<CONTAINER>.service`. **Before step 5 overwrites `scripts/`, tear the currently installed unit down with the `51-service-uninstall.sh` you still have — it targets whatever this checkout installed:**
 >
 > ```bash
 > ./scripts/51-service-uninstall.sh
@@ -268,7 +268,7 @@ The one thing to read release notes for is a change of the **bundled Borg versio
 
 Rollback is deliberately symmetric with the upgrade: it verifies and pins the target image the same way step 4 of 6.3 does, because a digest names exactly one image forever, so going back is only unambiguous if that digest was actually checked rather than assumed.
 
-> ⚠️ **The mirror image of 6.3's one-time systemd-unit note applies here too.** Rolling back across the Quadlet migration (ROADMAP 11.4) — or the earlier `container-borg-server` → `container_<CONTAINER>` rename — overwrites `scripts/` with an older install mechanism, while the *currently installed* unit is the newer one and nothing removes it just because `scripts/` was replaced. Reaching the `50-service-install.sh` step below with both still runnable fails the same way: two units contending for the same container name and published port. **Before overwriting `scripts/`, uninstall the currently installed unit while today's `scripts/` can still find it:**
+> ⚠️ **The mirror image of 6.3's one-time systemd-unit note applies here too.** Rolling back across the Quadlet migration (new in 1.0.0) — or the earlier `container-borg-server` → `container_<CONTAINER>` rename — overwrites `scripts/` with an older install mechanism, while the *currently installed* unit is the newer one and nothing removes it just because `scripts/` was replaced. Reaching the `50-service-install.sh` step below with both still runnable fails the same way: two units contending for the same container name and published port. **Before overwriting `scripts/`, uninstall the currently installed unit while today's `scripts/` can still find it:**
 >
 > ```bash
 > ./scripts/51-service-uninstall.sh

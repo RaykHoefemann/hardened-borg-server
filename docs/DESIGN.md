@@ -320,7 +320,7 @@ Beyond the repositories themselves, the server generates control files from conf
 As with the host security layer (Chapter 1.1), some parts of integrity live below this application and are the operator's responsibility:
 
 - The storage filesystem (XFS) protects its own metadata with CRCs but does **not** checksum file *data* blocks. Detection of data-block corruption therefore relies on Borg's per-chunk authentication and on `borg check` (3.1, 3.3), not on the filesystem itself.
-- Protection against physical media failure — redundancy, scrubbing, replacing failing disks — is a host/storage concern (e.g. RAID and disk monitoring), outside this project's scope in the same way host hardening is (Chapter 1.1). This application makes corruption *detectable*; keeping a second copy so that detected corruption is also *recoverable* is the operator's own storage design (RAID, a second local copy, the manual offline export of Chapter 11.2) and, for redundancy beyond the host, a client-side offsite copy — this server does not replicate to a foreign one (Chapter 11.2).
+- Protection against physical media failure — redundancy, scrubbing, replacing failing disks — is a host/storage concern (e.g. RAID and disk monitoring), outside this project's scope in the same way host hardening is (Chapter 1.1). This application makes corruption *detectable*; keeping a second copy so that detected corruption is also *recoverable* is the operator's own storage design (RAID, a second local copy, the manual offline export of [Roadmap](../ROADMAP.md) 11.2) and, for redundancy beyond the host, a client-side offsite copy — this server does not replicate to a foreign one (Chapter 4.6).
 
 ---
 
@@ -344,7 +344,7 @@ It exists because those boundaries are otherwise scattered across five documents
 | One client exhausts storage for the others | Enforcing XFS project quota (1.1.3) | Tests 5, 5.5 |
 | Undetected modification of stored data | Borg per-chunk authentication tags, verified on read (3.1) | — |
 | Password guessing, credential reuse | Key-only SSH; passwords and root login disabled (1.2.1) | Test 1.5 |
-| Operator error or host-side software destroys a repository's files | Point-in-time reflink snapshots of `HOST_REPO_BASE`, client-scoped restore (11.5) | Test 11 |
+| Operator error or host-side software destroys a repository's files | Point-in-time reflink snapshots of `HOST_REPO_BASE`, client-scoped restore ([Snapshots](SNAPSHOTS.md)) | Test 11 |
 
 The residual risk across every row but the last is the same single point: those properties depend on the client's key being bound to the forced command. One `authorized_keys` line without it voids all of them simultaneously, and nothing else in the system would look wrong. That is why Test 3 exists. The snapshot row is the exception — it is host-side tooling that answers accident and non-malicious host-side damage rather than a client acting against the server, and it depends instead on the immutable flag holding and the snapshot volume being intact (Test 11).
 
@@ -369,7 +369,7 @@ Documented as roadmap items, and **absent today**. A deployment must be planned 
 | No offline export helper | Copying repositories to removable media is a hand-run `rsync` | 11.2 |
 | No scheduled integrity verification | On-disk corruption is detected when data is read, not before | 11.3 |
 
-Deliberately **not** on this list because it will not be built: automated pruning (11.1). Nothing is ever deleted; capacity is bounded by quotas and managed by monitoring instead ([Operations](OPERATIONS.md) 10).
+Deliberately **not** on this list because it will not be built: automated pruning (Chapter 4.6). Nothing is ever deleted; capacity is bounded by quotas and managed by monitoring instead ([Operations](OPERATIONS.md) 10).
 
 ## 4.4. Cannot be solved here
 
@@ -378,8 +378,8 @@ Not gaps, and not roadmap items. These follow from the design and would require 
 | Situation | Why nothing can be done |
 |---|---|
 | Client loses its key or passphrase | No key material, escrow or recovery path exists server-side — that absence *is* the privacy guarantee (2.1.1) |
-| Attacker holds root on the host | Nothing hosted on a system defends it against its own root. The answer is a copy the machine cannot reach — the operator's air-gapped offline export (11.2), or a client-side offsite copy. This server does not push to a foreign target: doing so safely would require trusting that target's storage integrity or holding outbound credentials an attacker would inherit (11.2) |
-| Site loss with no client-side offsite copy | Server-side foreign mirroring was dropped for the reason in the row above. Only the client holds the key, so only the client can keep an independent offsite copy; without one, loss of the site or the storage volume is total (11.2) |
+| Attacker holds root on the host | Nothing hosted on a system defends it against its own root. The answer is a copy the machine cannot reach — the operator's air-gapped offline export ([Roadmap](../ROADMAP.md) 11.2), or a client-side offsite copy. This server does not push to a foreign target: doing so safely would require trusting that target's storage integrity or holding outbound credentials an attacker would inherit (Chapter 4.6) |
+| Site loss with no client-side offsite copy | Server-side foreign mirroring was dropped (Chapter 4.6). Only the client holds the key, so only the client can keep an independent offsite copy; without one, loss of the site or the storage volume is total |
 | Metadata visible to the server | Repository sizes, backup timing and client names are necessarily known to the server. Only *contents* are protected |
 | Space stranded by failed backups | Append-only forbids reclaiming uncommitted segments; raising the quota does not recover them ([Operations](OPERATIONS.md) 10.4) |
 
@@ -388,5 +388,32 @@ Not gaps, and not roadmap items. These follow from the design and would require 
 If you are evaluating whether to run this: 4.1 is what you get, 4.2 is what you must build yourself, 4.3 is what you must plan around, and 4.4 is what you must accept.
 
 A deployment that satisfies 4.1 but not 4.2 is not secure — the application layer alone was never sufficient (1.3). A deployment that satisfies both is hardened, and still loses everything to a failed disk or a lost site unless a copy is kept off this server — which, per 4.4, is the client's to keep, since this server does not replicate.
+
+## 4.6. Deliberately not built
+
+Two capabilities a backup server might be expected to have are absent by choice, not by omission. Neither is a roadmap item.
+
+### Automated archive pruning
+
+Operator-configurable retention ("keep 7 daily, 4 weekly, 6 monthly" per client), applied on a schedule so old archives are cleaned up without a manual `borg prune` run, is **not offered and will not be.**
+
+Deletion is the single operation that can destroy a backup, and an automated retention mechanism performs it regularly, unattended, against repositories whose contents the server cannot read and cannot verify afterwards. Its failure mode is silent and irreversible. Weighed against unbounded storage growth — which is visible, gradual, and answerable by adding a disk — the trade is not close.
+
+The consequence is deliberate, and is documented as normal operation rather than as a gap: nothing is ever deleted, consumption is bounded by per-client quotas instead of retention policies, and capacity is managed by monitoring and by raising limits ([Operations](OPERATIONS.md) Chapter 10).
+
+This does **not** rule out a **manual, operator-side** reclamation tool for exceptional situations — space stranded by repeatedly failed backups (4.4, [Operations](OPERATIONS.md) Chapter 10.4) currently has no answer other than the transaction rollback in [Recovery](RECOVERY.md) Section 1, which is designed for accidents rather than for cleanup. Any such tool would be a deliberate, attended action — never a schedule, and never reachable from a client connection.
+
+### Server-side mirroring to a foreign backup server
+
+This server replicating its hosted repositories to a **different, external** backup server for live offsite redundancy was planned and is **dropped.**
+
+The feature only meant something if the foreign server enforced append-only against this one. An offsite copy that accepts deletions is not a second copy in any meaningful sense: an attacker with root here inherits whatever replication credentials this server holds, so if those credentials permit deletion, one compromise destroys the local data and the remote copy in the same session. That requirement cannot be met inside this project's model:
+
+- **This server holds no repository key** (2.1.2). The only replication mechanism available to it is a file-level copy of the opaque repository directory — `rsync`/`rclone`, never the Borg protocol, because every archive-moving Borg operation (`borg create`, `borg transfer` in Borg 2.x) must open the manifest and needs the key. `borg serve --append-only` is therefore never in the path.
+- **`rsync` has no append-only mode.** `rrsync -no-del` blocks `--delete` and `--remove*`, but nothing stops a hostile or buggy sender from overwriting existing files in place. Borg's committed segments are frozen by the protocol; rsynced files are not.
+- **Closing that gap means trusting the foreign operator's storage layer** — remote snapshots, ZFS/btrfs, WORM — which is exactly the third-party integrity this project declines to assume. An unverified remote is a copy that happens to be far away, not an offsite backup.
+- The same reasoning runs backwards, so **this project does not offer an inbound rsync mirror endpoint to third parties either.** It could not be locked down to the standard `borg serve` meets, and offering it would undercut the standard the rest of the server holds to.
+
+**Offsite redundancy is therefore delegated to the client.** Only the client holds the key, so only the client can make a second, genuinely independent copy: another `borg create` target, or `borg serve` against a foreign server *the client* trusts. This is a client recommendation ([Client Use](CLIENTUSE.md) Chapter 9, [Best Practices](BEST_PRACTICES.md)), not a server feature. The operator's own **offline** export to removable media — inside the trust boundary, because the medium is physically disconnected — is [Roadmap](../ROADMAP.md) 11.2.
 
 ---

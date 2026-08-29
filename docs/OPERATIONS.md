@@ -79,7 +79,7 @@ clients.conf + keys/ + server_info.conf ---> hardened-borg-server ---> Repositor
 
 ## 7.5. Backing up the configuration
 
-The three items above — `clients.conf`, `config/keys/`, and `server_info.conf` — live under `HOST_CONFIG_BASE`, which is a **different tree from `HOST_REPO_BASE`**. There is no server-side replication that would carry them (Chapter 11.2), and the offline export helper copies repositories only. Nothing backs them up automatically.
+The three items above — `clients.conf`, `config/keys/`, and `server_info.conf` — live under `HOST_CONFIG_BASE`, which is a **different tree from `HOST_REPO_BASE`**. There is no server-side replication that would carry them ([Design](../docs/DESIGN.md) Chapter 4.6), and the offline export helper ([Roadmap](../ROADMAP.md) 11.2) copies repositories only. Nothing backs them up automatically.
 
 **Back them up separately.** Together they are a few kilobytes.
 
@@ -486,7 +486,7 @@ The distinction matters for the sizing invariant in Chapter 10.2, which is about
 
 ## 9.6. 50-service-install.sh
 
-Installs the Podman Quadlet (ROADMAP 11.4). It symlinks `systemd/borg-server.container` into `~/.config/containers/systemd/` as `${CONTAINER}.container`, writes `${CONTAINER}.container.d/10-deployment.conf` from `config.sh` (the `Image`, `ContainerName`, published port and the three bind mounts), and runs `systemctl --user daemon-reload` so `podman-system-generator` (re)produces `${CONTAINER}.service` — `borg-server.service` by default, namespaced by `CONTAINER` through the filename for the same reason [Snapshots](SNAPSHOTS.md)'s timer is (see Chapter 6.2.2). There is no `systemctl --user enable` step; the Quadlet's `[Install]` section is honoured on the reload, and linger (Chapter 6.2.3) carries it across reboot. Re-run after any change to `config.sh` (for example, pinning `IMAGE` to a digest), then restart the service for the change to take effect.
+Installs the Podman Quadlet ([Deployment](DEPLOYMENT.md) Chapter 6.2). It symlinks `systemd/borg-server.container` into `~/.config/containers/systemd/` as `${CONTAINER}.container`, writes `${CONTAINER}.container.d/10-deployment.conf` from `config.sh` (the `Image`, `ContainerName`, published port and the three bind mounts), and runs `systemctl --user daemon-reload` so `podman-system-generator` (re)produces `${CONTAINER}.service` — `borg-server.service` by default, namespaced by `CONTAINER` through the filename for the same reason [Snapshots](SNAPSHOTS.md)'s timer is (see Chapter 6.2.2). There is no `systemctl --user enable` step; the Quadlet's `[Install]` section is honoured on the reload, and linger (Chapter 6.2.3) carries it across reboot. Re-run after any change to `config.sh` (for example, pinning `IMAGE` to a digest), then restart the service for the change to take effect.
 
 ```bash
 ./scripts/50-service-install.sh

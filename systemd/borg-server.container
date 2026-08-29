@@ -2,9 +2,9 @@
 # Borg Backup Server — Podman Quadlet (rootless user unit)
 #
 # podman-system-generator turns this .container file into a real
-# <CONTAINER>.service at `systemctl --user daemon-reload`. It replaces the
-# hand-written systemd/container.service template + generated EnvironmentFile
-# (ROADMAP 11.4).
+# <CONTAINER>.service at `systemctl --user daemon-reload`. Since 1.0.0 it
+# replaces the hand-written systemd/container.service template + generated
+# EnvironmentFile (DEPLOYMENT 6.2).
 #
 # WHAT IS AND ISN'T HERE. This file is checked into git and carries ONLY
 # values that are the same on every host. Everything deployment-specific —
@@ -13,8 +13,8 @@
 #
 #   ~/.config/containers/systemd/<CONTAINER>.container.d/10-deployment.conf
 #
-# rendered from config.sh, which stays the single source of truth (ROADMAP
-# 11.4, DEPLOYMENT 9.1). This file ALONE is therefore an incomplete unit —
+# rendered from config.sh, which stays the single source of truth
+# (DEPLOYMENT 6.2). This file ALONE is therefore an incomplete unit —
 # it has no Image= — exactly as systemd/container.service alone was
 # incomplete without its .env. Quadlet merges the drop-in before generating,
 # so the unit is valid once 50-service-install.sh has run.

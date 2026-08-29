@@ -21,14 +21,14 @@ production lab instead: the actual target OS (Fedora CoreOS), a real block
 device for the repository volume, and one VM per client rather than one VM
 playing several roles. It costs more setup, and needs a Linux host with
 KVM/libvirt. Reach for it once you need something Path A structurally
-cannot show you — immutability, the point-in-time snapshot mechanism from
-[Roadmap](../ROADMAP.md) 11.5, or behavior across more than one BorgBackup
+cannot show you — immutability, the point-in-time snapshot mechanism
+([Snapshots](../docs/SNAPSHOTS.md)), or behavior across more than one BorgBackup
 version — or once you are **running** this project and want to rehearse an
 upgrade or a recovery on the real OS before doing it for real. It is
 deliberately built to grow: adding another client is one more VM of the same
 shape, and the same approach extends to a second server VM standing in for
 the foreign server a client mirrors to for its own offsite copy
-([Roadmap](../ROADMAP.md) 11.2).
+([Best Practices](../docs/BEST_PRACTICES.md) Chapter 10.2).
 
 Both are throwaway. Neither touches hardware or software you use for
 anything else, and both are meant to be discarded and rebuilt freely.
@@ -130,7 +130,7 @@ sudo xfs_quota -x -c 'state -p' /var/mnt/borg-repo   # Enforcement: ON
 ```
 
 `reflink=1` is not needed by anything today; it is there so the same volume can
-later be used to try the snapshot mechanism from [Roadmap](../ROADMAP.md) 11.5.
+later be used to try the snapshot mechanism (see [Snapshots](../docs/SNAPSHOTS.md)).
 
 ---
 
@@ -228,7 +228,7 @@ permanent traces **by design**:
 - the recovery drill below deliberately damages a repository
 
 A VM snapshot makes all of that free to repeat. This is unrelated to the
-storage snapshots discussed in [Roadmap](../ROADMAP.md) 11.5.
+storage snapshots discussed in [Snapshots](../docs/SNAPSHOTS.md).
 
 ---
 
@@ -302,7 +302,7 @@ upgrade in a VM costs a snapshot restore if it goes wrong.
 The real target OS, on a hypervisor that can hand it a real Ignition config
 and a real block device — for whatever [Path A](#path-a-quick-evaluation-fedora-server)
 cannot show you: immutability, the point-in-time snapshot mechanism
-([Roadmap](../ROADMAP.md) 11.5), or behavior across more than one BorgBackup
+([Snapshots](../docs/SNAPSHOTS.md)), or behavior across more than one BorgBackup
 version. Built on QEMU/KVM with libvirt; VirtualBox cannot pass an Ignition
 config directly, which is the whole reason Path A avoids CoreOS in the first
 place.
@@ -320,8 +320,8 @@ None of them should ever touch a VM this lab did not create.
 **Extending it.** Another client is one more VM of the same shape as Chapter
 15. A second server VM, provisioned the same way as Chapter 11, stands in for
 the foreign server a client keeps its own offsite copy on
-([Roadmap](../ROADMAP.md) 11.2) — nothing below is specific to there being
-exactly one of each.
+([Best Practices](../docs/BEST_PRACTICES.md) Chapter 10.2) — nothing below is
+specific to there being exactly one of each.
 
 ---
 
@@ -635,7 +635,7 @@ different here is that the volume is real, and the following can actually be
 measured rather than assumed. **The paths below are only for measuring the
 underlying mechanism** — the project's actual snapshot layout is
 `HOST_REPO_BASE` / `SNAPSHOT_BASE` as defined in `config.sh` and
-[Roadmap](../ROADMAP.md) 11.5 (nested by client, not shown here). Once
+[Snapshots](../docs/SNAPSHOTS.md) (nested by client, not shown here). Once
 `HOST_STORAGE_BASE`/`CONTAINER` point at this volume, `./snapshots/70-create-snapshot.sh`
 can be run directly against real client repositories, end to end.
 

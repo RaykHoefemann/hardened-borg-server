@@ -63,8 +63,8 @@ SOURCE_URL="https://github.com/RaykHoefemann/hardened-borg-server"
 # header). Distinct from SERVICE below, the generated unit name, which
 # varies with CONTAINER. Only 50-service-install.sh needs this one, to find
 # the file to install; every other script's business is with the generated
-# unit. (ROADMAP 11.4: replaced the hand-written container.service template
-# + generated EnvironmentFile.)
+# unit. (Since 1.0.0 this replaces the hand-written container.service
+# template + generated EnvironmentFile; see DEPLOYMENT 6.2.)
 QUADLET_SOURCE_NAME="borg-server.container"
 
 # The unit podman-system-generator produces from

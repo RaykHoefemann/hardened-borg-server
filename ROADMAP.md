@@ -6,49 +6,36 @@
 
 # 11. Roadmap
 
-What is still planned and not yet built. Timelines are not committed.
+This chapter tracks work that is **planned but not yet built**. A feature that
+ships is not kept here — it moves into the documents that describe it, and its
+design history stays in git. Timelines are not committed.
 
-Numbers are stable — nothing is renumbered when an item resolves. A **dropped** feature (11.1, and the foreign-mirroring half of 11.2) keeps its full section as a tombstone, so the decision and its reasoning stay visible. A **shipped** feature (11.4, 11.5, 11.8) is cut down to a one-paragraph pointer into the docs that now carry it — the design history is in git.
+Section numbers are historical and are not resequenced. Four have left this page:
+**11.1** (automated archive pruning) and server-side mirroring were **dropped** —
+the reasoning is now in [Design](docs/DESIGN.md) Chapter 4.6 — and **11.4**
+(migration to a Podman Quadlet), **11.5** (point-in-time snapshots of the storage
+volume) and **11.8** (negative-test coverage for the verification checks)
+**shipped in 1.0.0**, documented in [Deployment](docs/DEPLOYMENT.md) Chapter 6.2,
+[Snapshots](docs/SNAPSHOTS.md) and [Verification](docs/VERIFICATION.md).
 
-## 11.1. Automated Archive Pruning — dropped
+## 11.2. Manual Offline Export to Removable Media
 
-Previously planned: operator-configurable retention policies (e.g. "keep 7 daily, 4 weekly, 6 monthly" per client), so old archives would be cleaned up without a manual `borg prune` run.
-
-**This is no longer a goal.** The entry is kept rather than deleted so that the decision is on record and the chapter numbering stays stable.
-
-The reasoning is the one this project applies everywhere else: deletion is the single operation that can destroy a backup, and an automated retention mechanism would perform it regularly, unattended, against repositories whose contents the server cannot read and cannot verify afterwards. Its failure mode is silent and irreversible. Weighed against unbounded storage growth — which is visible, gradual, and answerable by adding a disk — the trade is not close.
-
-The consequence is deliberate, and is documented as normal operation rather than as a gap: nothing is ever deleted, consumption is bounded by per-client quotas instead of retention policies, and capacity is managed by monitoring and by raising limits. See [Operations](docs/OPERATIONS.md) Chapter 10.
-
-What this does **not** rule out is a **manual, operator-side** reclamation tool for exceptional situations. Space stranded by repeatedly failed backups (Operations, Chapter 10.4) currently has no answer other than the transaction rollback in [Recovery](docs/RECOVERY.md) Section 1, which is designed for accidents rather than for cleanup. Any such tool would be a deliberate, attended action — never a schedule, and never reachable from a client connection.
-
-## 11.2. Replicating Own Repositories Off-Server — foreign-server mirroring dropped; manual offline export planned
-
-Two things have lived under this number. The first — this server replicating its hosted repositories to a **different, external backup server** for live offsite redundancy — was planned and is now **dropped**. The entry is kept, as 11.1 is, so the decision and its reasoning stay on record. What replaces it is smaller and stays inside the trust boundary: a **manual, operator-side helper for copying repositories onto removable media**.
-
-### Why foreign-server mirroring is dropped
-
-The feature only meant something if the foreign server enforced append-only against this one. An offsite copy that accepts deletions is not a second copy in any meaningful sense: an attacker with root here inherits whatever replication credentials this server holds, so if those credentials permit deletion, one compromise destroys the local data and the remote copy in the same session. That requirement cannot be met inside this project's model:
-
-- **This server holds no repository key** (Chapter 2.1.2). The only replication mechanism available to it is a file-level copy of the opaque repository directory — `rsync`/`rclone`, never the Borg protocol, because every archive-moving Borg operation (`borg create`, `borg transfer` in Borg 2.x) must open the manifest and needs the key. This is not a limitation a newer Borg lifts; it follows from the key never being on the server. `borg serve --append-only` is therefore never in the path — "the foreign side enforces append-only" could only mean a pull-based fetch, or filesystem-level immutability and versioning on the remote.
-- **rsync has no append-only mode.** `rrsync -no-del` blocks `--delete` and `--remove*`, but nothing stops a hostile or buggy sender from overwriting existing files in place, and `rrsync` can filter client options off but cannot force `--ignore-existing` on. Borg's committed segments are frozen by the protocol; rsynced files are not.
-- Closing that gap means trusting the foreign operator's storage layer — remote snapshots, ZFS/btrfs, WORM — which is exactly the third-party integrity this project declines to assume. An unverified remote is a copy that happens to be far away, not an offsite backup.
-- The same reasoning runs backwards, so **this project does not offer an inbound rsync mirror endpoint to third parties either.** It could not be locked down to the standard `borg serve` meets — rsync is a large C codebase with a running CVE history, against a narrow purpose-built protocol — and offering it would undercut the standard the rest of the server holds to.
-
-**Offsite redundancy is therefore delegated to the client.** Only the client holds the key, so only the client can make a second, genuinely independent copy: another `borg create` target, or `borg serve` against a foreign server *the client* trusts. This is documented as a client recommendation ([Client Use](docs/CLIENTUSE.md), [Best Practices](docs/BEST_PRACTICES.md)), not built as a server feature. Receiving backups from external clients is the one adjacent thing this server does safely — over the same forced-command `borg serve` path every other client uses.
-
-The append-only verification procedure this entry used to carry (probe archive, `borg delete` + `borg compact`, then measure whether physical space is reclaimed — the only signal that discriminates, since Borg refuses nothing and warns nothing) is still useful to a client setting up its own offsite target, and now lives in [Client Use](docs/CLIENTUSE.md) Chapter 9.
-
-### What replaces it: a manual offline export helper
-
-A host-side script that copies the hosted repositories — `HOST_REPO_BASE/` — onto a mounted block device (`rsync -a --delete`), for an air-gapped copy the operator physically disconnects and can store elsewhere. This stays inside the project's trust boundary — the operator's own disk, in the operator's hands — so the append-only problem above does not apply: the immutability is physical (the medium is unplugged), not a protocol property. It is the "offline" half of the offline/offsite split; the "offsite" half is the client's job, above.
+A host-side script that copies the hosted repositories — `HOST_REPO_BASE/` — onto
+a mounted block device (`rsync -a --delete`), for an air-gapped copy the operator
+physically disconnects and can store elsewhere. This stays inside the project's
+trust boundary — the operator's own disk, in the operator's hands — so the
+append-only problem that ruled out server-side mirroring ([Design](docs/DESIGN.md)
+Chapter 4.6) does not apply here: the immutability is physical (the medium is
+unplugged), not a protocol property. It is the "offline" half of the
+offline/offsite split; the "offsite" half — a live copy on infrastructure this
+host cannot reach — is the client's, because only the client holds the key.
 
 Scope and constraints:
 
-- **Which repositories to export is an operator choice.** A repository holding an external partner's own backups is one this server is already the offsite copy *of* — its source data lives with that partner, and it is not the operator's data to carry offsite. With client groups gone (1.0.0), the helper cannot tell those apart from a name, so the sweep set is either "everything under `HOST_REPO_BASE`" or an explicit allow/deny list the operator maintains. (Snapshots, 11.5, are unaffected — they cover every client, because they cost nothing and never leave the host.)
+- **Which repositories to export is an operator choice.** A repository holding an external partner's own backups is one this server is already the offsite copy *of* — its source data lives with that partner, and it is not the operator's data to carry offsite. The helper cannot tell those apart from a name, so the sweep set is either "everything under `HOST_REPO_BASE`" or an explicit allow/deny list the operator maintains. (Snapshots are unaffected — they cover every client, because they cost nothing and never leave the host.)
 - **Manual and attended.** No timer, no schedule, no client-facing surface — the category of `99-container-status.sh`. Nothing about it is reachable from a client connection (Chapter 1.2.6).
 - **The copy is ciphertext.** A keyfile-mode repository copied this way cannot be restored without the client's exported key and passphrase (Chapter 2.1.1), which exist only on the client. The helper produces half of a usable offline backup; the client-side key archive ([Best Practices](docs/BEST_PRACTICES.md) Chapter 2.1) is the other half. The server cannot hold that half without becoming the key escrow the same chapter rules out.
-- **Not against a live repository.** Run it in an idle window, or from a storage snapshot (11.5). Borg repositories are transactional — a copy taken mid-commit rolls back to the last committed transaction on next access rather than tearing — but a coordinated quiet window is cleaner still.
+- **Not against a live repository.** Run it in an idle window, or from a storage snapshot ([Snapshots](docs/SNAPSHOTS.md)). Borg repositories are transactional — a copy taken mid-commit rolls back to the last committed transaction on next access rather than tearing — but a coordinated quiet window is cleaner still.
 - **`borg check --repository-only` on the copy** validates it structurally without a key, exactly as for the primary (11.3).
 - **Destination-agnostic, but only removable media is supported.** The same `rsync` invocation can point anywhere the operator can write. Doing so is the operator's own decision and carries every caveat above; it is not a mirroring feature and is not documented as one.
 
@@ -68,21 +55,13 @@ Two existing guarantees must be preserved when this lands:
 
 Practical considerations: `borg check` is I/O-intensive, so scheduling must avoid colliding with active backup windows, and each per-repository check should run under the same isolation the rest of the server uses.
 
-## 11.4. Migration from a hand-written systemd unit to Podman Quadlets — done
-
-Shipped in 1.0.0. The hand-written unit template + generated `EnvironmentFile` is now a checked-in Podman Quadlet `systemd/borg-server.container` plus a `<CONTAINER>.container.d/10-deployment.conf` drop-in that `scripts/50-service-install.sh` renders from `config.sh`; `podman-system-generator` produces `<CONTAINER>.service` on `daemon-reload` (needs podman ≥ 5.0). Container hardening landed with it, in its own commit: `NoNewPrivileges=true`, `DropCapability=all` + seven annotated caps, `ReadOnly=true` + three `tmpfs`, `PidsLimit=128`, `Memory=512m` — determined empirically against the shipped image, defence in depth beyond what Chapter 1.1 requires (no Chapter 1 guarantee depends on it). Deployment/lifecycle change only — client-facing behaviour and the security/privacy models (Chapters 1, 2) are unchanged. See [Deployment](docs/DEPLOYMENT.md) Chapter 6.2 (6.2.4 for running more than one instance, 6.3 for the one-time migration step) and the header of `systemd/borg-server.container` for the per-cap rationale. Verified: [Verification](docs/VERIFICATION.md) checks 4A–4C and section 12.
-
-## 11.5. Point-in-Time Snapshots of the Storage Volume — done
-
-Shipped as `snapshots/70-create-snapshot.sh` (plus the `71-`/`72-`/`79-` timer scripts), `75-list-snapshots.sh`, `76-delete-snapshots.sh`, `77-restore-last-snapshot.sh`, and `scripts/04-reattach-client.sh` for reconnecting `clients.conf` after a `HOST_REPO_BASE`-only restore. Reflink point-in-time copies of `HOST_REPO_BASE`, made immutable (`chattr +i`), with a client-scoped restore — closing the one gap append-only cannot: destruction originating host-side rather than over a client connection. Not a second copy, and not a substitute for an offsite copy (client-side, see 11.2). See [Snapshots](docs/SNAPSHOTS.md) and [Verification](docs/VERIFICATION.md) Test 11.
-
 ## 11.6. Executable Verification Checks
 
-A runner that performs the host-side checks of [Verification](docs/VERIFICATION.md) as code — `tests/verify.sh 5B`, or all of them at once — so that an operator or a security researcher can obtain a machine-readable result without transcribing twenty-four commands by hand.
+A runner that performs the host-side checks of [Verification](docs/VERIFICATION.md) as code — `tests/verify.sh 5B`, or all of them at once — so that an operator or a security researcher can obtain a machine-readable result without working through the page command by command by hand.
 
-This became possible rather than merely desirable when the page moved to one criterion per check: `0A`–`0C`, `1.5A`–`1.5C`, `3A`, `3B`, `4A`–`4C`, `5A`, `5B` and `5.5A` each now name exactly one thing, have exactly one measurement, and have exactly one repair. A script per check is a transcription of that structure, not a reinterpretation of it.
+This became possible rather than merely desirable when the page moved to one criterion per check: each host-side check now names exactly one thing, has exactly one measurement, and has exactly one repair. A script per check is a transcription of that structure, not a reinterpretation of it.
 
-Scope is deliberately the **host side** only. The remaining checks — `0.5A`, `0.5B`, `1`, `2`, `5.5B`, `6`'s namespace entry, `7`, `8`, `9`, `10` — run from a client machine holding a provisioned key, write throwaway data into a real repository, and in the case of `9` leave roughly a megabyte behind permanently. Driving those from the host would mean the server holding a client key, which contradicts Chapter 2.1 outright. They stay manual, and the runner should say so rather than silently reporting a partial pass as a whole one.
+Scope is deliberately the **host side** only. The checks that run from a client machine holding a provisioned key — writing throwaway data into a real repository, and in one case leaving roughly a megabyte behind permanently — stay manual: driving them from the host would mean the server holding a client key, which contradicts Chapter 2.1 outright. The runner should say so rather than silently reporting a partial pass as a whole one.
 
 Constraints to preserve:
 
@@ -129,8 +108,4 @@ That last point shapes how the tool must be written. An apply command that quiet
 
 The `podman` stub in `tests/host-scripts.sh` records every non-`unshare` invocation and returns 0, so both halves are cheap to assert: that the apply script issues its exec against `$CONTAINER`, and that a stopped or missing container produces a named fallback rather than a silent success. The generator's own behaviour is already covered by `tests/authorized-keys-generation.sh`, which runs the real script against fixtures.
 
-This is orthogonal to the Quadlet migration (11.4): the apply path is about the running container, not about how the unit that starts it is written, and either order of implementation works.
-
-## 11.8. Negative-Test Coverage for the Verification Checks — done
-
-Every check in `docs/VERIFICATION.md` now records, in its own **Negative test** field, a deliberately broken deployment staged against a live instance and shown to trip that check's **Fail** criterion — never against production, always on a throwaway bench, and targeting the property rather than a proxy for it. The Summary checklist at the end of that page is the live status: as of 1.0.0 all forty checks have both directions demonstrated except the two `(✅)` *capped* ones, whose counter-example cannot be produced at all — **0A** (a forged provenance attestation that still verifies) and **12C** (two instances sharing one SELinux MCS category, which needs `setenforce 0` or dropping `:Z` and so breaks more than the one property). The single open sub-case is 5.5A's `unreadable` branch, believed reachable only by a genuine `statfs()` failure — recorded in that check's own text, not here.
+This is orthogonal to the Quadlet deployment ([Deployment](docs/DEPLOYMENT.md) Chapter 6.2): the apply path is about the running container, not about how the unit that starts it is written, and either order of implementation works.

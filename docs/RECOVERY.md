@@ -195,7 +195,7 @@ Accidental `rm -rf` against a client's repository directory, a botched maintenan
 **If no snapshot predates the incident** — the tooling was never set up, the incident happened before that day's scheduled snapshot ran, or it reached `SNAPSHOT_BASE` itself (see the caveat below) — the options fall back to, in order of preference:
 
 1. **The clients still hold their source data.** For repositories whose clients are healthy, the fastest correct answer is often to let the clients re-upload. Archive history before the incident is lost, but current data is not.
-2. **A client-side offsite copy**, if the affected client keeps one (see section 7). This server does not mirror its own repositories — Roadmap 11.2.
+2. **A client-side offsite copy**, if the affected client keeps one (see section 7). This server does not mirror its own repositories — [Design](../docs/DESIGN.md) Chapter 4.6.
 3. Nothing else. Repository data destroyed on the host, with nothing to restore it from, is destroyed.
 
 The append-only guarantee does **not** help here either way: it constrains what clients may do over the protocol, not what the operator or a process with host access can do to the files directly. Snapshots are what closes that specific gap — but only within their own boundary: a snapshot lives on the **same physical storage** as the data it protects, as a sibling directory (`SNAPSHOT_BASE`) next to `HOST_REPO_BASE`, not a second copy anywhere else. A destructive command scoped to one client's directory leaves the snapshots untouched; one that reaches the whole storage volume takes them down with it — see section 6.
@@ -206,7 +206,7 @@ The append-only guarantee does **not** help here either way: it constrains what 
 
 Disk failure, filesystem corruption, or loss of the machine — anything that takes the whole storage volume with it, `HOST_REPO_BASE` and `SNAPSHOT_BASE` (and every snapshot it holds) alike.
 
-Snapshots do not help here, by design — they live on the same storage as the origin (see [Snapshots](SNAPSHOTS.md), "What this does not protect against"). This is precisely and exclusively what an offsite copy is for — and, with server-side mirroring dropped (Roadmap 11.2), that copy is one the client keeps, or the operator's own offline export stored elsewhere.
+Snapshots do not help here, by design — they live on the same storage as the origin (see [Snapshots](SNAPSHOTS.md), "What this does not protect against"). This is precisely and exclusively what an offsite copy is for — and, with server-side mirroring dropped ([Design](../docs/DESIGN.md) Chapter 4.6), that copy is one the client keeps, or the operator's own offline export stored elsewhere.
 
 With no offsite copy in place, repositories are lost and the clients' own source data is all that remains.
 
@@ -214,7 +214,7 @@ With no offsite copy in place, repositories are lost and the clients' own source
 
 ## 7. Recovering from an offsite copy
 
-**This server does not create one.** Mirroring its own hosted repositories to a foreign backup server was planned as Roadmap item 11.2 and has been **dropped** — the reasoning is in that entry: the server holds no repository key, so it could only ever ship an opaque file-level copy, and no file-copy transport gives the append-only guarantee such a copy would need to survive a compromise of this host.
+**This server does not create one.** Mirroring its own hosted repositories to a foreign backup server was planned and has been **dropped** — the reasoning is in [Design](../docs/DESIGN.md) Chapter 4.6: the server holds no repository key, so it could only ever ship an opaque file-level copy, and no file-copy transport gives the append-only guarantee such a copy would need to survive a compromise of this host.
 
 Offsite redundancy is therefore the **client's** responsibility, and recovery from it is entirely client-side:
 

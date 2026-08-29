@@ -140,7 +140,7 @@ including why the values are split across the two files. At minimum, set:
 $EDITOR config.sh
 ```
 
-- `HOST_STORAGE_BASE` → the XFS/`prjquota` mount noted in step 0 (e.g. `/var/mnt/borg-repo`). `HOST_REPO_BASE` is derived from it automatically as `${HOST_STORAGE_BASE}/${CONTAINER}/`, so nothing else needs editing here — the directory name is `CONTAINER`'s value (`borg-server` by default), not a second setting you supply. This keeps storage location and installation identity tied together by construction, and — since the snapshot tooling planned in [ROADMAP.md](../ROADMAP.md) 11.5 will place `.snapshots/${CONTAINER}/` under the same `HOST_STORAGE_BASE`, as a **sibling** of `HOST_REPO_BASE` rather than inside it — leaves that root free to sit right next to the repositories without ever being parsed out of `HOST_REPO_BASE` itself.
+- `HOST_STORAGE_BASE` → the XFS/`prjquota` mount noted in step 0 (e.g. `/var/mnt/borg-repo`). `HOST_REPO_BASE` is derived from it automatically as `${HOST_STORAGE_BASE}/${CONTAINER}/`, so nothing else needs editing here — the directory name is `CONTAINER`'s value (`borg-server` by default), not a second setting you supply. This keeps storage location and installation identity tied together by construction, and — since the snapshot tooling places `.snapshots/${CONTAINER}/` under the same `HOST_STORAGE_BASE`, as a **sibling** of `HOST_REPO_BASE` rather than inside it (see [Snapshots](../docs/SNAPSHOTS.md)) — leaves that root free to sit right next to the repositories without ever being parsed out of `HOST_REPO_BASE` itself.
 
   **The resulting `HOST_REPO_BASE` directory has to exist before step 4**: it
   is bind-mounted into the container as `/repo`, and podman will not start a

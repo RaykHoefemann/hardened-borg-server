@@ -1789,7 +1789,7 @@ a correctly aimed test 10.
 statement about what a *client* can do; anyone with host access can remove the
 repository directory outright, which is why local snapshots and an off-site
 copy matter — the latter kept by the client, since server-side mirroring was
-dropped (Roadmap 11.2).
+dropped ([Design](DESIGN.md) Chapter 4.6).
 
 > Verified, in both readings, against `v0.1.0-beta.29` with a Borg 1.2.8 client.
 > Against the client's own keyfile repository the command stops at
@@ -1803,7 +1803,7 @@ dropped (Roadmap 11.2).
 
 ## 11. Point-in-time snapshots survive host-side destruction
 
-**Claim** — [Snapshots](SNAPSHOTS.md) / [Roadmap](../ROADMAP.md) 11.5: a completed snapshot generation under `SNAPSHOT_BASE` is made immutable (`chattr +i`) and cannot be removed by an ordinary command, not even the operator's own `sudo rm -rf`, and restoring one reconstructs the client's XFS project id and enforced quota exactly as they were — not a freshly allocated approximation of them. The tree under `SNAPSHOT_BASE` mirrors `HOST_REPO_BASE`: `<client>/<timestamp>/`, `<client>` matching the same globally-unique name rule as the live repositories ([Design](DESIGN.md) Chapter 1.2.3). And ([Recovery](RECOVERY.md) Chapter 5) the whole path — snapshot, wipe, restore — returns a client's data unchanged.
+**Claim** — [Snapshots](SNAPSHOTS.md): a completed snapshot generation under `SNAPSHOT_BASE` is made immutable (`chattr +i`) and cannot be removed by an ordinary command, not even the operator's own `sudo rm -rf`, and restoring one reconstructs the client's XFS project id and enforced quota exactly as they were — not a freshly allocated approximation of them. The tree under `SNAPSHOT_BASE` mirrors `HOST_REPO_BASE`: `<client>/<timestamp>/`, `<client>` matching the same globally-unique name rule as the live repositories ([Design](DESIGN.md) Chapter 1.2.3). And ([Recovery](RECOVERY.md) Chapter 5) the whole path — snapshot, wipe, restore — returns a client's data unchanged.
 
 **Why it matters** — this is the local, fast half of recovering from operator error or destructive host-side software ([Recovery](RECOVERY.md) Chapter 5). If a completed generation could be removed the same way its live source can, the rollback path is exposed to exactly the class of accident it exists to survive. And a restore that silently drops or mis-applies the quota leaves a repository that looks recovered but is no longer protected — the failure mode [`77-restore-last-snapshot.sh`](SNAPSHOTS.md#7-restoring-the-most-recent-snapshot--77-restore-last-snapshotsh)'s own header calls out by name.
 
@@ -2404,9 +2404,9 @@ into each other.
   Section 4. Check 11E is a one-time round-trip of the snapshot tooling, not a
   substitute for that.
 - **Verifying a client-side offsite target** — a client that keeps its own
-  independent offsite copy (Roadmap 11.2) has to check that the foreign target
-  enforces append-only, a different problem with a different answer because you
-  cannot read its physical usage. The probe procedure for it is in
+  independent offsite copy has to check that the foreign target enforces
+  append-only, a different problem with a different answer because you cannot
+  read its physical usage. The probe procedure for it is in
   [Client Use](CLIENTUSE.md) Chapter 9.
 - **Host hardening itself** — SELinux enforcing, immutable OS, kernel
   isolation. Those are host-layer properties this project asserts as
@@ -2419,5 +2419,5 @@ into each other.
   key.
 - **Unattended, retention-driven pruning of old snapshot generations** — does
   not exist. Test 11 checks what the shipped `snapshots/` scripts actually do;
-  an age-based "keep the last N generations" mode remains an open question
-  (Roadmap 11.5), and there is nothing to verify until one is built.
+  an age-based "keep the last N generations" mode is outside that tooling and
+  is not planned, and there is nothing to verify until such a mode is built.

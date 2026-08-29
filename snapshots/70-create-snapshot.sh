@@ -285,8 +285,8 @@ mkdir -p "$SNAPSHOT_BASE"
 # ---------------------------------------------------------------------------
 #
 # The lock lives inside SNAPSHOT_BASE itself so it is automatically
-# namespaced per CONTAINER exactly the way SNAPSHOT_BASE already is (ROADMAP
-# 11.5) -- two independently-scheduled instances of this tooling protecting
+# namespaced per CONTAINER exactly the way SNAPSHOT_BASE already is (see
+# docs/SNAPSHOTS.md) -- two independently-scheduled instances of this tooling protecting
 # different containers on the same volume cannot contend on the same lock
 # file either. Held for the whole run via fd 9; released automatically when
 # the script exits, however it exits.

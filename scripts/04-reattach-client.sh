@@ -13,8 +13,8 @@
 #
 # WHY THIS EXISTS. HOST_CONFIG_BASE (clients.conf, config/keys/) lives inside
 # the git checkout, not on the quota-enforcing storage volume that snapshots
-# (docs/SNAPSHOTS.md) and offsite mirroring (ROADMAP.md 11.2) protect --
-# deliberately out of scope for both. A HOST_REPO_BASE restore can
+# (docs/SNAPSHOTS.md) and the operator's offline export (ROADMAP.md 11.2)
+# protect -- deliberately out of scope for both. A HOST_REPO_BASE restore can
 # therefore bring a client's repository directory, its host ownership and its
 # XFS project id back perfectly intact while clients.conf and the key file do
 # not come back with it. Everything the server needs to serve that client
