@@ -163,27 +163,14 @@ check_timestamp_format() {
     esac
 }
 
-# Resolve the client's group from the snapshot tree
-# (SNAPSHOT_BASE/<group>/<client>/, the same shape as HOST_REPO_BASE). The
-# client name is unique across groups (DESIGN.md 1.2.3), so this matches
-# exactly one -- if it ever matched two, refuse rather than guess.
-SNAP_GROUP=""
-for D in "${SNAPSHOT_BASE}"/*/"${CLIENT}"; do
-    [ -d "$D" ] || continue
-    if [ -n "$SNAP_GROUP" ]; then
-        echo "ERROR: client '$CLIENT' has snapshots under more than one group"
-        echo "       ('$SNAP_GROUP' and '$(basename "$(dirname "$D")")'). The name"
-        echo "       must be unique across groups -- see DESIGN.md 1.2.3."
-        exit 1
-    fi
-    SNAP_GROUP="$(basename "$(dirname "$D")")"
-done
-if [ -z "$SNAP_GROUP" ]; then
+# The client's snapshot tree, straight under SNAPSHOT_BASE
+# (SNAPSHOT_BASE/<client>/, the same flat shape as HOST_REPO_BASE).
+SNAP_CLIENT_DIR="${SNAPSHOT_BASE}/${CLIENT}"
+if [ ! -d "$SNAP_CLIENT_DIR" ]; then
     echo "No snapshots found for client '$CLIENT' under $SNAPSHOT_BASE."
     echo "Nothing to restore from."
     exit 1
 fi
-SNAP_CLIENT_DIR="${SNAPSHOT_BASE}/${SNAP_GROUP}/${CLIENT}"
 
 # Newest generation: same skip rule as 75-/76- (a stale .creating-* or
 # SNAPSHOT_BASE's own .lock never matches the timestamp format), sorted
@@ -205,26 +192,16 @@ if [ -z "$LAST_TS" ]; then
 fi
 LAST_GEN_DIR="${SNAP_CLIENT_DIR}/${LAST_TS}"
 
-# The client's group: scanned from the filesystem (HOST_REPO_BASE/<group>/
-# <client>), the same discovery 70-create-snapshot.sh uses, not read from
+# The client's live repository directory, straight under HOST_REPO_BASE --
+# the same flat layout 70-create-snapshot.sh scans, not read from
 # clients.conf. Also the point where "no existing repository" is detected --
 # see the header's "boundary" paragraph for why that refuses rather than
 # building one from scratch.
-GROUP=""
-for D in "${HOST_REPO_BASE}"/*/"${CLIENT}"; do
-    [ -d "$D" ] || continue
-    if [ -n "$GROUP" ]; then
-        echo "ERROR: client '$CLIENT' has a repository directory under more than"
-        echo "       one group ('$GROUP' and '$(basename "$(dirname "$D")")') --"
-        echo "       refusing to guess which one is the real one."
-        exit 1
-    fi
-    GROUP="$(basename "$(dirname "$D")")"
-done
+HOST_REPO="${HOST_REPO_BASE}/${CLIENT}"
 
-if [ -z "$GROUP" ]; then
-    echo "ERROR: no existing repository directory found for client '$CLIENT' under"
-    echo "       $HOST_REPO_BASE."
+if [ ! -d "$HOST_REPO" ]; then
+    echo "ERROR: no existing repository directory found for client '$CLIENT' at"
+    echo "       $HOST_REPO."
     echo "This script restores an existing client's repository in place -- it does"
     echo "NOT recreate one that no longer exists at all. If this client's directory"
     echo "is genuinely gone, that needs ./scripts/00-ssh-create-user.sh (new project"
@@ -233,23 +210,6 @@ if [ -z "$GROUP" ]; then
     echo "that is already on disk, not recreate one that is not (docs/SNAPSHOTS.md)."
     exit 1
 fi
-
-# The snapshot tree and the live repository tree must agree on the group.
-# A mismatch means the live directory found for '$CLIENT' belongs to a
-# different client of the same name than the one these generations came
-# from -- only possible if the globally-unique-name invariant (DESIGN.md
-# 1.2.3) has been violated. Refuse rather than restore one client's data
-# into another's directory.
-if [ "$GROUP" != "$SNAP_GROUP" ]; then
-    echo "ERROR: these snapshots are under group '$SNAP_GROUP', but the live"
-    echo "       repository found for '$CLIENT' is under '$GROUP'. Two clients"
-    echo "       share the name '$CLIENT' across groups -- restoring would put"
-    echo "       one client's data into the other's directory. See DESIGN.md"
-    echo "       1.2.3; resolve the collision first. Nothing was restored."
-    exit 1
-fi
-
-HOST_REPO="${HOST_REPO_BASE}/${GROUP}/${CLIENT}"
 
 # ---------------------------------------------------------------------------
 # Lock before anything is shown, for the same reason 76- does: nothing else

@@ -16,13 +16,11 @@
 # Usage:
 #   ./snapshots/75-list-snapshots.sh <client> [from] [to]
 #
-#   <client>  Required. A username as it appears under HOST_REPO_BASE. The
-#             group is resolved from the snapshot tree itself
-#             (SNAPSHOT_BASE/<group>/<client>/, the same shape as
-#             HOST_REPO_BASE), not passed in. Not cross-checked against
-#             clients.conf or HOST_REPO_BASE -- a client that was
-#             snapshotted and has since been removed from either still has
-#             to be listable here.
+#   <client>  Required. A username as it appears under HOST_REPO_BASE. Its
+#             snapshot tree is SNAPSHOT_BASE/<client>/ (the same flat shape
+#             as HOST_REPO_BASE). Not cross-checked against clients.conf or
+#             HOST_REPO_BASE -- a client that was snapshotted and has since
+#             been removed from either still has to be listable here.
 #
 #   [from]    Optional. Lower bound, inclusive.
 #   [to]      Optional. Upper bound, inclusive.
@@ -152,30 +150,16 @@ if [ -n "$FROM" ] && [ -n "$TO" ] && expr "$FROM" '>' "$TO" >/dev/null; then
     exit 1
 fi
 
-# Resolve the client's group from the snapshot tree
-# (SNAPSHOT_BASE/<group>/<client>/, the same shape as HOST_REPO_BASE). The
-# client name is unique across groups (DESIGN.md 1.2.3), so this matches
-# exactly one -- if it ever matched two, refuse rather than guess.
-GROUP=""
-for _d in "${SNAPSHOT_BASE}"/*/"${CLIENT}"; do
-    [ -d "$_d" ] || continue
-    if [ -n "$GROUP" ]; then
-        echo "ERROR: client '$CLIENT' has snapshots under more than one group"
-        echo "       ('$GROUP' and '$(basename "$(dirname "$_d")")'). The name"
-        echo "       must be unique across groups -- see DESIGN.md 1.2.3."
-        exit 1
-    fi
-    GROUP="$(basename "$(dirname "$_d")")"
-done
+# The client's snapshot tree, straight under SNAPSHOT_BASE
+# (SNAPSHOT_BASE/<client>/, the same flat shape as HOST_REPO_BASE).
+CLIENT_DIR="${SNAPSHOT_BASE}/${CLIENT}"
 
-if [ -z "$GROUP" ]; then
+if [ ! -d "$CLIENT_DIR" ]; then
     echo "No snapshots found for client '$CLIENT' under $SNAPSHOT_BASE."
     echo "(Either this client has never been snapshotted, or the name does"
     echo "not match what 70-create-snapshot.sh recorded it under.)"
     exit 0
 fi
-
-CLIENT_DIR="${SNAPSHOT_BASE}/${GROUP}/${CLIENT}"
 
 # Working file for the sorted, filtered list of generation names -- a real
 # temp file rather than a shell variable so an empty result and "one empty

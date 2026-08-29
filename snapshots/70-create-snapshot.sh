@@ -6,14 +6,11 @@
 # HOST_REPO_BASE (see docs/SNAPSHOTS.md for the full picture). For each
 # client:
 #
-#   ${SNAPSHOT_BASE}/<group>/<client>/<timestamp>/
+#   ${SNAPSHOT_BASE}/<client>/<timestamp>/
 #
-#   - the snapshot tree mirrors HOST_REPO_BASE/<group>/<client> exactly
-#     (DESIGN.md 1.2.3), so an operator reads one the way they read the
-#     other, and two clients of the same name in different groups can never
-#     collide here even if the "globally unique name" rule is somehow
-#     violated out of band
-#   - copied from ${HOST_REPO_BASE}/<group>/<client> with
+#   - the snapshot tree mirrors HOST_REPO_BASE/<client> exactly
+#     (DESIGN.md 1.2.3), so an operator reads one the way they read the other
+#   - copied from ${HOST_REPO_BASE}/<client> with
 #     `cp -a --reflink=always` (cheap: blocks are shared with the live
 #     repository until either side diverges)
 #   - then made read-only, rename-proof and delete-proof with
@@ -37,7 +34,7 @@
 # `index`/`hints` versus `data/`.
 #
 # Clients are discovered by walking the filesystem
-# (${HOST_REPO_BASE}/<group>/<client>), not by reading clients.conf: the
+# (${HOST_REPO_BASE}/<client>), not by reading clients.conf: the
 # point of this feature is to protect whatever is physically on disk,
 # including a client whose clients.conf entry is missing or wrong. (A
 # client's clients.conf entry itself surviving on the filesystem but not
@@ -157,10 +154,9 @@ snapshot_debug_log() {
 snapshot_client() {
     _sc_client_dir="$1"
     _sc_username="$(basename "$_sc_client_dir")"
-    _sc_group="$(basename "$(dirname "$_sc_client_dir")")"
 
-    # Both path components are validated before use, since both become
-    # directory names under SNAPSHOT_BASE.
+    # Validated before use, since it becomes a directory name under
+    # SNAPSHOT_BASE.
     case "$_sc_username" in
         ''|-*|*[!a-zA-Z0-9_-]*)
             echo "ERROR: skipping '$_sc_client_dir' -- name must be non-empty,"
@@ -169,20 +165,12 @@ snapshot_client() {
             return 1
             ;;
     esac
-    case "$_sc_group" in
-        ''|-*|*[!a-zA-Z0-9_-]*)
-            echo "ERROR: skipping '$_sc_client_dir' -- group '$_sc_group' must be"
-            echo "       non-empty, must not start with '-', and may use only"
-            echo "       a-z, 0-9, _, - to be trusted as a path component."
-            return 1
-            ;;
-    esac
 
-    _sc_snap_dir="${SNAPSHOT_BASE}/${_sc_group}/${_sc_username}"
+    _sc_snap_dir="${SNAPSHOT_BASE}/${_sc_username}"
     _sc_staging="${_sc_snap_dir}/.creating-${TIMESTAMP}"
     _sc_final="${_sc_snap_dir}/${TIMESTAMP}"
 
-    echo "[snapshot] ${_sc_group}/${_sc_username}: starting"
+    echo "[snapshot] ${_sc_username}: starting"
 
     mkdir -p "$_sc_snap_dir"
 
@@ -329,9 +317,8 @@ fi
 
 # ---------------------------------------------------------------------------
 # One snapshot generation for this whole run. Every client that gets a
-# snapshot this run gets the same label -- the group/client layout
-# (docs/SNAPSHOTS.md, "Layout on disk") means this carries no grouping
-# meaning, it is purely "when this run happened".
+# snapshot this run gets the same label -- it is purely "when this run
+# happened" (docs/SNAPSHOTS.md, "Layout on disk").
 # ---------------------------------------------------------------------------
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 
@@ -342,9 +329,9 @@ TOTAL=0
 FAILED=0
 
 # Same enumeration lib.sh's repo_projid_next already uses for "every client
-# directory that exists on disk": HOST_REPO_BASE/<group>/<client>, two
-# levels deep. Deliberately not clients.conf -- see the file header.
-for CLIENT_DIR in "${HOST_REPO_BASE}"/*/*; do
+# directory that exists on disk": HOST_REPO_BASE/<client>, one level deep.
+# Deliberately not clients.conf -- see the file header.
+for CLIENT_DIR in "${HOST_REPO_BASE}"/*; do
     [ -d "$CLIENT_DIR" ] || continue
     TOTAL=$((TOTAL + 1))
 

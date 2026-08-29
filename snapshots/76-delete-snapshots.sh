@@ -17,9 +17,8 @@
 # Omitting both deletes this client's ENTIRE snapshot history -- the
 # intended way to handle a compromised client, a client's own repository
 # reset, or complete/residue-free removal of a client, in one pass, without
-# touching any other client's history (SNAPSHOT_BASE/<group>/<client>/ is
-# the single prunable unit -- see docs/SNAPSHOTS.md, "Layout on disk"). The
-# group is resolved from the tree, not passed in.
+# touching any other client's history (SNAPSHOT_BASE/<client>/ is the single
+# prunable unit -- see docs/SNAPSHOTS.md, "Layout on disk").
 #
 # What this does, in order:
 #
@@ -141,30 +140,15 @@ if [ -n "$FROM" ] && [ -n "$TO" ] && expr "$FROM" '>' "$TO" >/dev/null; then
     exit 1
 fi
 
-# Resolve the client's group from the snapshot tree
-# (SNAPSHOT_BASE/<group>/<client>/, the same shape as HOST_REPO_BASE). The
-# client name is unique across groups (DESIGN.md 1.2.3), so this matches
-# exactly one -- if it ever matched two, refuse rather than delete either.
-GROUP=""
-for _d in "${SNAPSHOT_BASE}"/*/"${CLIENT}"; do
-    [ -d "$_d" ] || continue
-    if [ -n "$GROUP" ]; then
-        echo "ERROR: client '$CLIENT' has snapshots under more than one group"
-        echo "       ('$GROUP' and '$(basename "$(dirname "$_d")")'). The name"
-        echo "       must be unique across groups -- see DESIGN.md 1.2.3."
-        echo "       Refusing to delete without an unambiguous target."
-        exit 1
-    fi
-    GROUP="$(basename "$(dirname "$_d")")"
-done
+# The client's snapshot tree, straight under SNAPSHOT_BASE
+# (SNAPSHOT_BASE/<client>/, the same flat shape as HOST_REPO_BASE).
+CLIENT_DIR="${SNAPSHOT_BASE}/${CLIENT}"
 
-if [ -z "$GROUP" ]; then
+if [ ! -d "$CLIENT_DIR" ]; then
     echo "No snapshots found for client '$CLIENT' under $SNAPSHOT_BASE."
     echo "Nothing to delete."
     exit 0
 fi
-
-CLIENT_DIR="${SNAPSHOT_BASE}/${GROUP}/${CLIENT}"
 
 LIST_SCRIPT="$(dirname "$0")/75-list-snapshots.sh"
 if [ ! -x "$LIST_SCRIPT" ]; then
