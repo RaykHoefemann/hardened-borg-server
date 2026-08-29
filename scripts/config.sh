@@ -58,19 +58,26 @@ SOURCE_URL="https://github.com/RaykHoefemann/hardened-borg-server"
 
 # --- Container runtime -----------------------------------------------------
 
-# The systemd *unit template*'s fixed filename under systemd/ -- distinct
-# from SERVICE below, which is the *installed* unit name and varies with
-# CONTAINER. Only 50-service-install.sh needs this one, to find the
-# template; every other script's business is with the installed unit.
-SERVICE_TEMPLATE_NAME="container.service"
+# The Podman Quadlet *source* file's fixed name under systemd/ -- checked
+# into git, carries no deployment-specific values (see the file's own
+# header). Distinct from SERVICE below, the generated unit name, which
+# varies with CONTAINER. Only 50-service-install.sh needs this one, to find
+# the file to install; every other script's business is with the generated
+# unit. (ROADMAP 11.4: replaced the hand-written container.service template
+# + generated EnvironmentFile.)
+QUADLET_SOURCE_NAME="borg-server.container"
 
-# The installed systemd unit name, namespaced by CONTAINER for the same
-# reason SNAPSHOT_TIMER_NAME (snapshots/config.sh) is: a host running more
-# than one instance of this project installs every instance's unit into the
-# same shared ~/.config/systemd/user/ directory, and a fixed name would let
-# a second install silently overwrite the first instance's service. Default
-# (CONTAINER=borg-server): container_borg-server.service.
-SERVICE="container_${CONTAINER}.service"
+# The unit podman-system-generator produces from
+# ~/.config/containers/systemd/${CONTAINER}.container -- the .container
+# filename with .service in place of .container. Namespaced by CONTAINER
+# through that filename (50-service-install.sh installs the source as
+# ${CONTAINER}.container), for the same reason SNAPSHOT_TIMER_NAME
+# (snapshots/config.sh) is: a host running more than one instance of this
+# project installs every instance's Quadlet into the same shared
+# ~/.config/containers/systemd/ directory, and a fixed name would let a
+# second install silently overwrite the first. Default
+# (CONTAINER=borg-server): borg-server.service.
+SERVICE="${CONTAINER}.service"
 # Derived from VERSION above, so a checkout of a release tag already points at
 # the image built from that same commit — no editing needed to get a working
 # pull. This used to default to ":latest", which does not exist for pre-release
@@ -88,6 +95,12 @@ SERVICE="container_${CONTAINER}.service"
 # host's architecture manifest rather than the signed index (VERIFICATION 0B).
 # The tag stays the shipped default so that a fresh checkout can pull at all.
 IMAGE="ghcr.io/raykhoefemann/hardened-borg-server:${RELEASE_VERSION}"
+
+# Host port the container's SSH is published on (PublishPort in the generated
+# Quadlet drop-in). If you run more than one instance of this project on one
+# host, each needs its own value here as well as its own CONTAINER (repo-root
+# config.sh) -- the Quadlet, its generated unit and the podman container are
+# all namespaced by CONTAINER, but two instances still cannot share a port.
 SSH_PORT=2222
 
 # --- Host-side paths -------------------------------------------------------

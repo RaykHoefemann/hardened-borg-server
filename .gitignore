@@ -25,13 +25,15 @@ config/keys/
 
 # --- Generated systemd artifacts ---------------------------------------------
 #
-# Rendered from scripts/config.sh by 50-service-install.sh. The template they
-# are produced from — systemd/container.service — stays tracked; these two
-# carry absolute paths that are valid on exactly one machine.
-systemd/*.env
-systemd/*.rendered
-
-# Same idea, for snapshots/71-timer-install.sh: snapshot-create.service is
+# snapshots/71-timer-install.sh renders snapshot-create.service from its
+# template with this checkout's own REPO_ROOT baked into ExecStart — valid on
+# exactly one machine.
+#
+# (The Borg container's own unit no longer renders anything: it is a Podman
+# Quadlet, installed by 50-service-install.sh under
+# ~/.config/containers/systemd/ with a generated 10-deployment.conf drop-in —
+# both outside the checkout, so there is nothing here to ignore for it.)
+snapshots/*.rendered
 # rendered from snapshot-create.service.rendered's template with this
 # checkout's own REPO_ROOT baked into ExecStart — valid on exactly one
 # machine, same as the systemd/ case above.

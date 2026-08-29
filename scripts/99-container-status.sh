@@ -60,9 +60,9 @@ RUNNING_DEBIAN="$(printf '%s\n' "$RUNTIME_INFO" | sed -n 's/^debian=//p')"
 
 # podman's own record of the reference the container was given — not something
 # the image reports about itself, and the only value here that survives a digest
-# pin as a statement about content. `--rm` in the unit (OPERATIONS.md chapter
-# 9.11) removes a stopped container rather than leaving it in an exited state,
-# so this is empty for the same reason RUNNING_VERSION is: nothing is running.
+# pin as a statement about content. The Quadlet creates a fresh container per
+# start and removes it on stop (OPERATIONS.md chapter 9.11), so this is empty
+# for the same reason RUNNING_VERSION is: nothing is running.
 RUNNING_IMAGE_REF="$(podman inspect "$CONTAINER" --format '{{.ImageName}}' 2>/dev/null || true)"
 
 [ -n "$RUNNING_VERSION" ]   && echo "Running version:  ${RUNNING_VERSION}"
@@ -90,11 +90,11 @@ if [ -n "$RUNNING_IMAGE_REF" ] && [ "$RUNNING_IMAGE_REF" != "$IMAGE" ]; then
     echo "→ PIN MISMATCH: the running container was not started from IMAGE."
     echo "  The two image lines above name different objects, so the checkout,"
     echo "  the unit and this configuration all describe an image that is not"
-    echo "  serving anyone. Re-render the unit, then restart:"
+    echo "  serving anyone. Reinstall the Quadlet, then restart:"
     echo "      ./scripts/50-service-install.sh"
     echo "      ./scripts/92-container-restart.sh"
-    echo "  Both steps, in that order: the unit reads IMAGE from the environment"
-    echo "  file the install script generates, so restarting on its own starts"
+    echo "  Both steps, in that order: the generated unit reads IMAGE from the"
+    echo "  drop-in the install script writes, so restarting on its own starts"
     echo "  the old image again (DEPLOYMENT.md chapter 6.3, step 7)."
 fi
 
