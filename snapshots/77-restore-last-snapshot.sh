@@ -28,8 +28,11 @@
 #      current live repository directory (by scanning HOST_REPO_BASE, the
 #      same client-discovery approach 70-create-snapshot.sh uses, rather
 #      than trusting clients.conf).
-#   2. Shows both: the snapshot generation's timestamp and size (`du -sh`,
-#      same as 75-list-snapshots.sh), and the live repository's path.
+#   2. Shows both: the snapshot generation's timestamp and size (`sudo du -sh`,
+#      same as 75-list-snapshots.sh -- Borg's own `data/` subdirectory inside
+#      a repository is mode 700, unreadable by an unprivileged `du` even
+#      though the generation directory around it is mode 755; see issue #35),
+#      and the live repository's path.
 #   3. Asks for confirmation. Same exact-uppercase-Y rule as
 #      76-delete-snapshots.sh, for the same reason: this is irreversible.
 #   4. Only then: DELETES the current live repository outright (not
@@ -95,7 +98,10 @@
 # preserve the mapped-subuid ownership already correct on the snapshot's
 # files) -- plus, via scripts/lib.sh, `sudo xfs_quota` for the project id
 # (same as 00-/02-) and `podman unshare` for the directory's own ownership
-# (same as 00-). No `chattr` here at all: live repositories are
+# (same as 00-). Also `du -sh` for the same reason 75-list-snapshots.sh
+# needs it (issue #35): Borg's own `data/` subdirectory is mode 700, so an
+# unprivileged read undercounts the size shown before the delete
+# confirmation. No `chattr` here at all: live repositories are
 # deliberately never made immutable (only completed snapshots are --
 # see docs/SNAPSHOTS.md).
 #
@@ -258,7 +264,7 @@ if ! flock -n 9; then
     exit 1
 fi
 
-SIZE="$(du -sh "$LAST_GEN_DIR" 2>/dev/null | cut -f1)"
+SIZE="$(sudo du -sh "$LAST_GEN_DIR" 2>/dev/null | cut -f1)"
 [ -n "$SIZE" ] || SIZE="n/a (unreadable)"
 
 echo "Most recent snapshot for client '$CLIENT':"

@@ -981,7 +981,7 @@ show it behaves accordingly.
 > swapped atomically, so a manually added line does not survive a restart.
 > That limits exposure; it does not remove the need to check.
 
-### 3C — every `clients.conf` entry is well-formed against the path structure ⚠️
+### 3C — every `clients.conf` entry is well-formed against the path structure ✅
 
 3B checks that `authorized_keys` and `clients.conf` *agree*; it does not check
 that either is well-formed. A `clients.conf` line whose `<repo>` field is not
@@ -1025,16 +1025,27 @@ awk -F: '
 Fix the line, restart the container to regenerate `authorized_keys`, and re-run
 3B and 7 for any client whose `<repo>` had pointed elsewhere.
 
-**Negative test** — not yet staged. Planned: append `x:OWN:/repo/OWN/y:50G`
-(repo ≠ name) and a second line reusing an existing name under the other group;
-confirm the check prints one line for each while 3A and 3B stay green against
-the same file.
+**Negative test** — measured directly against `FCOS-BorgBackupServer` (2026-08-29), both readings: the check above produced no output against the real, unmodified `clients.conf` (11 entries). A scratch copy of that file (never deployed — `authorized_keys` was never regenerated from it, and the original's md5 was confirmed unchanged before and after) then had three lines appended, one per failure mode:
+
+```
+civerify-badgroup:WRONG:/repo/WRONG/civerify-badgroup:1G
+civerify-badrepo:OWN:/repo/OWN/some-other-name:1G
+mint-client:MIRROR:/repo/MIRROR/mint-client:1G
+```
+
+The check against the scratch copy reported exactly the three expected lines and nothing else:
+
+```
+bad group:  civerify-badgroup:WRONG:/repo/WRONG/civerify-badgroup:1G
+bad repo:   civerify-badrepo:OWN:/repo/OWN/some-other-name:1G
+dup name:   mint-client:MIRROR:/repo/MIRROR/mint-client:1G
+```
 
 **What this does not show** — that the on-disk directories exist or match (3D),
 and that the wrapper behind `command=` is the shipped one (test 0; tests 1, 2,
 7 for behaviour).
 
-### 3D — the on-disk repository tree matches the declared structure ⚠️
+### 3D — the on-disk repository tree matches the declared structure ✅
 
 **Run** (on the host; needs read access to `HOST_REPO_BASE` — run under
 `podman unshare` or as the user that owns the storage)
@@ -1070,10 +1081,7 @@ diff <(cd "$base" && find OWN MIRROR -mindepth 1 -maxdepth 1 -type d 2>/dev/null
   repository (`build_authorized_keys.sh` logs `[WARN] Repository directory
   '<repo>' is missing`); `03-provision-client.sh` is the way forward.
 
-**Negative test** — not yet staged. Planned: create
-`HOST_REPO_BASE/OWN/<name>/../loose-dir` at the top level and a stray file under
-a group directory; confirm each is reported and that removing them clears the
-check.
+**Negative test** — measured directly against `FCOS-BorgBackupServer` (2026-08-29), both readings: all three commands produced no output against the real, unmodified tree (11 real clients). `sudo mkdir HOST_REPO_BASE/loose-dir` (top level) and `sudo touch HOST_REPO_BASE/OWN/stray-file.txt` were then created; command 1 reported `loose-dir`, command 2 reported the stray file's path, and command 3 stayed silent (neither anomaly is a `<group>/<client>` entry, so the set-comparison correctly has nothing to say about them). Removing both restored a clean run. A third case — command 3's own `<`/`>` diff lines — was staged separately: `sudo mkdir HOST_REPO_BASE/OWN/orphan-test-dir` (a real client-shaped directory absent from `clients.conf`) produced `< OWN/orphan-test-dir`; removing it cleared the check again.
 
 **What this does not show** — that each directory *contains* a valid Borg
 repository (the client's `borg check`; [Design](DESIGN.md) Chapter 2.1, Roadmap
@@ -1801,7 +1809,7 @@ dropped (Roadmap 11.2).
 
 **Why it matters** — this is the local, fast half of recovering from operator error or destructive host-side software ([Recovery](RECOVERY.md) Chapter 5). If a completed generation could be removed the same way its live source can, the rollback path is exposed to exactly the class of accident it exists to survive. And a restore that silently drops or mis-applies the quota leaves a repository that looks recovered but is no longer protected — the failure mode [`77-restore-last-snapshot.sh`](SNAPSHOTS.md#7-restoring-the-most-recent-snapshot--77-restore-last-snapshotsh)'s own header calls out by name.
 
-Seven checks. 11A–11D run on the host against a disposable client and each test one part in isolation; 11E runs the whole loop once with a real client and real data; 11F measures the volume's physical usage across repeated snapshot/delete/restore cycles to confirm the copies are reflink-shared, not duplicated; 11G checks that `75-list-snapshots.sh`'s own size column can be trusted. See [Snapshots](SNAPSHOTS.md) for `SNAPSHOT_BASE`'s default layout.
+Seven checks. 11A–11D run on the host against a disposable client and each test one part in isolation; 11E runs the whole loop once with a real client and real data; 11F measures the volume's physical usage across repeated snapshot/delete/restore cycles to confirm the copies are reflink-shared, not duplicated; 11G checks that the size figures `75-` and `77-` show an operator can be trusted. See [Snapshots](SNAPSHOTS.md) for `SNAPSHOT_BASE`'s default layout.
 
 ### 11A — a completed generation resists deletion, even by root ✅
 
@@ -1890,7 +1898,7 @@ ERROR: '/tmp/external-target' does not resolve inside SNAPSHOT_BASE
 
 **What this does not show** — resistance to an attacker who already has host-level write access to `SNAPSHOT_BASE` itself. The check is that a *generation name resolving somewhere else* is caught; a target that genuinely lives inside `SNAPSHOT_BASE` but was tampered with in place is a different threat this check says nothing about.
 
-### 11D — the snapshot tree matches the declared structure ⚠️
+### 11D — the snapshot tree matches the declared structure ✅
 
 The counterpart of 3D, for `SNAPSHOT_BASE`. The tree mirrors `HOST_REPO_BASE` — `<group>/<client>/<timestamp>/` — and `75-`/`76-`/`77-` filter by the `YYYYMMDDTHHMMSSZ` name format, so anything that is not a group directory, a client directory, or a generation directory is invisible to them and sits indefinitely.
 
@@ -1958,11 +1966,20 @@ done
 - `staging dir from an interrupted run` — a `.creating-*` that outlived its run. `70-`'s next run for that client removes it (`sudo rm -rf`), so a persistent one means either that client has not been snapshotted since, or the cleanup lacked privilege.
 - output from block 4 — the same client name under both groups. Under [Design](DESIGN.md) 1.2.3 the provisioning scripts make this impossible; a snapshot tree that has it was populated before the rule or out of band. `75-`/`76-`/`77-` refuse such a client — they resolve the group by glob and will not guess.
 
-**Negative test** — not yet staged. Planned: create `SNAPSHOT_BASE/loose-file`, a stray file under `OWN/<client>/`, a hand-made `.creating-*`, and a same-named client directory under both groups; confirm each is reported and that clearing them clears the check.
+**Negative test** — measured directly against `FCOS-BorgBackupServer` (2026-08-29), both readings: all four blocks produced no output against a real generation (a disposable client snapshotted once with `70-`). All four planned anomalies were then created at once — `sudo touch SNAPSHOT_BASE/loose-file`, `sudo touch SNAPSHOT_BASE/OWN/<client>/stray.txt`, `sudo mkdir SNAPSHOT_BASE/OWN/<client>/.creating-fake`, and `sudo mkdir SNAPSHOT_BASE/MIRROR/<client>` (same name as the real `OWN` client) — and the check reported all four, one per block, correctly:
+
+```
+top level: unexpected 'loose-file'
+snap-demo01: unexpected entry 'stray.txt'
+snap-demo01: staging dir from an interrupted run: .creating-fake
+client 'snap-demo01' exists under both OWN and MIRROR
+```
+
+Removing all four restored a clean run.
 
 **What this does not show** — that a generation is actually immutable (11A) or that a restore reconstructs the repository (11B); this is structure only. A `<group>/<client>` directory with generations but *no* live repository is legitimate — retained history of a removed client — and is not flagged.
 
-### 11E — the snapshot → restore loop round-trips a client's data ⚠️
+### 11E — the snapshot → restore loop round-trips a client's data ✅
 
 11A–11D check parts in isolation. This runs the whole path once — client `borg create`, `70-create-snapshot.sh`, a host-side wipe, `77-restore-last-snapshot.sh`, client `borg extract` — and compares the bytes that come back to the bytes that went in.
 
@@ -2023,7 +2040,13 @@ Borg will note the repository is at an older transaction than the client's cache
 - `77-` aborts on the quota check (11B's failure mode) — the directory is left empty and quota-mismatched, nothing copied.
 - `borg check` errors, the archive is missing, or the `diff` is non-empty — the loop did not preserve the data. A clean 11A–11D with a failing 11E points at the `cp -a --reflink=always` in `70-` or the copy-back in `77-`, not at immutability, quota or structure.
 
-**Negative test** — not yet staged. Planned: run the sequence but skip the snapshot step, and confirm `77-` finds nothing and exits `1`; and tamper one file in the *restored* copy before the final `diff`, to confirm the comparison actually catches a difference.
+**Negative test** — measured directly against `FCOS-BorgBackupServer` (2026-08-29), positive direction plus both planned negative cases:
+
+Positive: a disposable client's repository was populated (a 20 MiB incompressible blob plus a compressible text file, sha256 manifest taken), snapshotted, then genuinely wiped (`systemctl --user stop container-borg-server.service`, `podman unshare find <live-repo> -mindepth 1 -delete`, confirmed empty). `77-restore-last-snapshot.sh` restored it, the container was restarted, and `borg check` reported clean; the two files' sha256 sums read back from the restored copy matched the pre-wipe manifest exactly, byte-for-byte. The real container and its other 11 clients were confirmed unaffected by the brief stop/start (`09-show-all-users.sh` output and `clients.conf`'s md5 both unchanged).
+
+Negative, skip-the-snapshot case: a second disposable client with **no** snapshot history at all was run through `77-restore-last-snapshot.sh` directly. It refused before the confirmation prompt (`No snapshots found for client '<client>' ... Nothing to restore from.`) and exited `1` — nothing was touched.
+
+Negative, tampered-restore case: after the positive run above, one restored file was modified (`echo tampered >> .../text`) and re-hashed — the sha256 changed from the original manifest's value, confirming the comparison technique itself would have caught a real mismatch had the restore been wrong.
 
 **What this does not show** — that restores keep working over time as the client's data changes; that is the client's ongoing restore-testing discipline ([Best Practices](BEST_PRACTICES.md) Chapter 7), not a one-time check of the tooling. `MIRROR` clients are not exercised here, but the snapshot path treats them identically.
 
@@ -2081,11 +2104,11 @@ Each snapshot adds one full ~512,000 KiB copy (one more independent, non-shared 
 
 **What this does not show** — the content, quota and structure properties already covered by 11A–11E; this check is about physical storage consumption only. Nor does it show behavior on a filesystem without reflink support — XFS with reflink is this project's stated requirement (see [Snapshots](SNAPSHOTS.md)) — that combination is expected to fall back to full copies, which is exactly the fail condition above, not a supported configuration.
 
-### 11G — `75-list-snapshots.sh` reports the generation's real size ✅
+### 11G — every snapshot script reports the generation's real size ✅
 
-None of 11A–11F checks whether the size `75-list-snapshots.sh` prints for a generation is actually correct — 11D checks the snapshot tree's *structure*, not the numbers `75-` reports about it. That gap is exactly how [issue #35](https://github.com/RaykHoefemann/hardened-borg-server/issues/35) went unnoticed: `75-`'s own scratch-fixture tests (docs/SNAPSHOTS.md's development history) never populated a generation with enough real Borg data for a wrong size to stand out, so a systematically wrong number shipped and passed every test that existed at the time.
+None of 11A–11F checks whether a size figure `snapshots/` prints for a generation is actually correct — 11D checks the snapshot tree's *structure*, not the numbers reported about it. That gap is exactly how [issue #35](https://github.com/RaykHoefemann/hardened-borg-server/issues/35) went unnoticed: scratch-fixture tests (docs/SNAPSHOTS.md's development history) never populated a generation with enough real Borg data for a wrong size to stand out, so a systematically wrong number shipped in **two** places and passed every test that existed at the time — `75-list-snapshots.sh`'s listing, and `77-restore-last-snapshot.sh`'s own pre-delete confirmation display, which has its own independent `du -sh` call rather than reusing `75-`'s.
 
-**Claim** — [Snapshots](SNAPSHOTS.md) §5 / `75-list-snapshots.sh`'s own header: the size column is the generation's real `du -sh` size, specifically so an operator scanning for an anomaly can trust that "this generation looks different from its neighbours" reflects the actual data, not an artifact of how the number was measured.
+**Claim** — [Snapshots](SNAPSHOTS.md) §5/§7 / both scripts' own headers: every size a snapshot script shows an operator is the generation's real `du -sh` size, specifically so an operator can trust that "this generation looks different from its neighbours" (75-) or "this is really what I am about to delete" (77-) reflects the actual data, not an artifact of how the number was measured.
 
 **Run** — against a disposable client with a real, non-trivial repository (large enough that an order-of-magnitude error would be obvious, e.g. a few hundred MB of actual `borg create` data, not an empty or near-empty repository):
 
@@ -2093,16 +2116,17 @@ None of 11A–11F checks whether the size `75-list-snapshots.sh` prints for a ge
 ./snapshots/70-create-snapshot.sh
 GEN=$(ls -d "${SNAPSHOT_BASE}"/OWN/<client>/*/ | tail -1)
 sudo du -sh "$GEN"                          # ground truth
-./snapshots/75-list-snapshots.sh <client>   # what the operator actually sees
+./snapshots/75-list-snapshots.sh <client>            # what 75- shows
+./snapshots/77-restore-last-snapshot.sh <client>     # what 77- shows -- type N, abort, nothing touched
 ```
 
-**Pass** — the size `75-` prints for that generation matches the `sudo du -sh` ground truth (same figure, since `75-` uses the identical `du -sh` invocation internally).
+**Pass** — both scripts print the same figure as the `sudo du -sh` ground truth (each uses an identical `du -sh` invocation internally, now both via `sudo`).
 
-**Fail** — `75-`'s reported size is far smaller than the `sudo du -sh` ground truth — in particular, a flat, near-empty-looking size (tens of KB) regardless of how much real data the generation actually holds. That is issue #35's exact failure mode: Borg creates its own `data/` subdirectory inside a repository at mode 700, owned by the mapped subuid, unlike the mode-755 generation directory around it (`scripts/lib.sh`'s `repo_dir_create`) that `75-`'s original "no sudo needed" design reasoned from. An unprivileged `du` cannot descend into `data/` and silently reports only the always-readable top-level metadata files (`README`, `config`, `hints.N`, `index.N`, `integrity.N`, `nonce`) — a few tens of KB — never the segment data, without surfacing the underlying `Permission denied` to the operator at all.
+**Fail** — either script's reported size is far smaller than the `sudo du -sh` ground truth — in particular, a flat, near-empty-looking size (tens of KB) regardless of how much real data the generation actually holds. That is issue #35's failure mode: Borg creates its own `data/` subdirectory inside a repository at mode 700, owned by the mapped subuid, unlike the mode-755 generation directory around it (`scripts/lib.sh`'s `repo_dir_create`) that both scripts' original "no sudo needed for this read" reasoning was built on. An unprivileged `du` cannot descend into `data/` and silently reports only the always-readable top-level metadata files (`README`, `config`, `hints.N`, `index.N`, `integrity.N`, `nonce`) — a few tens of KB — never the segment data, without surfacing the underlying `Permission denied` to the operator at all.
 
 **Negative test** — measured directly against `FCOS-BorgBackupServer`, both readings, from the same investigation that produced issue #35:
 
-Failing direction (2026-08-29, before the fix): a disposable client's ~501 MiB repository (populated with `borg create` from 500 MiB of `/dev/urandom`) was snapshotted, then read two ways on the same generation directory:
+Failing direction, `75-` (2026-08-29, before the fix): a disposable client's ~501 MiB repository (populated with `borg create` from 500 MiB of `/dev/urandom`) was snapshotted, then read two ways on the same generation directory:
 
 ```
 $ du -sh .../20260829T054442Z            # 75-'s own (then-unprivileged) invocation
@@ -2115,18 +2139,34 @@ $ sudo du -sh .../20260829T054442Z       # ground truth
 
 `75-list-snapshots.sh` itself, run the normal way, printed exactly the wrong figure: `64K`.
 
-Passing direction (2026-08-29, after the fix — `75-` now runs `du` via `sudo`, see [Snapshots](SNAPSHOTS.md) §5/§8): the identical reproduction — fresh disposable client, fresh ~501 MiB repository, one snapshot — with `75-list-snapshots.sh` run the normal, unprivileged way:
+Failing direction, `77-` (2026-08-29, before the fix, found while re-verifying 11E on the same VM): a fresh disposable client with a ~21 MiB repository was snapshotted, then `77-restore-last-snapshot.sh` was run and aborted with `N` before any deletion:
+
+```
+Most recent snapshot for client 'snap-demo01':
+20260829T063441Z     64K
+```
+
+— the same wrong-by-orders-of-magnitude figure, from `77-`'s own separate `du -sh` call, never touched by the `75-`-only fix at the time.
+
+Passing direction, both scripts (2026-08-29, after both were fixed to run `du` via `sudo` — see [Snapshots](SNAPSHOTS.md) §5/§7/§8): fresh disposable clients, fresh repositories, one snapshot each, both scripts run the normal, unprivileged way:
 
 ```
 $ ./snapshots/75-list-snapshots.sh snap-demo01
 20260829T062523Z     501M
 
 1 generation(s) listed for client 'snap-demo01'.
+
+$ ./snapshots/77-restore-last-snapshot.sh snap-demo01
+Most recent snapshot for client 'snap-demo01':
+20260829T064427Z     21M
+...
+Type Y (exactly, uppercase) to proceed, anything else aborts: N
+Aborted — nothing was restored.
 ```
 
-matching `sudo du -sh` ground truth on the same generation. `76-delete-snapshots.sh` (which calls `75-` internally to show scope before deleting) was exercised against both repositories in the same session and worked correctly throughout — this check is specifically about the number shown, not about whether listing itself functions.
+both matching `sudo du -sh` ground truth on their respective generations. `76-delete-snapshots.sh` (which calls `75-` internally to show scope before deleting) was exercised against these repositories in the same session and worked correctly throughout — this check is specifically about the numbers shown, not about whether listing or restoring itself functions.
 
-**What this does not show** — anomaly *interpretation*: deciding whether a size difference between two generations is suspicious remains the operator's judgement, by design (docs/SNAPSHOTS.md: "die Interpretation obliegt dem Operator"). This check only establishes that the number itself can be trusted.
+**What this does not show** — anomaly *interpretation*: deciding whether a size difference between two generations is suspicious remains the operator's judgement, by design (docs/SNAPSHOTS.md: "die Interpretation obliegt dem Operator"). This check only establishes that the numbers themselves can be trusted.
 
 ---
 
@@ -2150,8 +2190,8 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 | 2 | Default-deny on commands | ✅ | ☐ |
 | 3A | Every entry carries the forced command and `restrict` | ✅ | ☐ |
 | 3B | Every entry points at the repository `clients.conf` assigns | ✅ | ☐ |
-| 3C | Every `clients.conf` entry is well-formed against the path structure | ⚠️ | ☐ |
-| 3D | The on-disk repository tree matches the declared structure | ⚠️ | ☐ |
+| 3C | Every `clients.conf` entry is well-formed against the path structure | ✅ | ☐ |
+| 3D | The on-disk repository tree matches the declared structure | ✅ | ☐ |
 | 4A | Podman itself is rootless | ✅ | ☐ |
 | 4B | The container is a user service | ✅ | ☐ |
 | 4C | The container's processes belong to an unprivileged user | ✅ | ☐ |
@@ -2167,18 +2207,16 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 | 11A | A completed snapshot resists deletion, even by root | ✅ | ☐ |
 | 11B | Restore reconstructs the exact quota and project id | ✅ | ☐ |
 | 11C | Deletion refuses a path outside `SNAPSHOT_BASE` | ✅ | ☐ |
-| 11D | The snapshot tree matches the declared structure | ⚠️ | ☐ |
-| 11E | The snapshot → restore loop round-trips a client's data | ⚠️ | ☐ |
+| 11D | The snapshot tree matches the declared structure | ✅ | ☐ |
+| 11E | The snapshot → restore loop round-trips a client's data | ✅ | ☐ |
 | 11F | Repeated snapshot/delete/restore cycles add no additional disk usage | ✅ | ☐ |
-| 11G | `75-list-snapshots.sh` reports the generation's real size | ✅ | ☐ |
+| 11G | Every snapshot script reports the generation's real size | ✅ | ☐ |
 
-Twenty-eight ✅, one `(✅)` and four ⚠️ out of thirty-three. 0A is the sole
-capped exception, at `(✅)` rather than plain ✅, because its counter-example
-cannot be produced at all — not because nobody has tried (see "How to read a
-test"). 3C, 3D, 11D and 11E are the four ⚠️: their procedures follow from
-the implementation and the structure defined in [Design](DESIGN.md) Chapter
-1.2.3, but none has had its failing direction staged against a live
-deployment yet. That does not make the page complete — see
+Thirty-two ✅ and one `(✅)` out of thirty-three — every check has had both
+directions demonstrated against a live deployment. 0A is the sole capped
+exception, at `(✅)` rather than plain ✅, because its counter-example cannot
+be produced at all — not because nobody has tried (see "How to read a
+test"). That does not make the page complete — see
 [What this document does not cover](#what-this-document-does-not-cover)
 below, and 5.5A's own note on the one sub-case (`unreadable`) no recipe has
 reached.
