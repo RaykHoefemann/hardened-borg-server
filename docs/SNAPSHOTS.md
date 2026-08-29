@@ -65,7 +65,7 @@ Meant to run unattended, on a schedule — there is no confirmation prompt, sinc
   ./snapshots/71-timer-install.sh
   ```
 
-  Installs a daily-at-03:00 timer and its service unit as a rootless *user* timer, the same mechanism `scripts/50-service-install.sh` uses for the container itself (DEPLOYMENT.md 6.2.1). Both are installed under `snapshot_${CONTAINER}` (`snapshots/config.sh`'s `SNAPSHOT_TIMER_NAME`, `snapshot_borg-server` by default) rather than a fixed name — a host running more than one instance of this tooling installs every instance's units into the same shared `~/.config/systemd/user/` directory, and a fixed name would let a second install silently overwrite the first instance's timer. Requires `loginctl enable-linger $USER` so the timer keeps running after logout — the same requirement the container service already documents. Check it with:
+  Installs a daily-at-03:00 timer and its service unit as a rootless *user* timer — a plain rendered `.service`/`.timer` pair symlinked into `~/.config/systemd/user/` (not a Podman Quadlet; there is no container here), the same rootless *user* unit model the container itself uses (DEPLOYMENT.md 6.2.1). Both are installed under `snapshot_${CONTAINER}` (`snapshots/config.sh`'s `SNAPSHOT_TIMER_NAME`, `snapshot_borg-server` by default) rather than a fixed name — a host running more than one instance of this tooling installs every instance's units into the same shared `~/.config/systemd/user/` directory, and a fixed name would let a second install silently overwrite the first instance's timer. Requires `loginctl enable-linger $USER` so the timer keeps running after logout — the same requirement the container service already documents. Check it with:
 
   ```bash
   ./snapshots/79-timer-status.sh

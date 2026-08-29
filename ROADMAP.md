@@ -68,21 +68,24 @@ Two existing guarantees must be preserved when this lands:
 
 Practical considerations: `borg check` is I/O-intensive, so scheduling must avoid colliding with active backup windows, and each per-repository check should run under the same isolation the rest of the server uses.
 
-## 11.4. Migration from a hand-written systemd unit to Podman Quadlets
+## 11.4. Migration from a hand-written systemd unit to Podman Quadlets — done
 
-Replacing the current hand-written systemd unit **template** + generated `EnvironmentFile` (Chapter 6.2) with a declarative **Podman Quadlet** — a `.container` file under `~/.config/containers/systemd/`, from which `podman-systemd.generator` produces the actual service unit automatically. This direction is already noted in Chapter 6.2.4 as the recommended long-term approach; this roadmap item is about making it the default deployment path rather than an alternative mentioned in a footnote.
+The hand-written systemd unit **template** + generated `EnvironmentFile` (Chapter 6.2) is replaced by a declarative **Podman Quadlet**: `systemd/borg-server.container`, checked in and carrying no deployment-specific values, installed by `scripts/50-service-install.sh` as `~/.config/containers/systemd/<CONTAINER>.container` (a symlink) with a generated `<CONTAINER>.container.d/10-deployment.conf` drop-in. `podman-system-generator` produces `<CONTAINER>.service` from that on `systemctl --user daemon-reload`.
 
-Motivation:
+What it bought:
 
-- **More robust lifecycle handling.** Quadlets manage container creation and removal natively, which removes the fragile `--rm` + fixed `--name` + `Restart=on-failure` interaction described in 5.2.4 (the "name already in use" failure after an unclean stop) without needing the `--replace` workaround.
-- **Less bespoke plumbing.** The declarative `.container` file replaces the template-rendering + `EnvironmentFile` machinery, simplifying `scripts/50-service-install.sh` and shrinking the amount of hand-maintained systemd glue.
+- **More robust lifecycle handling.** Quadlet creates a fresh container per start and removes it on stop natively, which removes the fragile `--rm` + fixed `--name` + `Restart=on-failure` interaction (the "name already in use" failure after an unclean stop) without a `--replace` workaround.
+- **Less bespoke plumbing.** `50-service-install.sh` no longer renders a template, generates an `EnvironmentFile`, or symlinks into `~/.config/systemd/user/`; `51-service-uninstall.sh` shrinks to removing two files and reloading.
 
-Constraints to preserve:
+Constraints kept:
 
-- **`config.sh` stays the single source of truth (Chapter 9.1).** The `.container` file must still derive its values (`IMAGE`, `SSH_PORT`, the `HOST_*_BASE` bind mounts, `CONTAINER`) from `config.sh`, exactly as the current unit does — most plausibly by having `50-service-install.sh` render the `.container` from `config.sh` the same way it renders the `.service` today. The migration must not reintroduce hardcoded values into a checked-in unit.
-- **Rootless user service + lingering stay unchanged (Chapters 6.2.1, 6.2.3).** A Quadlet under `~/.config/containers/systemd/` is still a rootless *user* service and still relies on `loginctl enable-linger` to survive logout and reboot. None of the rootless-operation guarantees from Chapter 1.1 change.
+- **`config.sh` stays the single source of truth (Chapter 9.1).** No deployment value is hardcoded in the checked-in `.container`. The per-host values (`IMAGE`, `SSH_PORT`, the `HOST_*_BASE` bind mounts, `CONTAINER`) land in the generated drop-in rather than in a fully rendered unit — the checked-in file is then genuinely static, and a `git pull` that changes it is live after the next `daemon-reload` with no re-install.
+- **Multiple instances on one host.** Every per-instance resource is namespaced by `CONTAINER` through the Quadlet filename (`<CONTAINER>.container` → `<CONTAINER>.container.d/` → `<CONTAINER>.service` → `ContainerName=<CONTAINER>`), so the `container_` prefix the old installed unit carried is gone. Two instances still need distinct `SSH_PORT` values; `50-service-install.sh` refuses to overwrite a `<CONTAINER>.container` that belongs to a different checkout.
+- **Rootless user service + lingering unchanged (Chapters 6.2.1, 6.2.3).** Still a rootless *user* unit under `~/.config/containers/systemd/`, still needs `loginctl enable-linger`. No `User=` (Quadlet passes it straight through, so the `status=216/GROUP` trap is unchanged). None of the Chapter 1.1 rootless guarantees change.
 
-This is a **deployment/lifecycle change only** — it does not alter client-facing behavior, the security model (Chapter 1), or the privacy model (Chapter 2). Existing deployments on the current `.service` unit continue to work; the Quadlet becomes the recommended path for new installations.
+This was a **deployment/lifecycle change only** — it did not alter client-facing behavior, the security model (Chapter 1), or the privacy model (Chapter 2). A one-time migration step for deployments still on the `.service` unit is in [Deployment](docs/DEPLOYMENT.md) Chapter 6.3.
+
+> **Follow-up, separate from the migration:** the Quadlet also makes the F4 container-hardening keys (`NoNewPrivileges`, `DropCapability=all` + a minimal `AddCapability`, `ReadOnly`, `PidsLimit`, `Memory`) expressible declaratively. That *is* a security-model change and is tracked on its own, not folded in here.
 
 ## 11.5. Point-in-Time Snapshots of the Storage Volume — done
 

@@ -792,7 +792,7 @@ end.
 > writing. Cleaning up without stopping the container accomplishes nothing.
 >
 > ```bash
-> systemctl --user stop container_borg-server.service
+> systemctl --user stop borg-server.service
 > ```
 
 ```bash

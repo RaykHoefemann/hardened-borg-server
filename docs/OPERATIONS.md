@@ -187,7 +187,7 @@ The split exists because the root file holds exactly the values a second consume
 - `HOST_CONFIG_BASE`, `HOST_LOG_BASE` — kept inside the repo checkout (`${REPO_ROOT}/config`, `${REPO_ROOT}/log`) unless you have a reason to move them elsewhere.
 - `CONF`, `KEYDIR` — the exact `clients.conf` and key-storage paths used by `00`/`01`/`02`/`09`, derived from `HOST_CONFIG_BASE`.
 - `CONTAINER_REPO_BASE` — the container-side path prefix (`/repo/`); only relevant if you change the container's internal mount point, which the shipped image does not expect.
-- `SERVICE` — the *installed* systemd unit name, built as `container_${CONTAINER}` — `container_borg-server.service` by default. Namespaced by `CONTAINER` so a host running more than one instance of this project never has a second install silently overwrite the first instance's unit in the shared `~/.config/systemd/user/` directory (the same reason [Snapshots](SNAPSHOTS.md)' timer is namespaced too). Distinct from `SERVICE_TEMPLATE_NAME` (`container.service`, the fixed filename of the template under `systemd/` that `50-service-install.sh` renders from) — only `50-` needs that one; every other script's business is with `SERVICE`, the installed name.
+- `SERVICE` — the systemd unit `podman-system-generator` produces from the installed Quadlet: `${CONTAINER}.service` — `borg-server.service` by default. Namespaced by `CONTAINER` through the Quadlet *filename* (`50-service-install.sh` installs the source as `${CONTAINER}.container` in the shared `~/.config/containers/systemd/`), so a host running more than one instance of this project never has a second install silently overwrite the first's unit (the same reason [Snapshots](SNAPSHOTS.md)' timer is namespaced too). Distinct from `QUADLET_SOURCE_NAME` (`borg-server.container`, the fixed checked-in file under `systemd/` that `50-` installs) — only `50-` needs that one; every other script's business is with `SERVICE`, the generated name.
 
 **Fixed values — only change if you know why:**
 
@@ -201,7 +201,7 @@ The split exists because the root file holds exactly the values a second consume
 - The **read helpers** (`clients_lines`, `volume_kib`, `quota_kib`, `quota_human`, `quota_enforced_kib`, `quota_used_kib`, `quota_verify` and the reporting helpers around them) are shared by `00`, `02` and `09` so that "the enforced quota" is defined once for all of them: the limit the kernel reports for a client's repository directory, which is the same figure the client sees through the `info` channel (Chapter 8). Pure, no privileges, safe in any script.
 - The **`repo_*` write helpers** are the only place in the project that creates a repository directory, allocates or assigns an XFS project id, or sets a hard limit. `00` and `02` both go through them, so a client's filesystem state has one implementation rather than one per script. These need privileges, and the two they need are exactly why the work cannot happen anywhere else: `podman unshare` for the ownership and `sudo xfs_quota` for the project id and the limit. Neither exists inside the container, which is why `borg-wrapper.sh` and `build_authorized_keys.sh` report a missing repository directory instead of creating one (Chapter 9.12).
 
-Nothing in either half runs while sourcing — they are definitions — so a read-only script such as `09-show-all-users.sh` brings them into scope and executes none of them, and the generated `EnvironmentFile` is unaffected.
+Nothing in either half runs while sourcing — they are definitions — so a read-only script such as `09-show-all-users.sh` brings them into scope and executes none of them, and the installed Quadlet is unaffected.
 
 ## 9.2. 00-ssh-create-user.sh
 
@@ -493,12 +493,14 @@ The distinction matters for the sizing invariant in Chapter 10.2, which is about
 
 ## 9.6. 50-service-install.sh
 
-Generates the systemd unit's `EnvironmentFile` from `config.sh`, renders the unit template (`systemd/container.service`), and installs it as a symlink under `~/.config/systemd/user/` under a name derived from `CONTAINER` (`container_<CONTAINER>.service`, `container_borg-server.service` by default — namespaced for the same reason [Snapshots](SNAPSHOTS.md)'s timer is: a host running more than one instance of this project must not have a second install silently overwrite the first instance's unit in the shared `~/.config/systemd/user/` directory) (see Chapter 6.2.2). Re-run after any change to `config.sh` (for example, bumping `IMAGE` to a new tag), then restart the service for the change to take effect.
+Installs the Podman Quadlet (ROADMAP 11.4). It symlinks `systemd/borg-server.container` into `~/.config/containers/systemd/` as `${CONTAINER}.container`, writes `${CONTAINER}.container.d/10-deployment.conf` from `config.sh` (the `Image`, `ContainerName`, published port and the three bind mounts), and runs `systemctl --user daemon-reload` so `podman-system-generator` (re)produces `${CONTAINER}.service` — `borg-server.service` by default, namespaced by `CONTAINER` through the filename for the same reason [Snapshots](SNAPSHOTS.md)'s timer is (see Chapter 6.2.2). There is no `systemctl --user enable` step; the Quadlet's `[Install]` section is honoured on the reload, and linger (Chapter 6.2.3) carries it across reboot. Re-run after any change to `config.sh` (for example, pinning `IMAGE` to a digest), then restart the service for the change to take effect.
 
 ```bash
 ./scripts/50-service-install.sh
-systemctl --user restart container_borg-server.service
+./scripts/92-container-restart.sh
 ```
+
+It refuses to overwrite a `${CONTAINER}.container` that already points at a different checkout — a second instance on the same host that forgot to set its own `CONTAINER` fails here rather than silently replacing the first.
 
 It refuses to install anything while `HOST_REPO_BASE` does not exist. That path is the source of the container's `/repo` bind mount, and podman will not start a container whose bind-mount source is missing — so a unit installed regardless would be enabled successfully and then restart-loop on `statfs …: no such file or directory`, with `systemctl --user enable --now` still exiting 0 and the unit sitting in `activating (auto-restart)` rather than `failed`.
 
@@ -509,7 +511,7 @@ The script does not create the directory, and the error says which of the two si
 
 ## 9.7. 51-service-uninstall.sh
 
-Reverses `50-service-install.sh`: stops and disables the systemd unit, removes its symlink from `~/.config/systemd/user/`, and deletes the generated `EnvironmentFile` and rendered unit. Does **not** touch the container image or any data under `HOST_CONFIG_BASE`/`HOST_REPO_BASE`/`HOST_LOG_BASE` — clients, repositories, and logs are left untouched.
+Reverses `50-service-install.sh`: stops the generated unit, removes the Quadlet symlink and its `${CONTAINER}.container.d/` drop-in directory from `~/.config/containers/systemd/`, and reloads the user manager so the unit stops being generated. (A generated unit cannot be `systemctl --user disable`d — removing the source is what un-wires it.) Does **not** touch the container image or any data under `HOST_CONFIG_BASE`/`HOST_REPO_BASE`/`HOST_LOG_BASE` — clients, repositories, and logs are left untouched.
 
 ```bash
 ./scripts/51-service-uninstall.sh
@@ -539,7 +541,7 @@ Restarts the container via the systemd user service. **Run this after any change
 ./scripts/92-container-restart.sh
 ```
 
-Because the unit runs `podman run --rm`, this is a teardown rather than a reload: every SSH session ends with it, including a backup in progress. A `borg create` cut off mid-transaction leaves segments that append-only cannot reclaim (Chapter 10.4), so a restart is worth timing rather than firing blind — and after `02-change-user-quota.sh` it is cosmetic to begin with, since the new limit is enforced immediately. Applying a configuration change *without* this restart is [Roadmap](../ROADMAP.md) 11.7.
+Because the Quadlet removes the container on stop and creates a fresh one on start, this is a teardown rather than a reload: every SSH session ends with it, including a backup in progress. A `borg create` cut off mid-transaction leaves segments that append-only cannot reclaim (Chapter 10.4), so a restart is worth timing rather than firing blind — and after `02-change-user-quota.sh` it is cosmetic to begin with, since the new limit is enforced immediately. Applying a configuration change *without* this restart is [Roadmap](../ROADMAP.md) 11.7.
 
 ## 9.11. 99-container-status.sh
 
@@ -591,28 +593,28 @@ The repair a `PIN MISMATCH` names is **both halves** of that step 7, in order:
 ./scripts/92-container-restart.sh
 ```
 
-Restarting alone does not do it, and this is the one thing about the repair worth remembering: the unit takes `IMAGE` from the `EnvironmentFile` that `50-service-install.sh` generates (Chapter 6.2 of [Deployment](DEPLOYMENT.md)), not from `config.sh` directly. A restart without the install step re-reads the *old* value and starts the old image again, leaving the report saying exactly what it said before.
+Restarting alone does not do it, and this is the one thing about the repair worth remembering: the generated unit takes `IMAGE` from the `10-deployment.conf` drop-in that `50-service-install.sh` writes (Chapter 6.2 of [Deployment](DEPLOYMENT.md)), not from `config.sh` directly. A restart without the install step re-reads the *old* value and starts the old image again, leaving the report saying exactly what it said before.
 
 After that: the systemd service state, `podman ps` output, a detailed `podman inspect` (image, PID, network, mounts) if the container is currently registered with Podman, and the last 20 lines of the service's journal log.
 
 The service state is stated as fields rather than as `systemctl status` output:
 
 ```
-Unit:        container_borg-server.service (enabled)
+Unit:        borg-server.service (generated)
 State:       active (running)
 Started:     Fri 2026-08-15 16:00:13 CEST
 Restarts:    0
 ```
 
-`Restarts` is the one to read when something is wrong. A unit that fails and is restarted spends most of its time in `activating (auto-restart)` rather than `failed`, and `systemctl --user enable --now` exits 0 on the way into that loop — so a nonzero restart count, together with the `Result` line the report then adds, is what distinguishes a service that is running from one that keeps being started. The report points at its own log section when it sees this; a single error repeating there is the loop.
+`Restarts` is the one to read when something is wrong. A unit that fails and is restarted spends most of its time in `activating (auto-restart)` rather than `failed`, and `systemctl --user start` exits 0 on the way into that loop — so a nonzero restart count, together with the `Result` line the report then adds, is what distinguishes a service that is running from one that keeps being started. The report points at its own log section when it sees this; a single error repeating there is the loop.
 
-The journal appears once, in that section alone. The container's output is handed to systemd by the unit itself (`--log-driver=passthrough`, [Deployment](DEPLOYMENT.md) Chapter 6.2) rather than journalled a second time by Podman, so `journalctl --user -u container_borg-server.service` shows one copy of each line as well.
+The journal appears once, in that section alone. The container's output is handed to systemd by the Quadlet itself (`LogDriver=passthrough`, [Deployment](DEPLOYMENT.md) Chapter 6.2) rather than journalled a second time by Podman, so `journalctl --user -u borg-server.service` shows one copy of each line as well.
 
 ```bash
 ./scripts/99-container-status.sh
 ```
 
-> Because the unit uses `--rm` (see Chapter 6.2.4), a stopped container is removed rather than left in an exited state — so `podman ps -a` normally shows nothing for it between runs. This is expected; the script accounts for it and falls back to reporting that the container may be running transiently under systemd.
+> Because the Quadlet removes the container on stop (see Chapter 6.2), a stopped container is not left in an exited state — so `podman ps -a` normally shows nothing for it between runs. This is expected; the script accounts for it and falls back to reporting that the container may be running transiently under systemd.
 
 ## 9.12. Clearing a client's repository directory — by hand
 

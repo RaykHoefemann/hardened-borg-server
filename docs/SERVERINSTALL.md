@@ -172,13 +172,16 @@ change it (Operations Chapter 9.1 explains what each remaining value does).
 
 ```bash
 ./scripts/50-service-install.sh
-systemctl --user enable --now container_borg-server.service
+./scripts/90-container-start.sh
 ```
 
-This generates the `EnvironmentFile` from `config.sh`, renders the unit, and
-symlinks it into `~/.config/systemd/user/`. See
-[Deployment](DEPLOYMENT.md) Chapter 6.2 for what this does under the hood and
-why it must be a *user* service, not a system-wide one.
+`50-service-install.sh` installs the Podman Quadlet (`borg-server.container`)
+into `~/.config/containers/systemd/` and writes its `10-deployment.conf`
+drop-in from `config.sh`, then reloads the user manager so `borg-server.service`
+is generated. There is no `systemctl --user enable` step — a generated unit
+carries its own `[Install]` wiring, and lingering (step 5) is what survives a
+reboot. See [Deployment](DEPLOYMENT.md) Chapter 6.2 for what this does under the
+hood and why it must be a *user* service, not a system-wide one.
 
 ---
 

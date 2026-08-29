@@ -137,7 +137,7 @@ automatic restart. For production, run it as a rootless systemd **user** service
 | [Recovery](docs/RECOVERY.md) | Incident handling: accidental deletion, operator error, data loss, restoring data |
 | [Verification](docs/VERIFICATION.md) | Test every claimed guarantee against your own installation — don't take them on faith |
 | [Best Practices](docs/BEST_PRACTICES.md) | Required operational baseline and defense-in-depth hardening |
-| [Roadmap](ROADMAP.md) | Offline export helper, scheduled `borg check`, Quadlet migration — and why server-side mirroring and pruning were dropped |
+| [Roadmap](ROADMAP.md) | Offline export helper, scheduled `borg check`, applying config without a restart — and why server-side mirroring and pruning were dropped |
 | [Security Policy](SECURITY.md) | Reporting a vulnerability — including a documented guarantee that turns out not to hold |
 | [Contributing](CONTRIBUTING.md) | Issues, pull requests, and the non-goals a change has to stay clear of |
 
