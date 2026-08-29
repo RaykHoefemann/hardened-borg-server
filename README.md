@@ -9,7 +9,7 @@ limits are enforced by the host filesystem — not merely tracked. No web UI, no
 orchestration, no auxiliary interfaces: a small, predictable, privacy-preserving
 attack surface by design.
 
-> **Status:** Current stable release `v1.0.0`. See
+> **Status:** Pre-release `v1.0.0-beta.1` — a breaking change (client groups removed, Podman Quadlet unit); see the upgrade note in [Server Installation](docs/SERVERINSTALL.md). Follow
 > [Deployment](docs/DEPLOYMENT.md) for how to run it.
 
 ---
