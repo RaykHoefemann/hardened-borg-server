@@ -47,15 +47,22 @@ log/
 *.swp
 .DS_Store
 
-# --- German test reports ------------------------------------------------------
+# --- German test reports & lab notes ----------------------------------------
 #
-# Prüfberichte are German-language verification material and stay outside the
-# repository (docs here are English-only). Ignored so they can be drafted
-# in-tree without risk of an accidental commit. The same applies to pentest /
-# audit reports (testreport*): German-language working material, never
-# committed.
+# The maintainer's verification material — per-release Prüfberichte, pentest /
+# audit reports, and the concrete test-VM inventory (TESTLAB.md) — is
+# German-language working material. It lives in `testlab/` inside the checkout
+# and is ignored here so it travels with the working copy but never lands in a
+# commit. Docs that ARE committed stay English-only.
+#
+# `git clean -x` will delete an ignored `testlab/`; keep a copy elsewhere if a
+# report matters. The loose `Pruefbericht*` / `testreport*` / `TESTLAB*`
+# patterns are a belt-and-suspenders for a file drafted at the repo root by
+# habit.
+testlab/
 Pruefbericht*
 testreport*
+TESTLAB*
 
 # NOTE: config/server_info.conf is deliberately NOT ignored — it ships as a
 # tracked template with placeholder values that SERVERINSTALL step 7 tells the
