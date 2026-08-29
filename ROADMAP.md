@@ -6,9 +6,9 @@
 
 # 11. Roadmap
 
-Planned features, not yet implemented. Listed here for visibility; timelines are not committed.
+What is still planned and not yet built. Timelines are not committed.
 
-One entry (11.1) records a feature that was deliberately **dropped**. It is kept rather than removed so the decision and its reasoning stay visible — a roadmap that silently loses items teaches readers nothing about how the project makes choices.
+Numbers are stable — nothing is renumbered when an item resolves. A **dropped** feature (11.1, and the foreign-mirroring half of 11.2) keeps its full section as a tombstone, so the decision and its reasoning stay visible. A **shipped** feature (11.4, 11.5, 11.8) is cut down to a one-paragraph pointer into the docs that now carry it — the design history is in git.
 
 ## 11.1. Automated Archive Pruning — dropped
 
@@ -70,28 +70,11 @@ Practical considerations: `borg check` is I/O-intensive, so scheduling must avoi
 
 ## 11.4. Migration from a hand-written systemd unit to Podman Quadlets — done
 
-The hand-written systemd unit **template** + generated `EnvironmentFile` (Chapter 6.2) is replaced by a declarative **Podman Quadlet**: `systemd/borg-server.container`, checked in and carrying no deployment-specific values, installed by `scripts/50-service-install.sh` as `~/.config/containers/systemd/<CONTAINER>.container` (a symlink) with a generated `<CONTAINER>.container.d/10-deployment.conf` drop-in. `podman-system-generator` produces `<CONTAINER>.service` from that on `systemctl --user daemon-reload`.
-
-What it bought:
-
-- **More robust lifecycle handling.** Quadlet creates a fresh container per start and removes it on stop natively, which removes the fragile `--rm` + fixed `--name` + `Restart=on-failure` interaction (the "name already in use" failure after an unclean stop) without a `--replace` workaround.
-- **Less bespoke plumbing.** `50-service-install.sh` no longer renders a template, generates an `EnvironmentFile`, or symlinks into `~/.config/systemd/user/`; `51-service-uninstall.sh` shrinks to removing two files and reloading.
-
-Constraints kept:
-
-- **`config.sh` stays the single source of truth (Chapter 9.1).** No deployment value is hardcoded in the checked-in `.container`. The per-host values (`IMAGE`, `SSH_PORT`, the `HOST_*_BASE` bind mounts, `CONTAINER`) land in the generated drop-in rather than in a fully rendered unit — the checked-in file is then genuinely static, and a `git pull` that changes it is live after the next `daemon-reload` with no re-install.
-- **Multiple instances on one host.** Every per-instance resource is namespaced by `CONTAINER` through the Quadlet filename (`<CONTAINER>.container` → `<CONTAINER>.container.d/` → `<CONTAINER>.service` → `ContainerName=<CONTAINER>`), so the `container_` prefix the old installed unit carried is gone. Two instances still need distinct `SSH_PORT` values; `50-service-install.sh` refuses to overwrite a `<CONTAINER>.container` that belongs to a different checkout.
-- **Rootless user service + lingering unchanged (Chapters 6.2.1, 6.2.3).** Still a rootless *user* unit under `~/.config/containers/systemd/`, still needs `loginctl enable-linger`. No `User=` (Quadlet passes it straight through, so the `status=216/GROUP` trap is unchanged). None of the Chapter 1.1 rootless guarantees change.
-
-The migration itself was a **deployment/lifecycle change only** — it did not alter client-facing behavior, the security model (Chapter 1), or the privacy model (Chapter 2). A one-time migration step for deployments still on the `.service` unit is in [Deployment](docs/DEPLOYMENT.md) Chapter 6.3.
-
-**Container hardening (landed with the migration, in its own commit).** The Quadlet makes these expressible declaratively, and `systemd/borg-server.container` now carries them: `NoNewPrivileges=true`, `DropCapability=all` with a minimal `AddCapability` (seven caps, each annotated), `ReadOnly=true` with three `tmpfs`, `PidsLimit=128`, `Memory=512m`. The cap set was determined empirically against the shipped image (removed until something broke, added back with a reason) and verified with a full client cycle. This *is* host-level defense in depth beyond what Chapter 1.1 requires — it does not replace rootless / SELinux / the immutable OS, and a Chapter 1 guarantee does not now depend on it.
+Shipped in 1.0.0. The hand-written unit template + generated `EnvironmentFile` is now a checked-in Podman Quadlet `systemd/borg-server.container` plus a `<CONTAINER>.container.d/10-deployment.conf` drop-in that `scripts/50-service-install.sh` renders from `config.sh`; `podman-system-generator` produces `<CONTAINER>.service` on `daemon-reload` (needs podman ≥ 5.0). Container hardening landed with it, in its own commit: `NoNewPrivileges=true`, `DropCapability=all` + seven annotated caps, `ReadOnly=true` + three `tmpfs`, `PidsLimit=128`, `Memory=512m` — determined empirically against the shipped image, defence in depth beyond what Chapter 1.1 requires (no Chapter 1 guarantee depends on it). Deployment/lifecycle change only — client-facing behaviour and the security/privacy models (Chapters 1, 2) are unchanged. See [Deployment](docs/DEPLOYMENT.md) Chapter 6.2 (6.2.4 for running more than one instance, 6.3 for the one-time migration step) and the header of `systemd/borg-server.container` for the per-cap rationale. Verified: [Verification](docs/VERIFICATION.md) checks 4A–4C and section 12.
 
 ## 11.5. Point-in-Time Snapshots of the Storage Volume — done
 
-Point-in-time snapshots of `HOST_REPO_BASE`, with a client-scoped restore path, closing the one gap append-only cannot: destructive action originating on the *host* side rather than over a client's connection (operator error, destructive host-side software, a bug in this server's own privileged operations). Not a second copy, and not a substitute for an offsite copy — which, now that server-side foreign mirroring is dropped (11.2), is wholly a client-side responsibility and remains necessary regardless of snapshots.
-
-Shipped as `snapshots/70-create-snapshot.sh` (plus `71-timer-install.sh`), `75-list-snapshots.sh`, `76-delete-snapshots.sh`, and `77-restore-last-snapshot.sh`, plus `scripts/04-reattach-client.sh` for the one gap a `HOST_REPO_BASE`-only restore leaves behind (reconnecting `clients.conf`). See [Snapshots](docs/SNAPSHOTS.md) for scope, requirements, layout, and how to use each script, and [Verification](docs/VERIFICATION.md) Test 11 for the checks proving it holds — immutability survives even root, restore reconstructs the exact quota and project id, and deletion refuses a path outside `SNAPSHOT_BASE`.
+Shipped as `snapshots/70-create-snapshot.sh` (plus the `71-`/`72-`/`79-` timer scripts), `75-list-snapshots.sh`, `76-delete-snapshots.sh`, `77-restore-last-snapshot.sh`, and `scripts/04-reattach-client.sh` for reconnecting `clients.conf` after a `HOST_REPO_BASE`-only restore. Reflink point-in-time copies of `HOST_REPO_BASE`, made immutable (`chattr +i`), with a client-scoped restore — closing the one gap append-only cannot: destruction originating host-side rather than over a client connection. Not a second copy, and not a substitute for an offsite copy (client-side, see 11.2). See [Snapshots](docs/SNAPSHOTS.md) and [Verification](docs/VERIFICATION.md) Test 11.
 
 ## 11.6. Executable Verification Checks
 
@@ -148,24 +131,6 @@ The `podman` stub in `tests/host-scripts.sh` records every non-`unshare` invocat
 
 This is orthogonal to the Quadlet migration (11.4): the apply path is about the running container, not about how the unit that starts it is written, and either order of implementation works.
 
-## 11.8. Negative-Test Coverage for the Remaining Verification Checks
+## 11.8. Negative-Test Coverage for the Verification Checks — done
 
-`docs/VERIFICATION.md` names, per check, whether a deliberately broken deployment has ever been staged and shown to trip that check's own **Fail** criterion (see its "How to read a test" section and the **Negative test** field under each of the 24 checks). A first pass at closing this list, against `v0.1.0-beta.31`, staged six of them — `0B`, `1`, `3B`, `4B`, `6`, `7` — each confirmed to produce its documented `Fail` output. A later pass, still against `v0.1.0-beta.31`, staged two more: blanking `HOST_REPO_BASE` and test 8's reverse direction. A third pass staged the six that remained — `1.5B`, `1.5C`, `2`, `3A`, `4A`, `4C` — at once, closing this list entirely.
-
-Confirmed staged and matching their documented `Fail` output:
-
-- **`1.5B` / `1.5C`** — the `Match User borg` block from [Test Environment](docs/TESTENV.md) chapter 8, mounted over a throwaway bench container's `sshd_config` (same image digest, own port, production instance untouched). `1.5A` stayed blind against that container, reporting ten correct lines regardless. `1.5B`'s `diff` against `-C user=borg` came back non-empty (`permittty` and `allowtcpforwarding` both flipped to `yes`); `1.5C`'s `grep` found the `Match` line. A real connection through a `command=`/`restrict`-less key on the same container, opened with `ssh -tt`, then produced an actual interactive TTY as `borg` — the #20 incident, reproduced against this recipe rather than only the original one. Resolves the discrepancy this entry previously flagged between `VERIFICATION.md` and `TESTENV.md`: the recipe does produce the state, and both checks catch it.
-- **`2`** — `borg-wrapper.sh` copied onto the same bench container with its default-deny branch replaced by `eval "$SSH_ORIGINAL_COMMAND"; exit 0`. A forbidden command sent through a real client key then executed and returned real output — this check's `Fail` condition exactly. The same command against the unmodified production instance, with a real client key, still answered `DENY: only 'borg serve' and 'info' are permitted`.
-- **`3A`** — both documented variants appended to a live `authorized_keys` in turn (no `command=` at all; then, from a clean state, a correct prefix missing only `,restrict`): the count rose from `0` to `1` for each, one at a time. The `,restrict`-missing variant passed every other check on the page — tests 1 and 2 saw nothing wrong with it — and its practical reach was measured rather than assumed: port forwarding attempted over that key failed only because `AllowTcpForwarding no` in the daemon (check 1.5A) blocked it.
-- **`4A`** — the same command, run with `sudo` against the same host's rootful Podman, reported `false`, against `true` for the unprivileged account. No second install was needed, contrary to what an earlier version of this entry assumed — the check answers for whichever account ran it, which is also its documented weakness.
-- **`4C`** — a second container, from the *same image digest* as the production instance, started rootful by hand (`sudo podman run`, its own port and directories, production instance untouched). This check's command reported `root`/uid 0 for its conmon and init processes, against `core`/uid 1000 for the production container queried the same way. Removed afterward, with `sudo podman` confirming nothing was left behind.
-- **`5.5A` / empty `HOST_REPO_BASE`** — blanking the variable in `config.sh` and running `09-show-all-users.sh` produces exactly the branch `lib.sh` already has for it (`n/a (!) (HOST_REPO_BASE not set or not accessible)` on the `Disk usage:`/`Disk free:` lines, and the matching per-client `n/a (HOST_REPO_BASE not set)`).
-- **`8`, reverse direction** — disabling the encryption gate in `/borg-wrapper.sh` on a throwaway bench deployment and repeating test 8's `borg list`/`borg info` against a `repokey` repository lets both succeed, tripping the check's documented **Fail** condition ("if `borg list` succeeds against a repokey repository, the encryption policy is not being enforced").
-
-That closes every check this entry tracked. The one remaining loose end belongs to `VERIFICATION.md` 5.5A itself, not to this list: the `unreadable` sub-case has no recipe that reaches it (both `chmod` candidates were tried and land on `MISSING on host` instead), and the check's own text now records that as a structural conclusion rather than a gap to close.
-
-**Constraints observed while staging the above**, matching `VERIFICATION.md`'s own rules:
-
-- **The recipe must target the property, not a proxy for it.** The `mount -o remount,noquota` non-recipe (#22) is the cautionary example: it looked like it broke enforcement and did not.
-- **Destructive or security-weakening recipes ran on throwaway state** — a separate bench container on its own port for `1.5B`/`1.5C`/`2`, a separate rootful container from the same image digest for `4C`, never the production instance (the same rule test 10 already follows).
-- **A check moves to ✅ only once both directions have been observed on a real deployment.** Passing the equivalent case against the code alone (`tests/*.sh`) is not sufficient — see 11.6 above, on why "the ⚠️ marks stay attached to the checks... a runner cannot resolve it."
+Every check in `docs/VERIFICATION.md` now records, in its own **Negative test** field, a deliberately broken deployment staged against a live instance and shown to trip that check's **Fail** criterion — never against production, always on a throwaway bench, and targeting the property rather than a proxy for it. The Summary checklist at the end of that page is the live status: as of 1.0.0 all forty checks have both directions demonstrated except the two `(✅)` *capped* ones, whose counter-example cannot be produced at all — **0A** (a forged provenance attestation that still verifies) and **12C** (two instances sharing one SELinux MCS category, which needs `setenforce 0` or dropping `:Z` and so breaks more than the one property). The single open sub-case is 5.5A's `unreadable` branch, believed reachable only by a genuine `statfs()` failure — recorded in that check's own text, not here.
