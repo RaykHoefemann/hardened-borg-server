@@ -2,13 +2,12 @@
 #
 # tests/snapshot-scripts.sh
 # --------------------------
-# Behavioural tests for snapshots/70-create-snapshot.sh, 75-list-snapshots.sh,
-# 76-delete-snapshots.sh and 77-restore-last-snapshot.sh -- the four scripts
-# with real destructive or privileged logic (docs/SNAPSHOTS.md). Not covered
-# here: 71-/72-timer-install/uninstall.sh and 79-timer-status.sh, which are
-# mostly systemd-unit rendering rather than the immutable-flag/quota/copy
-# logic this file exists to exercise; a fake-systemctl suite for those is a
-# separate, later task.
+# Behavioural tests for every script under snapshots/ except
+# 70-create-snapshot.sh's own timer companions' internals duplicated
+# nowhere else: 70-/75-/76-/77- (the destructive/privileged logic), plus
+# 71-/72-timer-install/uninstall.sh and 79-timer-status.sh (the systemd
+# timer lifecycle), covered with a fake `systemctl --user` the same way the
+# rest of this file fakes `sudo`/`chattr`/`xfs_quota`.
 #
 # Neither CI nor this file is a substitute for docs/VERIFICATION.md's tests
 # 11A-11G, all of which are measured directly against a real deployment
@@ -59,17 +58,23 @@ assert() { if [ "$2" -eq 0 ]; then ok "$1"; else bad "$1"; fi; }
 # the caller's cwd (see config.sh's own header for why).
 new_snap_tree() {
     T="$WORK/tree$RANDOM$RANDOM"
-    mkdir -p "$T/scripts" "$T/snapshots" "$T/storage/repo"
+    mkdir -p "$T/scripts" "$T/snapshots" "$T/storage/repo" "$T/home/.config/systemd/user"
     cp "$ROOT/config.sh" "$T/config.sh"
     cp "$ROOT/scripts/config.sh" "$T/scripts/config.sh"
     cp "$ROOT/scripts/lib.sh" "$T/scripts/lib.sh"
     cp "$ROOT"/snapshots/*.sh "$T/snapshots/"
+    cp "$ROOT/snapshots/snapshot-create.timer" "$T/snapshots/snapshot-create.timer"
+    cp "$ROOT/snapshots/snapshot-create.service" "$T/snapshots/snapshot-create.service"
     chmod +x "$T"/snapshots/*.sh
     sed -i "s|^HOST_STORAGE_BASE=.*|HOST_STORAGE_BASE=\"$T/storage\"|" "$T/config.sh"
     sed -i 's|^CONTAINER=.*|CONTAINER="repo"|' "$T/config.sh"
-    # Resolved for convenience in the test cases below.
+    # Resolved for convenience in the test cases below. SNAPSHOT_TIMER_NAME
+    # is "snapshot_repo" (snapshots/config.sh: "snapshot_${CONTAINER}").
     HRB="$T/storage/repo"
     SB="$T/storage/.snapshots/repo"
+    TIMER_NAME="snapshot_repo.timer"
+    SERVICE_NAME="snapshot_repo.service"
+    UNIT_DIR="$T/home/.config/systemd/user"
 }
 
 mkclient() { # mkclient <group> <name> — a live client directory with content
@@ -83,7 +88,8 @@ mkgen() { # mkgen <group> <client> <timestamp> — a pre-existing snapshot gener
 }
 
 # ============================================================================
-# Stubs: sudo, podman, xfs_quota, xfs_info, chattr, lsattr, cp, rm, df
+# Stubs: sudo, podman, xfs_quota, xfs_info, chattr, lsattr, cp, rm, df,
+# systemctl, journalctl
 # ============================================================================
 #
 # sudo/podman/xfs_quota patterns copied from tests/host-scripts.sh's own
@@ -95,7 +101,102 @@ mkdir -p "$STUB"
 
 cat > "$STUB/sudo" <<'EOF'
 #!/bin/sh
+if [ "$1" = "-n" ]; then
+    shift
+    [ "${SUDO_N_FAIL:-}" = "1" ] && exit 1
+fi
 exec "$@"
+EOF
+
+cat > "$STUB/journalctl" <<'EOF'
+#!/bin/sh
+echo "-- no journal entries in this fixture --"
+exit 0
+EOF
+
+# Fakes the exact subset of "systemctl --user ..." 71-/72-/79- use. State
+# lives in $SYSTEMCTL_STATE/<unit>, one KEY=VALUE per line -- a unit with no
+# file behaves the way systemd reports one it has never heard of
+# (LoadState=not-found, every other property empty), which is exactly the
+# case 79- itself branches on.
+cat > "$STUB/systemctl" <<'EOF'
+#!/bin/sh
+[ "$1" = "--user" ] || { echo "systemctl stub: expected --user first" >&2; exit 1; }
+shift
+cmd="$1"; shift
+
+state_file() { echo "${SYSTEMCTL_STATE:?}/$1"; }
+set_prop() { # set_prop <unit> <key> <value>
+    f="$(state_file "$1")"
+    mkdir -p "$(dirname "$f")"
+    : > "$f.tmp"
+    [ -f "$f" ] && grep -v "^$2=" "$f" > "$f.tmp"
+    mv "$f.tmp" "$f"
+    echo "$2=$3" >> "$f"
+}
+get_prop() { # get_prop <unit> <key>
+    f="$(state_file "$1")"
+    [ -f "$f" ] || return 1
+    sed -n "s/^$2=//p" "$f" | tail -1
+}
+
+case "$cmd" in
+    daemon-reload) exit 0 ;;
+    enable)
+        now=0 unit=""
+        for a in "$@"; do case "$a" in --now) now=1 ;; *) unit="$a" ;; esac; done
+        set_prop "$unit" LoadState loaded
+        set_prop "$unit" UnitFileState alias
+        if [ "$now" = 1 ]; then
+            set_prop "$unit" ActiveState active
+            set_prop "$unit" SubState waiting
+        fi
+        exit 0
+        ;;
+    disable)
+        set_prop "$1" UnitFileState disabled
+        exit 0
+        ;;
+    stop)
+        set_prop "$1" ActiveState inactive
+        set_prop "$1" SubState dead
+        exit 0
+        ;;
+    is-active)
+        unit=""
+        for a in "$@"; do case "$a" in --quiet) ;; *) unit="$a" ;; esac; done
+        [ "$(get_prop "$unit" ActiveState 2>/dev/null)" = "active" ] && exit 0
+        exit 3
+        ;;
+    is-enabled)
+        unit=""
+        for a in "$@"; do case "$a" in --quiet) ;; *) unit="$a" ;; esac; done
+        v="$(get_prop "$unit" UnitFileState 2>/dev/null)"
+        case "$v" in enabled|alias|static|linked*) exit 0 ;; *) exit 1 ;; esac
+        ;;
+    show)
+        unit="" props="" value=0
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                -p) props="$props $2"; shift 2 ;;
+                --value) value=1; shift ;;
+                *) unit="$1"; shift ;;
+            esac
+        done
+        f="$(state_file "$unit")"
+        for p in $props; do
+            if [ ! -f "$f" ]; then
+                [ "$p" = "LoadState" ] && v="not-found" || v=""
+            else
+                v="$(sed -n "s/^$p=//p" "$f" | tail -1)"
+            fi
+            if [ "$value" = 1 ]; then printf '%s\n' "$v"
+            else printf '%s=%s\n' "$p" "$v"; fi
+        done
+        exit 0
+        ;;
+    *) exit 0 ;;
+esac
 EOF
 
 cat > "$STUB/podman" <<'EOF'
@@ -247,9 +348,14 @@ chmod +x "$STUB"/*
 
 df_stub()     { printf '%s\n' "$@" > "$WORK/df.data"; export DF_STUB_DATA="$WORK/df.data"; }
 lsattr_pdata() { printf '%s\n' "$@" > "$WORK/lsattr_p.data"; export LSATTR_STUB_DATA="$WORK/lsattr_p.data"; }
+seed_unit() { # seed_unit <unit> <KEY=value>... — pre-existing systemctl state
+    f="$SYSTEMCTL_STATE/$1"; shift
+    : > "$f"
+    for kv in "$@"; do printf '%s\n' "$kv" >> "$f"; done
+}
 
 reset_env() {
-    unset CHATTR_FAIL CHATTR_LIE CP_FAIL XFS_INFO_NO_REFLINK
+    unset CHATTR_FAIL CHATTR_LIE CP_FAIL XFS_INFO_NO_REFLINK SUDO_N_FAIL
     unset DF_STUB_DATA_AFTER DF_STUB_SWITCH_AT DF_CALL_COUNTER
     export CHATTR_STATE="$WORK/chattr.state"
     : > "$CHATTR_STATE"
@@ -257,6 +363,9 @@ reset_env() {
     export XFS_LOG="$WORK/xfs.log"; : > "$XFS_LOG"
     df_stub ""
     lsattr_pdata ""
+    export SYSTEMCTL_STATE="$T/systemctl-state"
+    rm -rf "$SYSTEMCTL_STATE"; mkdir -p "$SYSTEMCTL_STATE"
+    export HOME="$T/home"
 }
 
 run() { OUT="$(PATH="$STUB:$PATH" "$@" 2>&1)"; RC=$?; }
@@ -611,6 +720,126 @@ df_stub "$HRB/OWN/client1:1048576:0"
 run_confirm "Y" "$T/snapshots/77-restore-last-snapshot.sh" client1
 grep -qF "project -s -p ${HRB}/OWN/client1 1011" "$XFS_LOG"
 assert "77.10 the SAME project id read before deletion is re-applied, not a fresh one" $?
+
+# ============================================================================
+# 71. 71-timer-install.sh
+# ============================================================================
+
+new_snap_tree; reset_env
+rm -f "$T/snapshots/snapshot-create.timer"
+run "$T/snapshots/71-timer-install.sh"
+{ [ "$RC" -ne 0 ] && [[ "$OUT" == *"Timer unit not found"* ]]; }
+assert "71.1 a missing timer unit template is refused" $?
+
+new_snap_tree; reset_env
+rm -f "$T/snapshots/snapshot-create.service"
+run "$T/snapshots/71-timer-install.sh"
+{ [ "$RC" -ne 0 ] && [[ "$OUT" == *"Service unit template not found"* ]]; }
+assert "71.2 a missing service unit template is refused" $?
+
+new_snap_tree; reset_env
+chmod -x "$T/snapshots/70-create-snapshot.sh"
+run "$T/snapshots/71-timer-install.sh"
+{ [ "$RC" -ne 0 ] && [[ "$OUT" == *"is missing or not executable"* ]]; }
+assert "71.3 a missing or non-executable 70-create-snapshot.sh is refused" $?
+
+new_snap_tree; reset_env
+run "$T/snapshots/71-timer-install.sh"
+TIMER_LINK="$UNIT_DIR/$TIMER_NAME"
+SERVICE_LINK="$UNIT_DIR/$SERVICE_NAME"
+RENDERED="$T/snapshots/snapshot-create.service.rendered"
+{ [ "$RC" -eq 0 ] && [ -L "$TIMER_LINK" ] \
+  && [ "$(readlink "$TIMER_LINK")" = "$T/snapshots/snapshot-create.timer" ] \
+  && [ -L "$SERVICE_LINK" ] && [ "$(readlink "$SERVICE_LINK")" = "$RENDERED" ] \
+  && grep -qF "$T/snapshots/70-create-snapshot.sh" "$RENDERED" \
+  && [ "$(sed -n 's/^ActiveState=//p' "$SYSTEMCTL_STATE/$TIMER_NAME")" = "active" ]; }
+assert "71.4 a clean install symlinks both units, renders @@SCRIPT@@, enables --now" $?
+
+new_snap_tree; reset_env
+run "$T/snapshots/71-timer-install.sh"
+run "$T/snapshots/71-timer-install.sh"
+{ [ "$RC" -eq 0 ] && [[ "$OUT" == *"Removing old file"* ]] \
+  && [ -L "$UNIT_DIR/$TIMER_NAME" ] && [ -L "$UNIT_DIR/$SERVICE_NAME" ]; }
+assert "71.5 re-running is idempotent -- old symlinks replaced, not duplicated" $?
+
+# ============================================================================
+# 72. 72-timer-uninstall.sh
+# ============================================================================
+
+new_snap_tree; reset_env
+run "$T/snapshots/71-timer-install.sh"
+seed_unit "$SERVICE_NAME" "LoadState=loaded" "ActiveState=activating" "SubState=start"
+run "$T/snapshots/72-timer-uninstall.sh"
+{ [ "$RC" -ne 0 ] && [[ "$OUT" == *"a snapshot run is"* ]] \
+  && [ -L "$UNIT_DIR/$TIMER_NAME" ] && [ -L "$UNIT_DIR/$SERVICE_NAME" ]; }
+assert "72.1 a snapshot run in progress refuses uninstall, symlinks untouched" $?
+
+new_snap_tree; reset_env
+run "$T/snapshots/71-timer-install.sh"
+run "$T/snapshots/72-timer-uninstall.sh"
+{ [ "$RC" -eq 0 ] && [[ "$OUT" == *"Timer uninstalled"* ]] \
+  && [ ! -e "$UNIT_DIR/$TIMER_NAME" ] && [ ! -e "$UNIT_DIR/$SERVICE_NAME" ] \
+  && [ ! -e "$T/snapshots/snapshot-create.service.rendered" ] \
+  && [ "$(sed -n 's/^ActiveState=//p' "$SYSTEMCTL_STATE/$TIMER_NAME")" = "inactive" ]; }
+assert "72.2 a clean uninstall removes both symlinks and the rendered unit" $?
+
+new_snap_tree; reset_env
+run "$T/snapshots/72-timer-uninstall.sh"
+[ "$RC" -eq 0 ]; assert "72.3 uninstalling when nothing was ever installed is a clean no-op" $?
+
+# ============================================================================
+# 79. 79-timer-status.sh
+# ============================================================================
+
+new_snap_tree; reset_env
+run "$T/snapshots/79-timer-status.sh"
+{ [ "$RC" -eq 0 ] && [[ "$OUT" == *"not installed for this user"* ]] \
+  && [[ "$OUT" == *"NOT fully functional"* ]]; }
+assert "79.1 nothing installed is reported as not installed, not functional" $?
+
+new_snap_tree; reset_env
+seed_unit "$TIMER_NAME" "LoadState=loaded" "UnitFileState=alias" "ActiveState=active" "SubState=waiting"
+seed_unit "$SERVICE_NAME" "LoadState=loaded" "ActiveState=inactive" "SubState=dead" "Result=success" "ExecMainStatus=0" "ExecMainStartTimestamp=Sat 2026-08-29" "ExecMainExitTimestamp=Sat 2026-08-29"
+run "$T/snapshots/79-timer-status.sh"
+{ [ "$RC" -eq 0 ] && [[ "$OUT" == *"Functional: scheduled, last run succeeded, sudo is unattended-ready."* ]]; }
+assert "79.2 scheduled, last run succeeded, sudo ready -- fully functional" $?
+
+new_snap_tree; reset_env
+seed_unit "$TIMER_NAME" "LoadState=loaded" "UnitFileState=alias" "ActiveState=active" "SubState=waiting"
+seed_unit "$SERVICE_NAME" "LoadState=loaded" "Result=success"
+run "$T/snapshots/79-timer-status.sh"
+{ [ "$RC" -eq 0 ] && [[ "$OUT" != *"NOT SCHEDULED"* ]]; }
+assert "79.3 UnitFileState=alias (symlink install) is not mistaken for unscheduled" $?
+
+new_snap_tree; reset_env
+seed_unit "$TIMER_NAME" "LoadState=loaded" "UnitFileState=alias" "ActiveState=inactive" "SubState=dead"
+seed_unit "$SERVICE_NAME" "LoadState=loaded" "Result=success"
+run "$T/snapshots/79-timer-status.sh"
+{ [ "$RC" -eq 0 ] && [[ "$OUT" == *"NOT SCHEDULED"* ]] && [[ "$OUT" == *"NOT fully functional"* ]]; }
+assert "79.4 an inactive timer is reported NOT SCHEDULED" $?
+
+new_snap_tree; reset_env
+seed_unit "$TIMER_NAME" "LoadState=loaded" "UnitFileState=alias" "ActiveState=active" "SubState=waiting"
+seed_unit "$SERVICE_NAME" "LoadState=loaded" "Result=failed" "ExecMainStatus=1"
+run "$T/snapshots/79-timer-status.sh"
+{ [ "$RC" -eq 0 ] && [[ "$OUT" == *"LAST RUN FAILED"* ]] && [[ "$OUT" == *"NOT fully functional"* ]]; }
+assert "79.5 a failed last run is reported, not just 'ran'" $?
+
+new_snap_tree; reset_env
+seed_unit "$TIMER_NAME" "LoadState=loaded" "UnitFileState=alias" "ActiveState=active" "SubState=waiting"
+seed_unit "$SERVICE_NAME" "LoadState=loaded" "Result=success"
+run "$T/snapshots/79-timer-status.sh"
+{ [ "$RC" -eq 0 ] && [[ "$OUT" != *"never (no run recorded"* ]] && [[ "$OUT" != *"LAST RUN FAILED"* ]]; }
+assert "79.6 a Persistent=true catch-up run (no Exec* timestamps) still counts as succeeded" $?
+
+new_snap_tree; reset_env
+seed_unit "$TIMER_NAME" "LoadState=loaded" "UnitFileState=alias" "ActiveState=active" "SubState=waiting"
+seed_unit "$SERVICE_NAME" "LoadState=loaded" "Result=success"
+export SUDO_N_FAIL=1
+run "$T/snapshots/79-timer-status.sh"
+{ [ "$RC" -eq 0 ] && [[ "$OUT" == *"Passwordless sudo: NO"* ]] && [[ "$OUT" == *"NOT fully functional"* ]]; }
+assert "79.7 sudo needing a password is reported, not silently assumed ready" $?
+unset SUDO_N_FAIL
 
 # ============================================================================
 echo ""
