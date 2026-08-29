@@ -37,9 +37,11 @@ RUN apt-get update && apt-get install -y \
 # Prepare SSH
 RUN mkdir -p /var/run/sshd
 
-# Set User for Borg
-ARG ENV PUID=1111
-ARG ENV PGID=1111
+# UID/GID of the 'borg' user, baked in at build time only. Not exposed as ENV:
+# nothing reads PUID/PGID at runtime (the Quadlet passes no such variable), and
+# config.sh's BORG_UID/BORG_GID must match whatever is compiled in here.
+ARG PUID=1111
+ARG PGID=1111
 
 # -p '*' is not decoration. Without it useradd leaves '!' in /etc/shadow, which
 # means "account locked", and sshd runs with UsePAM no — so it performs that
