@@ -70,12 +70,18 @@
 # different size than its neighbours", not the volume's aggregate storage
 # bill.
 #
-# PRIVILEGES. Runs entirely as the normal operator user -- no `sudo`. The
-# directories this walks were reflinked from HOST_REPO_BASE, which
-# scripts/lib.sh (repo_dir_create) deliberately leaves at mode 755 precisely
-# so the operator can read into them without root; `cp -a` preserves that
-# mode into every snapshot. Nothing here needs to change data or metadata,
-# so nothing here needs CAP_LINUX_IMMUTABLE or CAP_CHOWN either.
+# PRIVILEGES. Runs as the normal operator user, with one elevated read:
+# `sudo du -sh` on each generation. The generation directory itself was
+# reflinked from HOST_REPO_BASE, which scripts/lib.sh (repo_dir_create)
+# deliberately leaves at mode 755 precisely so the operator can read into it
+# without root, and `cp -a` preserves that mode -- but Borg's own `data/`
+# subdirectory inside the repository is mode 700, owned by the mapped
+# subuid, regardless of the outer directory's mode. An unprivileged `du`
+# cannot descend into it and silently reports only the handful of always-
+# readable top-level metadata files, undercounting the true size by orders
+# of magnitude (issue #35) -- so this read needs `sudo` to be correct, even
+# though nothing here needs to change data or metadata, and so nothing here
+# needs CAP_LINUX_IMMUTABLE or CAP_CHOWN.
 #
 
 set -e
@@ -213,15 +219,15 @@ if [ ! -s "$GEN_LIST" ]; then
     exit 0
 fi
 
-# One line per generation, oldest first: timestamp, then size. `du -sh`
-# walks the whole generation (see COST above) -- a failure (permission,
-# a generation removed mid-run) shows as a clear marker rather than aborting
-# the rest of the listing, the same "empty output is the real signal" idiom
-# 09-show-all-users.sh uses for df.
+# One line per generation, oldest first: timestamp, then size. `sudo du -sh`
+# walks the whole generation (see COST and PRIVILEGES above) -- a failure
+# (sudo unavailable, a generation removed mid-run) shows as a clear marker
+# rather than aborting the rest of the listing, the same "empty output is
+# the real signal" idiom 09-show-all-users.sh uses for df.
 COUNT=0
 while IFS= read -r TS; do
     [ -n "$TS" ] || continue
-    SIZE="$(du -sh "${CLIENT_DIR}/${TS}" 2>/dev/null | cut -f1)"
+    SIZE="$(sudo du -sh "${CLIENT_DIR}/${TS}" 2>/dev/null | cut -f1)"
     [ -n "$SIZE" ] || SIZE="n/a (unreadable)"
     printf '%-20s %s\n' "$TS" "$SIZE"
     COUNT=$((COUNT + 1))

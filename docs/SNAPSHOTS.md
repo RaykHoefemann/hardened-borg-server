@@ -95,7 +95,7 @@ A run in progress is detected and refused (`flock` on `SNAPSHOT_BASE/.lock`), so
 
 Lists one client's snapshot generations — timestamp and size (`du -sh`, the generation's own full size, not its marginal reflink cost — an operator scanning for an anomaly wants "this generation looks different from its neighbours," which needs the real number, not the aggregate storage bill). `<client>` is required and is **not** cross-checked against `clients.conf` or `HOST_REPO_BASE`, so a client since removed from either is still listable. `[from]`/`[to]` are optional, inclusive bounds in the same timestamp format — worth using on a client with a long history, since each generation shown is sized with a real `du -sh` walk.
 
-Purely read-only reporting: no anomaly thresholds, no flagging. What counts as a normal size for one client says nothing about another, so interpreting the numbers is left to the operator on purpose. Needs no `sudo`.
+Purely read-only reporting: no anomaly thresholds, no flagging. What counts as a normal size for one client says nothing about another, so interpreting the numbers is left to the operator on purpose. Sizing each generation needs `sudo` (see "Privileges" below) — Borg's own `data/` subdirectory inside a repository is mode 700, which an unprivileged `du` cannot read into.
 
 ## 6. Deleting snapshots — `76-delete-snapshots.sh`
 
@@ -136,7 +136,7 @@ Every script above runs as the normal operator user — **the same user that run
 | `70-create-snapshot.sh` | `cp -a --reflink=always`, `chattr -R +i`, `rm -rf` (stale `.creating-*` cleanup) | `cp` needs `CAP_CHOWN` to preserve the mapped-subuid ownership `scripts/lib.sh`'s `repo_dir_create` gives client directories; `chattr +i` needs `CAP_LINUX_IMMUTABLE`, which not even the file's owner has without it. A genuinely stale `.creating-*` (left by a crashed or killed run) is a `cp -a` copy too, so it carries the same mapped-subuid ownership — an unprivileged `rm -rf` cannot remove it either. |
 | `76-delete-snapshots.sh` | `chattr -R -i`, `rm -rf` | Clearing the immutable flag alone is **not** sufficient to delete a snapshot: the reflinked files still carry the original client directories' restrictive mode and mapped-subuid ownership, so an unprivileged `rm -rf` fails with `Permission denied` — a different failure from the flag's `Operation not permitted` — even after the flag is gone. |
 | `77-restore-last-snapshot.sh` | `rm -rf`, `cp -a --reflink=always`, plus (via `scripts/lib.sh`) `xfs_quota` and `podman unshare` | Same reasoning as above for the live directory, plus the same project-id/ownership mechanics `00-ssh-create-user.sh` uses. |
-| `75-list-snapshots.sh` | none | Purely read-only; the directories it walks are mode 755 by construction, readable without root. |
+| `75-list-snapshots.sh` | `du -sh` | Purely read-only, but Borg's own `data/` subdirectory inside a repository is mode 700, owned by the mapped subuid — unlike the mode-755 generation directory around it, which `du` could otherwise walk unprivileged. Without `sudo`, `du` silently undercounts by orders of magnitude instead of failing loudly (issue #35). |
 | `79-timer-status.sh` | none | Purely read-only — `systemctl --user show`, `journalctl --user`, and `sudo -n true` (which never prompts and elevates nothing; it only *checks* whether the passwordless entry above is in place). |
 
 **Interactive use needs nothing extra** — `sudo` simply prompts, the same as every other privileged script in this project. **Unattended use of `70-create-snapshot.sh` under the systemd timer or cron needs passwordless `sudo` for `cp`, `chattr`, and `rm`**, since none of the three has a terminal to answer a password prompt on. This project deliberately does not write that sudoers entry for you — it is a host security decision for the operator to make, not something to drop into `/etc/sudoers.d/` silently. A starting point, narrower still if your `sudo` supports argument restrictions:
@@ -145,7 +145,7 @@ Every script above runs as the normal operator user — **the same user that run
 operator ALL=(root) NOPASSWD: /usr/bin/cp, /usr/sbin/chattr, /usr/bin/rm
 ```
 
-`76-`/`77-` are interactive by design (the exact-`Y` confirmation, see above) and are never run unattended, so they need no passwordless entry — a human is present to authenticate `sudo` normally.
+`75-`/`76-`/`77-` are interactive by design (`76-`/`77-` via the exact-`Y` confirmation, `75-` via its own `du` prompt) and are never run unattended, so none of them needs a passwordless entry — a human is present to authenticate `sudo` normally.
 
 ## 9. Rehearsing this before you need it
 

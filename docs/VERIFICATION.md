@@ -1801,7 +1801,7 @@ dropped (Roadmap 11.2).
 
 **Why it matters** — this is the local, fast half of recovering from operator error or destructive host-side software ([Recovery](RECOVERY.md) Chapter 5). If a completed generation could be removed the same way its live source can, the rollback path is exposed to exactly the class of accident it exists to survive. And a restore that silently drops or mis-applies the quota leaves a repository that looks recovered but is no longer protected — the failure mode [`77-restore-last-snapshot.sh`](SNAPSHOTS.md#7-restoring-the-most-recent-snapshot--77-restore-last-snapshotsh)'s own header calls out by name.
 
-Five checks. 11A–11D run on the host against a disposable client and each test one part in isolation; 11E runs the whole loop once with a real client and real data. See [Snapshots](SNAPSHOTS.md) for `SNAPSHOT_BASE`'s default layout.
+Seven checks. 11A–11D run on the host against a disposable client and each test one part in isolation; 11E runs the whole loop once with a real client and real data; 11F measures the volume's physical usage across repeated snapshot/delete/restore cycles to confirm the copies are reflink-shared, not duplicated; 11G checks that `75-list-snapshots.sh`'s own size column can be trusted. See [Snapshots](SNAPSHOTS.md) for `SNAPSHOT_BASE`'s default layout.
 
 ### 11A — a completed generation resists deletion, even by root ✅
 
@@ -2027,6 +2027,107 @@ Borg will note the repository is at an older transaction than the client's cache
 
 **What this does not show** — that restores keep working over time as the client's data changes; that is the client's ongoing restore-testing discipline ([Best Practices](BEST_PRACTICES.md) Chapter 7), not a one-time check of the tooling. `MIRROR` clients are not exercised here, but the snapshot path treats them identically.
 
+### 11F — repeated snapshot/delete/restore cycles add no additional disk usage ✅
+
+Both `70-create-snapshot.sh` and `77-restore-last-snapshot.sh` copy with `cp -a --reflink=always`: a snapshot generation and a restored live repository share the same underlying blocks with their source instead of duplicating them. This check verifies that property at the filesystem level — distinct from 11A–11E, which check content, quota and structure, not physical storage.
+
+**Run** — against a disposable client with a real, non-trivial repository (large enough that a genuine copy would show up in `df`, e.g. a few hundred MB):
+
+```bash
+df --output=used /var/mnt/borg-repo | tail -1        # baseline
+
+for i in 1 2 3 4 5; do
+    ./snapshots/70-create-snapshot.sh
+    df --output=used /var/mnt/borg-repo | tail -1     # after snapshot
+
+    ./snapshots/77-restore-last-snapshot.sh <client>  # type Y -- deletes, then restores
+    df --output=used /var/mnt/borg-repo | tail -1     # after restore
+done
+```
+
+To see the volume's usage *during* the brief window between deletion and restore, not just before/after the combined operation, run `77-` in the background, poll its output for `[restore] Deleting current repository:`, and freeze it with `kill -STOP` the instant that line appears (same technique as 11B's negative test) before reading `df` and resuming with `kill -CONT`.
+
+**Pass** — the KiB figure from `df --output=used` stays within a few hundred KiB of the baseline throughout every iteration, including the moment the live directory is confirmed gone (`ls <live-repo>` fails) — never approaching the repository's own size. `du -sh` on one generation directory is expected to still report the repository's full size (it counts the blocks allocated to that one file tree, not filesystem-wide sharing across generations) — that is not a contradiction; only the volume-wide `df` figure shows whether the space is actually shared.
+
+**Fail** — `df`'s reported usage grows by roughly one repository's size per snapshot or per restore. That means `cp -a` is not actually reflinking — `--reflink=always` silently fell back, or the filesystem/kernel combination lacks reflink support on this volume — and every generation is a full physical duplicate.
+
+**Negative test** — measured directly against `FCOS-BorgBackupServer` (2026-08-29), both readings:
+
+The passing direction: a disposable client's ~501 MiB repository (populated with `borg create` from 500 MiB of `/dev/urandom`, confirmed intact throughout via `borg check --verify-data`) was carried through 5 full snapshot → delete → restore cycles. Volume usage (`df --output=used /var/mnt/borg-repo`, KiB) at every measured point:
+
+| Cycle | after snapshot | after deletion (live dir confirmed gone) | after restore |
+|---|---|---|---|
+| baseline | — | — | 2,567,936 |
+| 1 | 2,568,048 | 2,568,048 | 2,568,048 |
+| 2 | 2,568,156 | 2,568,156 | 2,568,156 |
+| 3 | 2,568,264 | 2,568,264 | 2,568,264 |
+| 4 | 2,568,404 | 2,568,404 | 2,568,404 |
+| 5 | 2,568,544 | 2,568,544 | 2,568,544 |
+
+Total growth over 5 full cycles: 608 KiB — accounted for by each new generation's own small per-generation metadata (`index.N`, `hints.N`, `integrity.N`), not the ~501 MiB payload, which stayed reflink-shared throughout. Deletion did not free any space either: the still-existing snapshot generations hold the same blocks.
+
+The failing direction needed the actual fail condition named above, not a different environment: the deployed copies of `70-create-snapshot.sh` and `77-restore-last-snapshot.sh` were edited to replace `--reflink=always` with `--reflink=never` on the same VM, same volume, same disposable client (fresh ~501 MiB repository, same baseline). The identical 5-cycle procedure was then repeated without pruning between cycles, so generations accumulate:
+
+| Cycle | after snapshot | after deletion (live dir confirmed gone) | after restore |
+|---|---|---|---|
+| baseline | — | — | 2,567,940 |
+| 1 | 3,096,216 | 2,584,100 | 3,097,348 |
+| 2 | 3,625,620 | 3,113,504 | 3,625,620 |
+| 3 | 4,152,872 | 3,640,756 | 4,153,040 |
+| 4 | 4,681,176 | 4,169,060 | 4,682,196 |
+| 5 | 5,210,668 | 4,698,552 | 5,209,480 |
+
+Each snapshot adds one full ~512,000 KiB copy (one more independent, non-shared generation on disk); each deletion frees only the live directory's own ~512,000 KiB, leaving every already-created generation's copy in place — exactly the "full physical duplicate" fail condition. By the end of cycle 5, usage sits ~2,641,540 KiB (~2.5 GiB) above baseline, matching 5 accumulated ~512,000 KiB generations; `du -sh` on the client's snapshot directory independently confirms this at `2.5G`. `borg check --verify-data` still passed throughout — the negative test changes only how much space the correct data consumes, not its correctness. The scripts were restored to `--reflink=always` immediately afterward and the VM's snapshot tree, disposable client and config overlay were fully removed.
+
+**What this does not show** — the content, quota and structure properties already covered by 11A–11E; this check is about physical storage consumption only. Nor does it show behavior on a filesystem without reflink support — XFS with reflink is this project's stated requirement (see [Snapshots](SNAPSHOTS.md)) — that combination is expected to fall back to full copies, which is exactly the fail condition above, not a supported configuration.
+
+### 11G — `75-list-snapshots.sh` reports the generation's real size ✅
+
+None of 11A–11F checks whether the size `75-list-snapshots.sh` prints for a generation is actually correct — 11D checks the snapshot tree's *structure*, not the numbers `75-` reports about it. That gap is exactly how [issue #35](https://github.com/RaykHoefemann/hardened-borg-server/issues/35) went unnoticed: `75-`'s own scratch-fixture tests (docs/SNAPSHOTS.md's development history) never populated a generation with enough real Borg data for a wrong size to stand out, so a systematically wrong number shipped and passed every test that existed at the time.
+
+**Claim** — [Snapshots](SNAPSHOTS.md) §5 / `75-list-snapshots.sh`'s own header: the size column is the generation's real `du -sh` size, specifically so an operator scanning for an anomaly can trust that "this generation looks different from its neighbours" reflects the actual data, not an artifact of how the number was measured.
+
+**Run** — against a disposable client with a real, non-trivial repository (large enough that an order-of-magnitude error would be obvious, e.g. a few hundred MB of actual `borg create` data, not an empty or near-empty repository):
+
+```bash
+./snapshots/70-create-snapshot.sh
+GEN=$(ls -d "${SNAPSHOT_BASE}"/OWN/<client>/*/ | tail -1)
+sudo du -sh "$GEN"                          # ground truth
+./snapshots/75-list-snapshots.sh <client>   # what the operator actually sees
+```
+
+**Pass** — the size `75-` prints for that generation matches the `sudo du -sh` ground truth (same figure, since `75-` uses the identical `du -sh` invocation internally).
+
+**Fail** — `75-`'s reported size is far smaller than the `sudo du -sh` ground truth — in particular, a flat, near-empty-looking size (tens of KB) regardless of how much real data the generation actually holds. That is issue #35's exact failure mode: Borg creates its own `data/` subdirectory inside a repository at mode 700, owned by the mapped subuid, unlike the mode-755 generation directory around it (`scripts/lib.sh`'s `repo_dir_create`) that `75-`'s original "no sudo needed" design reasoned from. An unprivileged `du` cannot descend into `data/` and silently reports only the always-readable top-level metadata files (`README`, `config`, `hints.N`, `index.N`, `integrity.N`, `nonce`) — a few tens of KB — never the segment data, without surfacing the underlying `Permission denied` to the operator at all.
+
+**Negative test** — measured directly against `FCOS-BorgBackupServer`, both readings, from the same investigation that produced issue #35:
+
+Failing direction (2026-08-29, before the fix): a disposable client's ~501 MiB repository (populated with `borg create` from 500 MiB of `/dev/urandom`) was snapshotted, then read two ways on the same generation directory:
+
+```
+$ du -sh .../20260829T054442Z            # 75-'s own (then-unprivileged) invocation
+64K     .../20260829T054442Z
+du: cannot read directory '.../20260829T054442Z/data': Permission denied
+
+$ sudo du -sh .../20260829T054442Z       # ground truth
+501M    .../20260829T054442Z
+```
+
+`75-list-snapshots.sh` itself, run the normal way, printed exactly the wrong figure: `64K`.
+
+Passing direction (2026-08-29, after the fix — `75-` now runs `du` via `sudo`, see [Snapshots](SNAPSHOTS.md) §5/§8): the identical reproduction — fresh disposable client, fresh ~501 MiB repository, one snapshot — with `75-list-snapshots.sh` run the normal, unprivileged way:
+
+```
+$ ./snapshots/75-list-snapshots.sh snap-demo01
+20260829T062523Z     501M
+
+1 generation(s) listed for client 'snap-demo01'.
+```
+
+matching `sudo du -sh` ground truth on the same generation. `76-delete-snapshots.sh` (which calls `75-` internally to show scope before deleting) was exercised against both repositories in the same session and worked correctly throughout — this check is specifically about the number shown, not about whether listing itself functions.
+
+**What this does not show** — anomaly *interpretation*: deciding whether a size difference between two generations is suspicious remains the operator's judgement, by design (docs/SNAPSHOTS.md: "die Interpretation obliegt dem Operator"). This check only establishes that the number itself can be trusted.
+
 ---
 
 ## Summary checklist
@@ -2068,8 +2169,10 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 | 11C | Deletion refuses a path outside `SNAPSHOT_BASE` | ✅ | ☐ |
 | 11D | The snapshot tree matches the declared structure | ⚠️ | ☐ |
 | 11E | The snapshot → restore loop round-trips a client's data | ⚠️ | ☐ |
+| 11F | Repeated snapshot/delete/restore cycles add no additional disk usage | ✅ | ☐ |
+| 11G | `75-list-snapshots.sh` reports the generation's real size | ✅ | ☐ |
 
-Twenty-six ✅, one `(✅)` and four ⚠️ out of thirty-one. 0A is the sole
+Twenty-eight ✅, one `(✅)` and four ⚠️ out of thirty-three. 0A is the sole
 capped exception, at `(✅)` rather than plain ✅, because its counter-example
 cannot be produced at all — not because nobody has tried (see "How to read a
 test"). 3C, 3D, 11D and 11E are the four ⚠️: their procedures follow from
