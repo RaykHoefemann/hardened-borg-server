@@ -235,7 +235,6 @@ assert "0.6 the Quadlet hands container output to systemd rather than journallin
 RC=0
 doc_ini() { awk '/^```ini$/{f=1;next} f&&/^```$/{exit} f' "$ROOT/docs/DEPLOYMENT.md" | grep -vE '^[[:space:]]*(#|$)'; }
 file_ini() { grep -vE '^[[:space:]]*(#|$)' "$UNIT"; }
-MISMATCH=""
 doc_ini | while IFS= read -r l; do grep -qxF -- "$l" "$UNIT" || echo "doc line not in file: $l"; done > "$WORK/m1"
 file_ini | while IFS= read -r l; do doc_ini | grep -qxF -- "$l" || echo "file line not in doc: $l"; done > "$WORK/m2"
 OUT="$(cat "$WORK/m1" "$WORK/m2")"
