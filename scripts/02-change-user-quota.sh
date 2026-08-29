@@ -121,23 +121,14 @@ quota_reject_oversized "$QUOTA" "$WANT_KIB" "$VOLUME_KIB" || {
     exit 1
 }
 
-# check if user exists and read its current entry (username:group:repo:quota)
+# check if user exists and read its current entry (username:repo:quota)
 ENTRY=$(grep "^${USERNAME}:" "$CONF" 2>/dev/null) || {
     echo "ERROR: user '$USERNAME' does not exist in clients.conf!"
     exit 1
 }
-GROUP=$(echo "$ENTRY" | cut -d: -f2)
-OLD_QUOTA=$(echo "$ENTRY" | cut -d: -f4)
+OLD_QUOTA=$(echo "$ENTRY" | cut -d: -f3)
 
-# defensive: clients.conf is self-authored, but a malformed/manually-edited
-# line should not silently produce a bogus path.
-if [ "$GROUP" != "OWN" ] && [ "$GROUP" != "MIRROR" ]; then
-    echo "ERROR: clients.conf entry for '$USERNAME' has invalid group '$GROUP'."
-    echo "Expected OWN or MIRROR — needs manual review."
-    exit 1
-fi
-
-HOST_REPO="${HOST_REPO_BASE}/${GROUP}/${USERNAME}"
+HOST_REPO="${HOST_REPO_BASE}/${USERNAME}"
 
 if [ ! -d "$HOST_REPO" ]; then
     echo "ERROR: repository directory '$HOST_REPO' not found on host."
@@ -249,13 +240,13 @@ if ! quota_verify "$HOST_REPO" "$QUOTA"; then
     exit 1
 fi
 
-# rewrite clients.conf, changing only the quota field (4) of the matching user.
+# rewrite clients.conf, changing only the quota field (3) of the matching user.
 # awk with -F:/OFS=: preserves all other fields verbatim, including the repo
 # path (which contains '/'). Written to a temp file and moved into place so the
 # update is atomic and never leaves clients.conf half-written.
 TMP="${CONF}.tmp"
 awk -F: -v OFS=: -v u="$USERNAME" -v q="$QUOTA" '
-    $1 == u { $4 = q }
+    $1 == u { $3 = q }
     { print }
 ' "$CONF" > "$TMP"
 mv "$TMP" "$CONF"

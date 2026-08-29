@@ -4,7 +4,7 @@
 # ---------------------
 # Creates a new Borg client:
 #  - Repository directory on the HOST (bind-mounted into the container as
-#    CONTAINER_REPO, e.g. /repo/OWN/<user> -> $HOST_REPO_BASE/OWN/<user>)
+#    CONTAINER_REPO, e.g. /repo/<user> -> $HOST_REPO_BASE/<user>)
 #  - XFS project quota assigned to that directory and set to the given quota
 #    (see README Chapter 1.1.3 / BEST_PRACTICES.md Chapter 1 — enforcing
 #    prjquota is a mandatory host requirement; this script requires it).
@@ -14,11 +14,12 @@
 #  - Empty public key file in config/keys/
 #
 # Usage:
-#   ./scripts/00-ssh-create-user.sh <username> <group> <quota>
+#   ./scripts/00-ssh-create-user.sh <username> <quota>
 #
-# Groups:
-#   OWN     internal users from own network
-#   MIRROR  external users (e.g. friends)
+# There is no group argument. Separating trust levels (your own devices vs.
+# external partners) is done by running a second instance of this project,
+# which is a real isolation boundary — see docs/DESIGN.md 1.2.3. The OWN/MIRROR
+# group that used to sit here was organisational only and was removed in 1.0.0.
 #
 # Quota:
 #   Format: <number>G (e.g. 10G, 50G, 200G)
@@ -44,16 +45,14 @@ set -e
 #load setup for all scripts
 . "$(dirname "$0")/config.sh"
 
-if [ $# -ne 3 ]; then
-    echo "Usage: $0 <username> <group> <quota>"
-    echo "Group: OWN | MIRROR"
+if [ $# -ne 2 ]; then
+    echo "Usage: $0 <username> <quota>"
     echo "Quota format: <number>G (e.g. 50G)"
     exit 1
 fi
 
 USERNAME="$1"
-GROUP="$2"
-QUOTA="$3"
+QUOTA="$2"
 
 if [ -z "${HOST_REPO_BASE:-}" ]; then
     echo "ERROR: HOST_REPO_BASE is not set in config.sh."
@@ -136,13 +135,6 @@ case "$USERNAME" in
     ''|-*|*[!a-zA-Z0-9_-]*) echo "ERROR: Invalid username '$USERNAME' (must be non-empty, must not start with '-', only a-z, 0-9, _, - allowed)"; exit 1 ;;
 esac
 
-# validate group
-if [ "$GROUP" != "OWN" ] && [ "$GROUP" != "MIRROR" ]; then
-    echo "ERROR: unknown group '$GROUP'"
-    echo "required: OWN | MIRROR"
-    exit 1
-fi
-
 # validate quota (mandatory, format: <digits>G, e.g. 50G)
 case "$QUOTA" in
     *[!0-9G]*|"")
@@ -163,9 +155,8 @@ case "$NUMPART" in
 esac
 
 # autogenerate repo paths (container view + host view)
-REPO_SUBPATH="${GROUP}/${USERNAME}"
-CONTAINER_REPO="${CONTAINER_REPO_BASE}/${REPO_SUBPATH}"
-HOST_REPO="${HOST_REPO_BASE}/${REPO_SUBPATH}"
+CONTAINER_REPO="${CONTAINER_REPO_BASE}/${USERNAME}"
+HOST_REPO="${HOST_REPO_BASE}/${USERNAME}"
 
 # check if user exists
 if grep -q "^${USERNAME}:" "$CONF"; then
@@ -257,7 +248,7 @@ if ! quota_verify "$HOST_REPO" "$QUOTA"; then
 fi
 
 echo "[create] Create entry in clients.conf"
-echo "${USERNAME}:${GROUP}:${CONTAINER_REPO}:${QUOTA}" >> "$CONF"
+echo "${USERNAME}:${CONTAINER_REPO}:${QUOTA}" >> "$CONF"
 
 echo "[create] Create empty public key file"
 mkdir -p "$KEYDIR"

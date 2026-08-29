@@ -46,8 +46,8 @@
 # format — which is the normal state of every installation whose container was
 # started before its first client existed, i.e. the documented order in
 # SERVERINSTALL.md. Reading the file without this filter parses that header as
-# client data: the format legend becomes a group, the example line becomes a
-# client, and a line count becomes the client total.
+# client data: the example line becomes a client, and a line count becomes the
+# client total.
 #
 # Matches the container's own parser (build_authorized_keys.sh) and the count
 # VERIFICATION.md test 3 performs by hand, so all three agree on who exists.
@@ -251,10 +251,10 @@ quota_committed() {
     _qc_sum=0
     _qc_n=0
     _qc_unbounded=0
-    while IFS=: read -r _qc_user _qc_group _qc_repo _qc_quota; do
+    while IFS=: read -r _qc_user _qc_repo _qc_quota; do
         [ -n "$_qc_user" ] || continue
         [ "$_qc_user" = "$_qc_skip" ] && continue
-        _qc_dir="${HOST_REPO_BASE%/}/${_qc_group}/${_qc_user}"
+        _qc_dir="${HOST_REPO_BASE%/}/${_qc_user}"
         [ -d "$_qc_dir" ] || continue
         _qc_kib=$(quota_enforced_kib "$_qc_dir")
         case "$_qc_kib" in ''|*[!0-9]*) continue ;; esac
@@ -752,7 +752,7 @@ repo_projid() {
 repo_projid_next() {
     _rpn_skip="${1:-}"
     _rpn_max=$((${PROJID_BASE:-1000} - 1))
-    for _rpn_d in "$HOST_REPO_BASE"/*/*; do
+    for _rpn_d in "$HOST_REPO_BASE"/*; do
         [ -d "$_rpn_d" ] || continue
         [ "$_rpn_d" = "$_rpn_skip" ] && continue
         _rpn_id=$(lsattr -p -d "$_rpn_d" 2>/dev/null | awk '{print $1}')

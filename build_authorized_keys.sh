@@ -3,7 +3,7 @@
 # build_authorized_keys.sh
 # ------------------------
 # create the file /home/borg/.ssh/authorized_keys based on:
-#   /config/clients.conf (Format: name:group:repo:quota)
+#   /config/clients.conf (Format: name:repo:quota)
 #   /config/keys/<name>.pub (public ssh-key from user)
 #
 # Also renders one info text per client under /run/borg-info/, containing
@@ -26,7 +26,7 @@ TMPOUT="${OUT}.tmp"
 SERVER_INFO="/config/server_info.conf"
 
 # Where each client's info text is rendered, one file per client, mirroring its
-# repository path: /repo/OWN/clientA -> /run/borg-info/repo/OWN/clientA.txt.
+# repository path: /repo/clientA -> /run/borg-info/repo/clientA.txt.
 #
 # Under /run rather than in the repository itself, and that is not cosmetic:
 # `borg init` refuses to initialize a directory that is not empty, so the
@@ -88,13 +88,13 @@ if [ ! -f "$CONF" ]; then
     cat > "$CONF" <<'EOF'
 # Client roster — one line per client:
 #
-#   name:group:repo:quota
+#   name:repo:quota
 #
-# e.g.  user1-os1-pc1:OWN:/repo/OWN/user1-os1-pc1:50G
+# e.g.  user1-os1-pc1:/repo/user1-os1-pc1:50G
 #
-# group is OWN (your own devices) or MIRROR (external partners); quota is
-# mandatory and has the form <digits>G. Written by scripts/00-ssh-create-user.sh
-# — there is normally no reason to edit this file by hand.
+# repo is always /repo/<name>; quota is mandatory and has the form <digits>G.
+# Written by scripts/00-ssh-create-user.sh — there is normally no reason to
+# edit this file by hand.
 EOF
 fi
 
@@ -138,7 +138,12 @@ count=0
 written_info=()
 
 # read each line from clients.conf
-while IFS=":" read -r name group repo quota; do
+#
+# Format is name:repo:quota (three fields). The <group> field that used to sit
+# between name and repo was removed in 1.0.0 — see docs/DESIGN.md 1.2.3: it was
+# organisational only, never a security boundary, and separating trust levels
+# is now "run a second instance", which is a real boundary.
+while IFS=":" read -r name repo quota; do
     [ -z "$name" ] && continue
     case "$name" in
         \#*) continue ;;
@@ -151,15 +156,11 @@ while IFS=":" read -r name group repo quota; do
         continue
     fi
 
-    # Validate group (same rule)
-    if ! echo "$group" | grep -qE '^[a-zA-Z0-9_][a-zA-Z0-9_-]*$'; then
-        log "[ERROR] Invalid group '$group' for '$name' – skipping"
-        continue
-    fi
-
     # Validate repo path (used in forced command). Each '/'-separated segment
     # must start with an alphanumeric or underscore, so no segment can be
-    # read as an option.
+    # read as an option. It must be exactly /repo/<name> (DESIGN 1.2.3) — the
+    # charset check below is the security-relevant half; the structure is
+    # enforced by the provisioning scripts and checked by VERIFICATION 3C/3D.
     if ! echo "$repo" | grep -qE '^(/[a-zA-Z0-9_][a-zA-Z0-9_-]*)+$'; then
         log "[ERROR] Invalid repo path for '$name': '$repo' – skipping"
         continue

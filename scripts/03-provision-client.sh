@@ -99,17 +99,10 @@ esac
 ENTRY=$(grep "^${USERNAME}:" "$CONF" 2>/dev/null) || {
     echo "ERROR: user '$USERNAME' does not exist in clients.conf."
     echo "This script provisions a client that is already declared. To create one,"
-    echo "use ./scripts/00-ssh-create-user.sh <username> <group> <quota>."
+    echo "use ./scripts/00-ssh-create-user.sh <username> <quota>."
     exit 1
 }
-GROUP=$(echo "$ENTRY" | cut -d: -f2)
-QUOTA=$(echo "$ENTRY" | cut -d: -f4)
-
-if [ "$GROUP" != "OWN" ] && [ "$GROUP" != "MIRROR" ]; then
-    echo "ERROR: clients.conf entry for '$USERNAME' has invalid group '$GROUP'."
-    echo "Expected OWN or MIRROR — needs manual review."
-    exit 1
-fi
+QUOTA=$(echo "$ENTRY" | cut -d: -f3)
 
 case "$QUOTA" in
     *[!0-9G]*|""|*[!G])
@@ -119,7 +112,7 @@ case "$QUOTA" in
         ;;
 esac
 
-HOST_REPO="${HOST_REPO_BASE}/${GROUP}/${USERNAME}"
+HOST_REPO="${HOST_REPO_BASE}/${USERNAME}"
 
 VOLUME_KIB=$(volume_kib)
 case "$VOLUME_KIB" in
@@ -164,7 +157,7 @@ else
     PROJID=$(repo_projid "$HOST_REPO") || NEED_PROJID=1
 fi
 
-echo "[provision] Client:      $USERNAME ($GROUP)"
+echo "[provision] Client:      $USERNAME"
 echo "[provision] Directory:   $HOST_REPO"
 if [ -n "$NEED_DIR" ]; then
     echo "[provision] State:       MISSING on host — the directory does not exist"
@@ -174,23 +167,6 @@ else
     echo "[provision] State:       directory and project id $PROJID are in place"
 fi
 echo "[provision] clients.conf: $QUOTA"
-
-# The group directory, reported rather than corrected. 00-ssh-create-user.sh
-# creates it as a side effect of `podman unshare mkdir -p` and leaves it owned
-# by namespace root; a copy owned by 'borg' is the fingerprint of a release in
-# which borg-wrapper.sh still created directories it could not finish. It is
-# inert now — nothing in the container creates directories any more — but it is
-# worth seeing.
-GROUP_DIR="${HOST_REPO_BASE}/${GROUP}"
-if [ -d "$GROUP_DIR" ]; then
-    GROUP_NS_UID="$(podman unshare stat -c %u "$GROUP_DIR" 2>/dev/null || true)"
-    if [ -n "$GROUP_NS_UID" ] && [ "$GROUP_NS_UID" != "0" ]; then
-        echo "[provision] NOTE: the group directory '$GROUP_DIR' belongs to uid"
-        echo "         $GROUP_NS_UID inside the container namespace rather than to root."
-        echo "         Left as it is: this script adds what is missing and changes"
-        echo "         nothing else. See OPERATIONS.md chapter 9.12."
-    fi
-fi
 
 # Nothing to do is a result, not a failure. Whether the recorded limit is the
 # one in force is 02's question, and it is asked here only to say which script

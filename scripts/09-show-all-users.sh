@@ -2,9 +2,9 @@
 #
 # 09-show-all-users.sh
 # -----------------
-# Overview of all configured Borg clients, grouped by group (OWN/MIRROR),
-# showing each user's configured quota, the quota actually ENFORCED for it,
-# and live storage usage.
+# Overview of all configured Borg clients — one flat table — showing each
+# user's configured quota, the quota actually ENFORCED for it, and live
+# storage usage.
 #
 # Both the enforced limit and the live usage are read the same way the
 # container's own 'info' SSH command does (see README Chapter 7): directly
@@ -39,7 +39,7 @@ fi
 # Read the roster once, through the shared filter (config.sh: clients_lines),
 # and work from that everywhere below. Reading "$CONF" directly is what made
 # this script report the format header the container writes into a fresh
-# clients.conf as two clients and a phantom group.
+# clients.conf as a phantom client.
 #
 # "Empty" is decided on client lines, not file size: a clients.conf that holds
 # only that header is not an empty file, but it does describe no clients.
@@ -83,7 +83,7 @@ UNREADABLE_MARKER="${DRIFT_DIR}/unreadable"
 # "<quota>|<% of volume>|<configured>|<used>". Short markers stand in for any
 # of them that cannot be determined.
 report_for() {
-    grp="$1"; user="$2"; want="$3"
+    user="$1"; want="$2"
     if [ -z "${HOST_REPO_BASE:-}" ]; then
         # Marked like the two states below — nothing here is measurable, which
         # is something being wrong rather than something being absent. No hint
@@ -93,7 +93,7 @@ report_for() {
         echo "n/a (!)|n/a|${want}|n/a (HOST_REPO_BASE not set)"
         return
     fi
-    d="${HOST_REPO_BASE}/${grp}/${user}"
+    d="${HOST_REPO_BASE}/${user}"
     if [ ! -d "$d" ]; then
         # Marked, because this is the state OPERATIONS Chapter 9.5 describes a
         # (!) as meaning: intention and reality disagree for this client.
@@ -131,10 +131,10 @@ report_for() {
     # Marked, for the same reason as MISSING above but on a weaker claim. The
     # directory is there — `-d` passed — and df still reported nothing for it.
     # statfs() needs search permission on every parent, not on the target, so
-    # this is a group directory or HOST_REPO_BASE the operator can no longer
-    # traverse, or a volume that is no longer mounted. Where MISSING says "this
-    # client is broken", this says "nothing is known about this client", and a
-    # check that reads these columns must not call that a pass either.
+    # this is HOST_REPO_BASE the operator can no longer traverse, or a volume
+    # that is no longer mounted. Where MISSING says "this client is broken",
+    # this says "nothing is known about this client", and a check that reads
+    # these columns must not call that a pass either.
     case "$size_kib" in
         ''|*[!0-9]*)
             : > "$UNREADABLE_MARKER"
@@ -156,31 +156,21 @@ report_for() {
     echo "$row"
 }
 
-# Distinct groups, in the order they first appear in clients.conf.
-#
-# NOT named GROUPS: in bash that is a built-in array holding the current
-# user's group IDs, and assignments to it are silently ignored. This script
-# runs under /bin/sh, which is dash on Debian/Ubuntu (where the assignment
-# would work) but bash on Fedora CoreOS — the platform this project requires.
-# There, the loop would have iterated over the operator's numeric group IDs
-# and listed no clients at all.
-CLIENT_GROUPS=$(printf '%s\n' "$ROSTER" | awk -F: '{print $2}' | awk '!seen[$0]++')
-
-for GROUP in $CLIENT_GROUPS; do
-    echo "=== ${GROUP} ==="
-    printf '%-24s %-12s %-9s %-12s %s\n' \
-        "USERNAME" "QUOTA" "% OF VOL" "CONFIGURED" "USED"
-    printf '%s\n' "$ROSTER" | awk -F: -v g="$GROUP" '$2==g {print $1, $4}' | sort | \
-    while read -r USERNAME QUOTA; do
-        [ -n "$USERNAME" ] || continue
-        IFS='|' read -r C_QUOTA C_PCT C_CONF C_USED <<EOF
-$(report_for "$GROUP" "$USERNAME" "$QUOTA")
+# One flat table of every client. Groups were removed in 1.0.0 (DESIGN 1.2.3);
+# separating trust levels is now a second instance of this project, each with
+# its own 09-show-all-users.sh.
+printf '%-24s %-12s %-9s %-12s %s\n' \
+    "USERNAME" "QUOTA" "% OF VOL" "CONFIGURED" "USED"
+printf '%s\n' "$ROSTER" | awk -F: '{print $1, $3}' | sort | \
+while read -r USERNAME QUOTA; do
+    [ -n "$USERNAME" ] || continue
+    IFS='|' read -r C_QUOTA C_PCT C_CONF C_USED <<EOF
+$(report_for "$USERNAME" "$QUOTA")
 EOF
-        printf '%-24s %-12s %-9s %-12s %s\n' \
-            "$USERNAME" "$C_QUOTA" "$C_PCT" "$C_CONF" "$C_USED"
-    done
-    echo ""
+    printf '%-24s %-12s %-9s %-12s %s\n' \
+        "$USERNAME" "$C_QUOTA" "$C_PCT" "$C_CONF" "$C_USED"
 done
+echo ""
 
 # Printed before the drift hint: a client that cannot connect at all outranks
 # one that connects under the wrong limit.
@@ -211,7 +201,7 @@ if [ -e "$UNREADABLE_MARKER" ]; then
     echo "(!) At least one client's quota could not be read. Its repository"
     echo "    directory exists, but df reported nothing for it — usually a"
     echo "    directory in the path that can no longer be traversed, or a storage"
-    echo "    volume that is no longer mounted. Check the group directories under"
+    echo "    volume that is no longer mounted. Check the permissions on"
     echo ""
     echo "        ${HOST_REPO_BASE%/}"
     echo ""

@@ -57,7 +57,7 @@ fi
 
 # This client's info text, rendered at container start by
 # build_authorized_keys.sh and mirroring the repo path under /run:
-#   /repo/OWN/clientA -> /run/borg-info/repo/OWN/clientA.txt
+#   /repo/clientA -> /run/borg-info/repo/clientA.txt
 # Derived from $REPO, which the check above has already constrained to
 # [a-zA-Z0-9/_-], so no client-controlled string reaches this path.
 #
@@ -118,9 +118,8 @@ esac
 #
 # A plain `mkdir -p "$REPO"` used to stand in Case 1 below, where it was a no-op
 # for every client 00-ssh-create-user.sh had provisioned — the directory was
-# already there. It did something only when it should not have: after the
-# group directory (/repo/OWN, /repo/MIRROR) had been deleted, where its parent
-# /repo belongs to 'borg' and the mkdir therefore succeeded, silently producing
+# already there. It did something only when it should not have: with the parent
+# /repo belonging to 'borg', a mkdir under it succeeded and silently produced
 # exactly the unquotaed client described above.
 #
 # Refusing is the safe direction and the honest one: the state is reported by

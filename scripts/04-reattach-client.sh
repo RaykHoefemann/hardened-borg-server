@@ -22,9 +22,9 @@
 # the tool that reads it back rather than requiring it to be typed in by
 # hand.
 #
-# WHAT IT MAY DO. It reads the group, the XFS project id and the quota
-# currently enforced from the filesystem, and from those alone writes one
-# line to clients.conf and (unless one is already there) one empty key file
+# WHAT IT MAY DO. It reads the XFS project id and the quota currently enforced
+# from the filesystem, and from those alone writes one line to clients.conf
+# and (unless one is already there) one empty key file
 # -- nothing it did not already find on disk. It never assigns a project id
 # and never applies a limit, so unlike 00 and 03 it needs no `podman unshare`
 # and no mutating `sudo xfs_quota` call -- only the same read-only
@@ -122,43 +122,24 @@ if grep -q "^${USERNAME}:" "$CONF"; then
     exit 1
 fi
 
-# The client's group: scanned from the filesystem, the same discovery
-# 77-restore-last-snapshot.sh uses (snapshots/77-restore-last-snapshot.sh) --
-# clients.conf cannot be consulted here, it is exactly what is missing.
-GROUP=""
-for D in "${HOST_REPO_BASE}"/*/"${USERNAME}"; do
-    [ -d "$D" ] || continue
-    if [ -n "$GROUP" ]; then
-        echo "ERROR: '$USERNAME' has a repository directory under more than one"
-        echo "       group ('$GROUP' and '$(basename "$(dirname "$D")")') --"
-        echo "       refusing to guess which one is the real one. Needs manual review."
-        exit 1
-    fi
-    GROUP="$(basename "$(dirname "$D")")"
-done
-
-if [ -z "$GROUP" ]; then
-    echo "ERROR: no repository directory found for '$USERNAME' under $HOST_REPO_BASE."
+# The client's repository directory, straight under HOST_REPO_BASE -- the same
+# flat layout 77-restore-last-snapshot.sh scans. clients.conf cannot be
+# consulted here, it is exactly what is missing.
+HOST_REPO="${HOST_REPO_BASE}/${USERNAME}"
+if [ ! -d "$HOST_REPO" ]; then
+    echo "ERROR: no repository directory found for '$USERNAME' at $HOST_REPO."
     echo "This script reattaches clients.conf to an existing repository -- it does"
     echo "NOT create one. For a client that does not exist on disk either, use"
-    echo "./scripts/00-ssh-create-user.sh <username> <group> <quota>."
+    echo "./scripts/00-ssh-create-user.sh <username> <quota>."
     exit 1
 fi
-
-if [ "$GROUP" != "OWN" ] && [ "$GROUP" != "MIRROR" ]; then
-    echo "ERROR: '$USERNAME' sits under group directory '$GROUP', which is neither"
-    echo "OWN nor MIRROR. Needs manual review."
-    exit 1
-fi
-
-HOST_REPO="${HOST_REPO_BASE}/${GROUP}/${USERNAME}"
 
 if [ -z "${CONTAINER_REPO_BASE:-}" ]; then
     echo "ERROR: CONTAINER_REPO_BASE is not set in config.sh."
     exit 1
 fi
 CONTAINER_REPO_BASE="${CONTAINER_REPO_BASE%/}"
-CONTAINER_REPO="${CONTAINER_REPO_BASE}/${GROUP}/${USERNAME}"
+CONTAINER_REPO="${CONTAINER_REPO_BASE}/${USERNAME}"
 
 # Enforcement must genuinely be ON before anything read from this directory
 # is trusted -- the same precondition 00/02/03 check before relying on
@@ -221,7 +202,7 @@ case $((QUOTA_KIB % 1048576)) in
 esac
 QUOTA="$((QUOTA_KIB / 1048576))G"
 
-echo "[reattach] Client:      $USERNAME ($GROUP)"
+echo "[reattach] Client:      $USERNAME"
 echo "[reattach] Directory:   $HOST_REPO"
 echo "[reattach] Project id $PROJID, enforced limit $(quota_human "$QUOTA_KIB") -- reattaching as $QUOTA"
 echo ""
@@ -233,7 +214,7 @@ if ! quota_confirm "Reattach client '$USERNAME' to clients.conf with this quota?
 fi
 
 echo "[reattach] Create entry in clients.conf"
-echo "${USERNAME}:${GROUP}:${CONTAINER_REPO}:${QUOTA}" >> "$CONF"
+echo "${USERNAME}:${CONTAINER_REPO}:${QUOTA}" >> "$CONF"
 
 mkdir -p "$KEYDIR"
 KEYFILE="${KEYDIR}/${USERNAME}.pub"
