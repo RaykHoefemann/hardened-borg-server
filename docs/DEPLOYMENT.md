@@ -46,6 +46,8 @@ podman run \
   ghcr.io/raykhoefemann/hardened-borg-server:latest
 ```
 
+`/config` must already be populated before this will start: at minimum it needs `server_info.conf` (the one file that ships in the repo's `config/` and is never generated), or the container aborts on start rather than coming up. Provisioning `/config` and the first client is [Server Installation](SERVERINSTALL.md); this snippet is the run command that step assumes, not a way around it.
+
 Useful for testing, but the container does not survive a reboot or a logout, and there is no automatic restart on failure.
 
 > **Verify the image before you trust it.** Every published image carries a Sigstore build-provenance attestation tying its digest to the commit and workflow that produced it, so you can confirm it was built from this repository rather than merely named after it. For anything beyond a throwaway test, verify it and then pin the resulting digest in `scripts/config.sh` instead of a mutable tag — see [Verification](VERIFICATION.md), Test 0.

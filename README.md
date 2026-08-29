@@ -98,29 +98,23 @@ directly from the internet. See [`BEST_PRACTICES.md`](docs/BEST_PRACTICES.md).
 
 ---
 
-## Quickstart (container test)
+## Getting started
 
-```bash
-podman run \
-  --name=hardened-borg-server \
-  --rm \
-  --publish=2222:22 \
-  --volume=$HOME/containers/borg-server/config:/config:Z \
-  --volume=$HOME/containers/borg-server/repo:/repo:Z \
-  --volume=$HOME/containers/borg-server/log:/log:Z \
-  ghcr.io/raykhoefemann/hardened-borg-server:latest
-```
-
-This is fine for testing, but does **not** survive reboot/logout and has no
-automatic restart. For production, run it as a rootless systemd **user** service
-— see [Deployment](docs/DEPLOYMENT.md).
+There is no meaningful one-line `podman run`. The image needs a populated
+`/config` — at minimum `server_info.conf`, which ships in the repo — or it
+exits on start, and clients are provisioned by the host scripts rather than
+baked into a run command. What a real setup involves — the mandatory host
+stack, the config, the first client, and the rootless systemd **user** service
+that keeps it running across reboot — is [Server Installation](docs/SERVERINSTALL.md),
+end to end. [Deployment](docs/DEPLOYMENT.md) covers the architecture, the
+`podman run` shape, and upgrading or rolling back.
 
 > **Before running it anywhere you care about,** verify that the image was
 > actually built from this repository — it carries a build provenance
-> attestation for exactly that purpose. One command, and it is the check every
-> other guarantee rests on: [Verification](docs/VERIFICATION.md), Test 0. The
-> tag above is fine for the throwaway run; a real installation pins the digest
-> that check reports, which is what [Server Installation](docs/SERVERINSTALL.md)
+> attestation for exactly that purpose, and checking it needs no container run.
+> One command, and it is the check every other guarantee rests on:
+> [Verification](docs/VERIFICATION.md), Test 0. A real installation then pins
+> the digest that check reports, which is what [Server Installation](docs/SERVERINSTALL.md)
 > step 3 does.
 
 ---
