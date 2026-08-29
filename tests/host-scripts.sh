@@ -197,9 +197,9 @@ fi
 # are syntactically valid and the value is the permitted one. The failure only
 # exists at process-spawn time, which no offline check reaches.
 
-UNIT="$ROOT/systemd/container.service"
+UNIT="$ROOT/systemd/borg-server.container"
 RC=0; OUT="not found: $UNIT"
-[ -f "$UNIT" ]; assert "0.3 the systemd unit template exists" $?
+[ -f "$UNIT" ]; assert "0.3 the Quadlet source file exists" $?
 
 n=4
 for f in "$UNIT" "$ROOT/docs/DEPLOYMENT.md"; do
@@ -207,7 +207,9 @@ for f in "$UNIT" "$ROOT/docs/DEPLOYMENT.md"; do
     # inside the assert's description would run it during argument expansion,
     # i.e. after the [ ... ] below but before $? is read — so the assertion
     # would record basename's exit status instead of the test's and pass
-    # unconditionally.
+    # unconditionally. Quadlet passes User=/Group= straight through to the
+    # generated unit, so the status=216/GROUP trap is unchanged and this check
+    # still matters.
     base="$(basename "$f")"
     RC=0
     OUT="$(grep -nE '^(User|Group)=' "$f" 2>/dev/null)"
@@ -216,24 +218,29 @@ for f in "$UNIT" "$ROOT/docs/DEPLOYMENT.md"; do
     n=$((n + 1))
 done
 
-# podman runs in the foreground under this unit, so systemd already captures
-# its output. Without passthrough, podman's default journald driver logs the
-# container a second time under the same unit — every line present twice for
-# anyone reading the journal, a failed start included.
+# podman runs in the foreground under the generated service, so systemd already
+# captures its output. Without passthrough, podman's default journald driver
+# logs the container a second time under the same unit.
 RC=0
-OUT="$(grep -A6 '^ExecStart=' "$UNIT")"
-grep -q -- '--log-driver=passthrough' "$UNIT"
-assert "0.6 the unit hands container output to systemd rather than journalling it twice" $?
+grep -qx 'LogDriver=passthrough' "$UNIT"
+assert "0.6 the Quadlet hands container output to systemd rather than journalling it twice" $?
 
-# DEPLOYMENT.md 6.2 presents the unit as the file's contents, so a reader can
-# reintroduce anything the two copies disagree about by following the document
-# — which is why the User=/Group= check above already covers both. Comparing
-# them outright is the general form of that: whatever the template says, the
-# documented copy says the same.
+# DEPLOYMENT.md 6.2 quotes the checked-in .container, so a reader can weaken the
+# unit — or reintroduce something it dropped — by following the document. The
+# comparison is line-level rather than byte-level because the doc elides the
+# file's comment block: every non-comment, non-blank line of the doc's first
+# ```ini``` block must appear verbatim in the file, and every non-comment line
+# of the file must appear in the doc. The hardening keys are covered
+# transitively — they are non-comment lines in both.
 RC=0
-OUT="$(diff <(awk '/^```ini$/{f=1;next} f&&/^```$/{exit} f' "$ROOT/docs/DEPLOYMENT.md") "$UNIT")"
+doc_ini() { awk '/^```ini$/{f=1;next} f&&/^```$/{exit} f' "$ROOT/docs/DEPLOYMENT.md" | grep -vE '^[[:space:]]*(#|$)'; }
+file_ini() { grep -vE '^[[:space:]]*(#|$)' "$UNIT"; }
+MISMATCH=""
+doc_ini | while IFS= read -r l; do grep -qxF -- "$l" "$UNIT" || echo "doc line not in file: $l"; done > "$WORK/m1"
+file_ini | while IFS= read -r l; do doc_ini | grep -qxF -- "$l" || echo "file line not in doc: $l"; done > "$WORK/m2"
+OUT="$(cat "$WORK/m1" "$WORK/m2")"
 [ -z "$OUT" ]
-assert "0.7 the unit quoted in DEPLOYMENT.md is identical to the template" $?
+assert "0.7 the .container quoted in DEPLOYMENT.md matches the file line for line" $?
 
 # --- the image's SSH daemon configuration ---------------------------------
 #
@@ -1350,16 +1357,17 @@ assert "12.15 the preview and the listing report one volume the same way" "$DISK
 
 setup_install() {
     new_tree
-    mkdir -p "$T/systemd"
-    cp "$ROOT/systemd/container.service" "$T/systemd/"
+    mkdir -p "$T/systemd" "$T/home"
+    cp "$ROOT/systemd/borg-server.container" "$T/systemd/"
     sed -i "s|^HOST_REPO_BASE=.*|HOST_REPO_BASE=\"$1\"|" "$T/config.sh"
+    QDIR="$T/home/.config/containers/systemd"
 }
 
 # The parent is not a mount point: the volume is probably not mounted, and
 # creating the directory would put repositories on the root filesystem.
 setup_install "$WORK/notmounted/repo"
 mkdir -p "$WORK/notmounted"
-run sh "$T/scripts/50-service-install.sh"
+run env HOME="$T/home" sh "$T/scripts/50-service-install.sh"
 [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'does not exist'
 assert "13.1 a missing HOST_REPO_BASE aborts the install" $?
 
@@ -1367,15 +1375,14 @@ printf '%s' "$OUT" | grep -q 'not a mount point' \
     && printf '%s' "$OUT" | grep -q 'Do NOT create the directory'
 assert "13.2 ... and an unmounted volume is named as the likely cause" $?
 
-[ ! -e "$T/systemd/container_borg-server.service.env" ] \
-    && [ ! -e "$T/systemd/container_borg-server.service.rendered" ]
-assert "13.3 ... before the unit or its EnvironmentFile is written" $?
+[ ! -e "$QDIR/borg-server.container" ] && [ ! -e "$QDIR/borg-server.container.d" ]
+assert "13.3 ... before the Quadlet or its drop-in is installed" $?
 
 # The parent IS a mount point: the volume looks mounted and only the
 # subdirectory is missing, which is a layout the documentation allows and the
 # one case where creating it is the right answer — by hand, not silently here.
 setup_install "/dev/shm/borg-repo-test-$$"
-run sh "$T/scripts/50-service-install.sh"
+run env HOME="$T/home" sh "$T/scripts/50-service-install.sh"
 [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'is a mount point' \
     && printf '%s' "$OUT" | grep -q "mkdir -p /dev/shm/borg-repo-test-$$"
 assert "13.4 a missing subdirectory of a mounted volume names the mkdir to run" $?
