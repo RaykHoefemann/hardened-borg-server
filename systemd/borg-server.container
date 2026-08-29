@@ -31,6 +31,14 @@
 # removed on stop) and sets PODMAN_SYSTEMD_UNIT itself. This is what removes
 # the fragile --rm + fixed --name + Restart=on-failure "name already in use"
 # interaction the old unit documented (DEPLOYMENT 6.2.4).
+#
+# HARDENING (the block below the LogDriver line). Determined empirically
+# against the shipped image on Fedora CoreOS + rootless podman 5.8 — every
+# key here was removed until something broke, then added back with a reason.
+# A full borg client cycle (init / create / list / delete), the `info`
+# channel and the keyfile-encryption check all pass with exactly this set;
+# `CapEff` in the running container is the seven caps listed and nothing
+# more, and NoNewPrivs is 1. See DEPLOYMENT 6.2 and the pentest notes.
 # -----------------------------------------------------------------------------
 
 [Unit]
@@ -51,6 +59,50 @@ After=network-online.target
 # for this container, which has nothing of its own to show once the journal
 # holds it all.
 LogDriver=passthrough
+
+# --- Hardening ---------------------------------------------------------------
+
+# No setuid-root escalation path: sshd drops privileges with the caps it
+# already holds, it never needs to *gain* any.
+NoNewPrivileges=true
+
+# Start from nothing and add back only what is actually used:
+#   chown            entrypoint.sh `chown borg:borg` on /home/borg/.ssh,
+#                    authorized_keys, /run/borg-info/*, and /repo
+#   dac_override     entrypoint.sh and build_authorized_keys.sh (running as
+#                    root) write into /home/borg/.ssh, which the image ships
+#                    as borg-owned mode 0700
+#   fowner           entrypoint.sh `chmod 700 /home/borg/.ssh` — the dir is
+#                    owned by borg, not root
+#   setuid, setgid   sshd privilege separation: drop each session to 'borg'
+#   sys_chroot       sshd privilege separation: chroot to /run/sshd
+#   net_bind_service sshd binds the container-internal port 22
+# NOT needed (verified): kill (the per-session process, itself running as
+# 'borg', reaps its own children — the root monitor signals nothing across a
+# uid boundary), fsetid, setfcap, setpcap.
+DropCapability=all
+AddCapability=chown dac_override fowner setuid setgid sys_chroot net_bind_service
+
+# Immutable image filesystem. The three writable paths the container needs:
+#   /run              sshd's privsep dir (/run/sshd) and the rendered
+#                     per-client info texts (/run/borg-info)
+#   /tmp              scratch for borg / python
+#   /home/borg/.ssh   where build_authorized_keys.sh writes authorized_keys;
+#                     mode 0700 so sshd StrictModes accepts it (entrypoint.sh
+#                     then chowns it to borg)
+# /config, /repo and /log are bind mounts and stay writable regardless.
+ReadOnly=true
+Tmpfs=/run
+Tmpfs=/tmp
+Tmpfs=/home/borg/.ssh:mode=0700
+
+# Bound a single compromised or abusive client. sshd's own MaxSessions /
+# MaxStartups cap concurrency; these cap what that concurrency can consume.
+# 128 pids covers sshd + several parallel (session + borg serve + the
+# keyfile-check python) with headroom; 512M likewise. Neither was hit in
+# testing.
+PidsLimit=128
+Memory=512m
 
 [Service]
 Restart=on-failure

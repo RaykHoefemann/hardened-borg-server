@@ -54,7 +54,7 @@ Useful for testing, but the container does not survive a reboot or a logout, and
 
 For production use, the container runs as a **rootless systemd user service** rather than being started manually. It is deployed as a **Podman Quadlet** (ROADMAP 11.4): a checked-in `.container` file that `podman-system-generator` turns into a real `.service` unit at `systemctl --user daemon-reload`. This needs **podman ≥ 5.0** (Quadlet drop-in directories); Fedora CoreOS has satisfied this since well before this project's supported baseline.
 
-Two things are checked into `systemd/borg-server.container`, and nothing else:
+The checked-in `systemd/borg-server.container` carries only host-independent values — the runtime settings and the container hardening:
 
 ```ini
 [Unit]
@@ -69,6 +69,17 @@ After=network-online.target
 # as the old container.service was incomplete without its EnvironmentFile.
 LogDriver=passthrough
 
+# Hardening — determined empirically against the shipped image (see below).
+NoNewPrivileges=true
+DropCapability=all
+AddCapability=chown dac_override fowner setuid setgid sys_chroot net_bind_service
+ReadOnly=true
+Tmpfs=/run
+Tmpfs=/tmp
+Tmpfs=/home/borg/.ssh:mode=0700
+PidsLimit=128
+Memory=512m
+
 [Service]
 Restart=on-failure
 RestartSec=5
@@ -80,6 +91,7 @@ WantedBy=default.target
 - **`LogDriver=passthrough`** hands the container's stdout/stderr straight to the generated unit instead of having podman journal it a second time — the same reasoning the hand-written unit gave. The cost is `podman logs` for this container, which then has nothing of its own to show.
 - **No `--rm`, no `--name`, no `PODMAN_SYSTEMD_UNIT`.** Quadlet creates a fresh container per start, removes it on stop, and sets `PODMAN_SYSTEMD_UNIT` itself. This is what removes the fragile `--rm` + fixed `--name` + `Restart=on-failure` "name already in use" interaction the hand-written unit had after an unclean stop.
 - **No `User=`/`Group=`.** See 6.2.1 — the trap is unchanged, because Quadlet passes `User=` straight through to the generated unit.
+- **The hardening block** drops the container from the eleven default rootless caps to the seven it actually uses, forbids privilege gain (`NoNewPrivileges`), makes the image filesystem read-only (only `/run`, `/tmp` and `/home/borg/.ssh` are writable `tmpfs`; `/config`, `/repo`, `/log` are bind mounts), and bounds pids and memory. Each cap is annotated in the file with what needs it — `chown`/`dac_override`/`fowner` for `entrypoint.sh` touching the borg-owned `/home/borg/.ssh`, `setuid`/`setgid`/`sys_chroot` for sshd privilege separation, `net_bind_service` for port 22. A full client cycle, the `info` channel and the keyfile check were all verified against this set; `kill`, `fsetid`, `setfcap` and `setpcap` were confirmed unnecessary. This is host-level defense in depth on top of what Chapter 1.1 already requires (rootless, SELinux, immutable OS) — it does not replace any of it.
 
 Everything host-specific is written by `scripts/50-service-install.sh` into a drop-in it generates from `scripts/config.sh` — the single source of truth for the whole project:
 
