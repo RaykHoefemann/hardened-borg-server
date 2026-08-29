@@ -219,7 +219,7 @@ With no offsite copy in place, repositories are lost and the clients' own source
 Offsite redundancy is therefore the **client's** responsibility, and recovery from it is entirely client-side:
 
 - A client that keeps its own independent offsite copy — a second `borg create` target, or `borg serve` against a foreign server it trusts — restores from it with its own key, exactly as from any repository. This server does not need to exist for that recovery to work.
-- The operator's own **offline export** (Roadmap 11.2, the manual removable-media helper) is a copy of the operator's own hosted repositories (`HOST_REPO_BASE/OWN/` — `MIRROR` is skipped, being external clients' own backups) that the operator physically stores off-site. It restores those repositories after a total loss, but every one of them is still ciphertext: each client needs its own key and passphrase to read its own repository back.
+- The operator's own **offline export** (Roadmap 11.2, the manual removable-media helper) is a copy of the hosted repositories (`HOST_REPO_BASE/`) that the operator physically stores off-site. It restores those repositories after a total loss, but every one of them is still ciphertext: each client needs its own key and passphrase to read its own repository back.
 
 An operator wanting offsite redundancy for the hosted data has to arrange it outside this project — or rely on clients keeping their own.
 

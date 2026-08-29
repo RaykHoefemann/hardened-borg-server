@@ -197,9 +197,9 @@ Provision both in the VM (SERVERINSTALL steps 8–9), then restart the container
 so `authorized_keys` is rebuilt:
 
 ```bash
-./scripts/00-ssh-create-user.sh clientA OWN 5G     # shows the quota against
+./scripts/00-ssh-create-user.sh clientA 5G     # shows the quota against
 ./scripts/01-ssh-set-user-key.sh clientA /path/to/borg_clientA.pub
-./scripts/00-ssh-create-user.sh clientB OWN 5G     # the volume, then asks
+./scripts/00-ssh-create-user.sh clientB 5G     # the volume, then asks
 ./scripts/01-ssh-set-user-key.sh clientB /path/to/borg_clientB.pub
 ./scripts/92-container-restart.sh
 ```
@@ -249,9 +249,8 @@ the test notices:
 | Initialize a repository with `--encryption=repokey` | Test 8 is refused on the next connection |
 | Mount an `sshd_config` over the image's own with a `Match User borg` block reopening `PermitTTY` | 1.5A still reports ten correct lines — 1.5B is what catches it |
 | Edit `IMAGE` in `config.sh` to a different digest and *do not* restart | 0C's two lines diverge, and `99-container-status.sh` reports it as `PIN MISMATCH` — whatever versions the two digests carry. Its `MISMATCH` line stays quiet, because that one compares the host scripts against the running container and an edited pin moves neither (#31). Repair with `50-service-install.sh` *then* `92-container-restart.sh`; a restart alone starts the old image again |
-| Delete one client's repository directory (`podman unshare rm -rf <HOST_REPO_BASE>/<group>/<client>`) | 5.5A fails: the client reads `n/a (!)` … `MISSING on host`, with the explanation under the listing. From that client, the next connection is refused with `DENY: repository directory missing – needs operator action` rather than being served from a directory the server made itself. `03-provision-client.sh <client>` is the way back — and it brings back an empty repository, so run it on a client whose archives you are willing to lose |
-| Delete a **group** directory (`podman unshare rm -rf <HOST_REPO_BASE>/MIRROR`) | Every client under it reads `MISSING on host` and meets the same refusal. Worth doing once for what it *no longer* does: until beta.30 the wrapper recreated the path here — its parent `/repo` belongs to `borg`, so the `mkdir` succeeded — and served the client from a directory with no project id, bounded by the volume rather than by its limit. That is 5.5B's first failure shape, produced by the server itself, and it needed no mistake inside a client directory at all (#29) |
-| Take the search bit off a group directory (`podman unshare chmod 750 <HOST_REPO_BASE>/OWN`) | **Does not produce `unreadable` — confirmed on a live deployment (#33).** `09-show-all-users.sh` runs directly on the host, not through `podman unshare`, and the group directory was left "owned by namespace root" by `00-ssh-create-user.sh`; under rootless Podman that namespace-root uid maps back to the very host user who runs the reporting script, so the script keeps owner access while `750` only removes it from "other". What actually happens: the report stays green while the container's `borg` user — a different, unprivileged mapped uid, genuinely "other" here — loses access and its clients are locked out with `DENY: repository directory missing – needs operator action`, invisibly. `chmod 000` on the same directory does not reach `unreadable` either: it also removes the owner's search bit, so `[ -d ]` itself fails, and the script cannot tell that apart from "does not exist" — it reports `MISSING on host` instead. Restore with `chmod 755` |
+| Delete one client's repository directory (`podman unshare rm -rf <HOST_REPO_BASE>/<client>`) | 5.5A fails: the client reads `n/a (!)` … `MISSING on host`, with the explanation under the listing. From that client, the next connection is refused with `DENY: repository directory missing – needs operator action` rather than being served from a directory the server made itself. `03-provision-client.sh <client>` is the way back — and it brings back an empty repository, so run it on a client whose archives you are willing to lose |
+| Take the search bit off `HOST_REPO_BASE` (`podman unshare chmod 750 <HOST_REPO_BASE>`) | **Does not produce `unreadable` — confirmed on a live deployment (#33).** `09-show-all-users.sh` runs directly on the host, not through `podman unshare`, and `HOST_REPO_BASE` was left "owned by namespace root"; under rootless Podman that namespace-root uid maps back to the very host user who runs the reporting script, so the script keeps owner access while `750` only removes it from "other". What actually happens: the report stays green while the container's `borg` user — a different, unprivileged mapped uid, genuinely "other" here — loses access and its clients are locked out with `DENY: repository directory missing – needs operator action`, invisibly. `chmod 000` on the same directory does not reach `unreadable` either: it also removes the owner's search bit, so `[ -d ]` itself fails, and the script cannot tell that apart from "does not exist" — it reports `MISSING on host` instead. Restore with `chmod 755` |
 | Take the search bit off `HOST_REPO_BASE` itself | **Also does not produce `unreadable` — tried and ruled out.** The ownership assumption behind this row did hold: the mount point is owned by the container's mapped `borg` uid, not by the host user who runs the reporting scripts, unlike the group directories underneath it. But the outcome is the same as the row above — `chmod 000` removes the owner's search bit too, so `[ -d "$d" ]` fails before `df -kP` ever runs, and `09-show-all-users.sh` reports `MISSING on host` for every client at once instead of `unreadable`. Confirmed independently three times (two sessions against beta.31, one against beta.32). Treat `unreadable` as reachable only by a genuine `statfs()` failure (a real mount problem), not by any host-side permission change — see [Verification](VERIFICATION.md) 5.5A |
 
 > **The one that looks like it works and does not:** `sudo mount -o
@@ -797,9 +796,8 @@ end.
 
 ```bash
 CLIENT=client1
-GROUP=OWN                                       # OWN or MIRROR — see Design 1.2.3
-REPO=/var/mnt/borg-repo/repo/$GROUP/$CLIENT      # HOST_REPO_BASE/<group>/<client>
-SNAP=$SNAPSHOT_BASE/$GROUP/$CLIENT/<last-known-good>   # SNAPSHOT_BASE from config.sh; then <group>/<client>/<timestamp>
+REPO=/var/mnt/borg-repo/repo/$GROUP/$CLIENT      # HOST_REPO_BASE/<client>
+SNAP=$SNAPSHOT_BASE/$CLIENT/<last-known-good>   # SNAPSHOT_BASE from config.sh; then <client>/<timestamp>
 
 # 1. Remove the garbage -- frees the quota, not yet the disk space.
 #    find rather than "rm -rf dir/*": also catches dotfiles and doesn't hit
@@ -822,7 +820,7 @@ quota/project-id reconstruction on restore — and resolve every path from
 `config.sh` rather than hard-coding one. For a compromised client the order is
 `76-` first (drop any generation that may already carry tainted data), then
 `77-` (restore what remains). Both take `<client>` alone and resolve the group
-from the tree (`SNAPSHOT_BASE/<group>/<client>/`); `77-` refuses if the
+from the tree (`SNAPSHOT_BASE/<client>/`); `77-` refuses if the
 snapshot tree and the live repository disagree on the group. Use them once you
 have understood what the hand-run form above is doing.
 

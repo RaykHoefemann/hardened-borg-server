@@ -119,7 +119,7 @@ functioning server you cannot delete it, which is precisely the point.
 Throughout, replace `<server>` with your server host (a name or a bare IP),
 `2222` with your configured `SSH_PORT`, `<client>` with the client's name in
 `clients.conf`, and `<repo>` with the repository URL assigned to it, e.g.
-`ssh://borgserver/repo/OWN/user1-os1-pc1`. Host paths appear as this project's
+`ssh://borgserver/repo/user1-os1-pc1`. Host paths appear as this project's
 own example layout: `/var/mnt/extern1` is the mount point of the storage volume
 and `/var/mnt/extern1/borg-server` is `HOST_REPO_BASE`, derived in the repository root's `config.sh`
 — substitute your own.
@@ -128,7 +128,7 @@ and `/var/mnt/extern1/borg-server` is `HOST_REPO_BASE`, derived in the repositor
 
 Commands run from a client use the `borgserver` alias established in
 [Client Usage](CLIENTUSE.md) chapter 1 — `ssh borgserver info`, and repository
-URLs as `ssh://borgserver/repo/OWN/<client>`. The alias carries the one thing
+URLs as `ssh://borgserver/repo/<client>`. The alias carries the one thing
 these commands otherwise leave unsaid: **which key to offer**.
 
 A client that followed CLIENTUSE holds a *dedicated* key at
@@ -150,7 +150,7 @@ command line. Every client-side command on this page translates the same way:
 | This page writes | Equivalent without `~/.ssh/config` |
 |---|---|
 | `ssh borgserver <cmd>` | `ssh -i ~/.ssh/borg_backup -o IdentitiesOnly=yes -p 2222 borg@<server> <cmd>` |
-| `borg <cmd> ssh://borgserver/repo/OWN/<client>` | `BORG_RSH="ssh -i ~/.ssh/borg_backup -o IdentitiesOnly=yes" borg <cmd> ssh://borg@<server>:2222/repo/OWN/<client>` |
+| `borg <cmd> ssh://borgserver/repo/<client>` | `BORG_RSH="ssh -i ~/.ssh/borg_backup -o IdentitiesOnly=yes" borg <cmd> ssh://borg@<server>:2222/repo/<client>` |
 
 Borg takes no `-i` of its own — `BORG_RSH` is where the key goes, because borg
 reaches the server by running ssh itself.
@@ -579,7 +579,7 @@ cleared by it. See the note under 0.5B.
 **Run** — from the same client:
 
 ```bash
-borg init --encryption=keyfile-blake2 ssh://borgserver/repo/OWN/<client>
+borg init --encryption=keyfile-blake2 ssh://borgserver/repo/<client>
 ```
 
 **Pass** — the repository is created and Borg prints its key-custody warning.
@@ -883,8 +883,8 @@ what tests 7 and 9 measure on your deployment.
 
 **Claim** — [Operations](OPERATIONS.md): `build_authorized_keys.sh` generates
 every entry as `command="/borg-wrapper.sh <repo>",restrict <key>`, and
-[Design](DESIGN.md) Chapter 1.2.3: `<repo>` is always `/repo/<group>/<client>`,
-with `<group>` one of `OWN`/`MIRROR` and `<client>` globally unique.
+[Design](DESIGN.md) Chapter 1.2.3: `<repo>` is always `/repo/<client>`,
+with `<repo>` always `/repo/<client>` and `<client>` globally unique.
 
 **Why it matters** — this is the single point on which every other guarantee
 depends. One line without the prefix exempts that key from append-only, path
@@ -969,7 +969,7 @@ that key until you have re-run it.
 
 **Negative test** — staged and confirmed (v0.1.0-beta.31): a second key was
 appended with a correct `command=` prefix but pointed at
-`/repo/OWN/mint-client` — another client's path. The `diff` reported a `<`
+`/repo/mint-client` — another client's path. The `diff` reported a `<`
 line for exactly that path, since `clients.conf` names it once and
 `authorized_keys` then carried it twice.
 
@@ -982,13 +982,12 @@ show it behaves accordingly.
 > swapped atomically, so a manually added line does not survive a restart.
 > That limits exposure; it does not remove the need to check.
 
-### 3C — every `clients.conf` entry is well-formed against the path structure ✅
+### 3C — every `clients.conf` entry is well-formed against the path structure ⚠️
 
 3B checks that `authorized_keys` and `clients.conf` *agree*; it does not check
 that either is well-formed. A `clients.conf` line whose `<repo>` field is not
-`/repo/<group>/<name>` — or whose group is neither `OWN` nor `MIRROR`, or whose
-name is reused — is copied faithfully into `authorized_keys`, so 3B passes over
-it.
+`/repo/<name>`, or whose name is reused, is copied faithfully into
+`authorized_keys`, so 3B passes over it.
 
 **Run** (on the host)
 
@@ -996,9 +995,8 @@ it.
 awk -F: '
   /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
   {
-    if ($2 != "OWN" && $2 != "MIRROR") print "bad group:  " $0
-    if ($3 != "/repo/" $2 "/" $1)      print "bad repo:   " $0
-    if (seen[$1]++)                    print "dup name:   " $0
+    if ($2 != "/repo/" $1)  print "bad repo:   " $0
+    if (seen[$1]++)          print "dup name:   " $0
   }
 ' config/clients.conf
 ```
@@ -1007,46 +1005,32 @@ awk -F: '
 
 **Fail** — each line printed names the break:
 
-- `bad group` — a `<group>` outside `{OWN, MIRROR}`. The provisioning scripts
-  never write one; `build_authorized_keys.sh` still renders the key (it only
-  checks the character set), aiming the forced command at a path no snapshot,
-  quota or reattach tooling expects.
-- `bad repo` — `<repo>` is not `/repo/<group>/<name>`. It is copied verbatim
+- `bad repo` — `<repo>` is not `/repo/<name>`. It is copied verbatim
   into `command="/borg-wrapper.sh <repo>"`, so the client is served from, and
   `--restrict-to-path`-confined to, whatever this says — another client's
   directory included. 3B compares this field against `authorized_keys` and
   passes, because both carry the same wrong value.
 - `dup name` — the same `<client>` on two lines. `config/keys/<name>.pub` is
-  one file and the info-channel path collides; the snapshot tooling takes
-  `<client>` alone and resolves the group by glob, so `75-`/`76-`/`77-` refuse
-  a name that resolves under two groups rather than guessing (see
-  [Snapshots](SNAPSHOTS.md)). The provisioning scripts refuse a name already in
-  the file; this only appears from a hand edit or a merge.
+  one file and the info-channel path collides. The provisioning scripts refuse
+  a name already in the file; this only appears from a hand edit or a merge.
 
 Fix the line, restart the container to regenerate `authorized_keys`, and re-run
 3B and 7 for any client whose `<repo>` had pointed elsewhere.
 
-**Negative test** — measured directly against `FCOS-BorgBackupServer` (2026-08-29), both readings: the check above produced no output against the real, unmodified `clients.conf` (11 entries). A scratch copy of that file (never deployed — `authorized_keys` was never regenerated from it, and the original's md5 was confirmed unchanged before and after) then had three lines appended, one per failure mode:
-
-```
-civerify-badgroup:WRONG:/repo/WRONG/civerify-badgroup:1G
-civerify-badrepo:OWN:/repo/OWN/some-other-name:1G
-mint-client:MIRROR:/repo/MIRROR/mint-client:1G
-```
-
-The check against the scratch copy reported exactly the three expected lines and nothing else:
-
-```
-bad group:  civerify-badgroup:WRONG:/repo/WRONG/civerify-badgroup:1G
-bad repo:   civerify-badrepo:OWN:/repo/OWN/some-other-name:1G
-dup name:   mint-client:MIRROR:/repo/MIRROR/mint-client:1G
-```
+**Negative test** — ⚠️ **not yet staged against the 1.0.0 (group-less) layout.**
+The pre-1.0.0 form of this check also caught a `bad group` line, and was staged
+against `FCOS-BorgBackupServer` (2026-08-29) on the grouped `name:group:repo:quota`
+format. The two-field-shift to `name:repo:quota` changes the awk, so that run no
+longer demonstrates this criterion. Re-stage: append `civ-badrepo:/repo/other-name:1G`
+and a second `<existing-name>:/repo/<existing-name>:1G` to a scratch copy of
+`clients.conf` (never deployed) and confirm the check reports exactly
+`bad repo:` and `dup name:` and nothing else.
 
 **What this does not show** — that the on-disk directories exist or match (3D),
 and that the wrapper behind `command=` is the shipped one (test 0; tests 1, 2,
 7 for behaviour).
 
-### 3D — the on-disk repository tree matches the declared structure ✅
+### 3D — the on-disk repository tree matches the declared structure ⚠️
 
 **Run** (on the host; needs read access to `HOST_REPO_BASE` — run under
 `podman unshare` or as the user that owns the storage)
@@ -1054,26 +1038,22 @@ and that the wrapper behind `command=` is the shipped one (test 0; tests 1, 2,
 ```bash
 base=/var/mnt/extern1/borg-server        # your HOST_REPO_BASE, as config.sh resolves it
 
-# 1. top level: exactly the group dirs, nothing else
-ls -A "$base" | grep -vE '^(OWN|MIRROR)$'
+# 1. one level: every entry is a directory (no stray files)
+find "$base" -mindepth 1 -maxdepth 1 ! -type d
 
-# 2. one level down: every entry is a directory
-find "$base"/OWN "$base"/MIRROR -mindepth 1 -maxdepth 1 ! -type d 2>/dev/null
-
-# 3. the <group>/<client> set on disk == the set clients.conf declares
-diff <(cd "$base" && find OWN MIRROR -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort) \
-     <(awk -F: '!/^[[:space:]]*#/ && NF {print $2"/"$1}' config/clients.conf | sort)
+# 2. the <client> set on disk == the set clients.conf declares
+diff <(cd "$base" && find . -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sed 's|^\./||' | sort) \
+     <(awk -F: '!/^[[:space:]]*#/ && NF {print $1}' config/clients.conf | sort)
 ```
 
-**Pass** — none of the three commands produces output.
+**Pass** — neither command produces output.
 
 **Fail** —
 
-- output from command 1 or 2 — the tree has drifted from `/repo/<group>/<client>`.
-  A client directory directly under `HOST_REPO_BASE`, or a stray file where a
-  client directory belongs, is invisible to `build_authorized_keys.sh` (it
-  renders from `clients.conf`, not the tree) and mis-swept by `70-create-snapshot.sh`,
-  which walks exactly `HOST_REPO_BASE/*/*`.
+- output from command 1 — a stray file directly under `HOST_REPO_BASE` where a
+  client directory belongs. Invisible to `build_authorized_keys.sh` (it renders
+  from `clients.conf`, not the tree) and to `70-create-snapshot.sh`, which walks
+  exactly `HOST_REPO_BASE/*`.
 - a `<` line from the `diff` — a directory on disk that `clients.conf` does not
   declare. Legitimately this is a client mid-`04-reattach-client.sh` (directory
   present, entry not yet rewritten); anything else is an orphan.
@@ -1082,7 +1062,13 @@ diff <(cd "$base" && find OWN MIRROR -mindepth 1 -maxdepth 1 -type d 2>/dev/null
   repository (`build_authorized_keys.sh` logs `[WARN] Repository directory
   '<repo>' is missing`); `03-provision-client.sh` is the way forward.
 
-**Negative test** — measured directly against `FCOS-BorgBackupServer` (2026-08-29), both readings: all three commands produced no output against the real, unmodified tree (11 real clients). `sudo mkdir HOST_REPO_BASE/loose-dir` (top level) and `sudo touch HOST_REPO_BASE/OWN/stray-file.txt` were then created; command 1 reported `loose-dir`, command 2 reported the stray file's path, and command 3 stayed silent (neither anomaly is a `<group>/<client>` entry, so the set-comparison correctly has nothing to say about them). Removing both restored a clean run. A third case — command 3's own `<`/`>` diff lines — was staged separately: `sudo mkdir HOST_REPO_BASE/OWN/orphan-test-dir` (a real client-shaped directory absent from `clients.conf`) produced `< OWN/orphan-test-dir`; removing it cleared the check again.
+**Negative test** — ⚠️ **not yet staged against the 1.0.0 (flat) layout.** The
+grouped form was staged against `FCOS-BorgBackupServer` (2026-08-29); the checks
+here are different commands over a different tree shape. Re-stage: `sudo touch
+HOST_REPO_BASE/stray-file` → command 1 reports it; `sudo mkdir
+HOST_REPO_BASE/orphan-test-dir` (a client-shaped directory absent from
+`clients.conf`) → command 2's `diff` reports `< orphan-test-dir`; removing each
+clears the check.
 
 **What this does not show** — that each directory *contains* a valid Borg
 repository (the client's `borg check`; [Design](DESIGN.md) Chapter 2.1, Roadmap
@@ -1353,7 +1339,7 @@ running `09-show-all-users.sh` produces exactly the `n/a (!)` /
 `HOST_REPO_BASE not set` branch `lib.sh` already carries for it. For
 `unreadable`, both host-side `chmod` candidates named in [Test
 Environment](TESTENV.md) chapter 8 have now been tried and ruled out — one on
-a group directory (#33), one on `HOST_REPO_BASE` itself — and both land on
+`HOST_REPO_BASE` itself (#33) — and both land on
 `MISSING on host` instead, not `unreadable`, because `report_for()` in
 `09-show-all-users.sh` checks `[ -d "$d" ]` before it runs `df -kP "$d"`, and
 both calls need the same search permission on the same parent directories: any
@@ -1442,17 +1428,17 @@ reports on its `Committed:` line and this test deliberately does not judge.
 >
 > **A third state was staged afterwards and 5.5A did not see it either**:
 > a client whose repository directory had been deleted outright
-> (`podman unshare rm -rf <HOST_REPO_BASE>/OWN/<client>`). The listing reported
+> (`podman unshare rm -rf <HOST_REPO_BASE>/<client>`). The listing reported
 > it honestly as `MISSING on host`, but in the `USED` column only — `QUOTA` read
 > `n/a`, `CONFIGURED` was unmarked, and nothing had drifted, so all three
 > clauses of the criterion above were satisfied by a client that could not
 > connect at all (#30). `09-show-all-users.sh` now marks that row `n/a (!)` and
 > explains it under the listing, which is what makes the criterion decide it.
 > **That marker has since been verified against a deployment** (v0.1.0-beta.31):
-> a client's own repository directory, and separately a whole group directory
+> a client's own repository directory, and separately `HOST_REPO_BASE` itself
 > under it, were each removed, and the listing marked the affected rows exactly
 > `n/a (!)` / `MISSING on host` as documented, for every client under a removed
-> group directory at once in the second case. `03-provision-client.sh` restored
+> in the second case. `03-provision-client.sh` restored
 > access afterwards.
 >
 > The same reasoning was then applied to the other states this listing cannot
@@ -1492,8 +1478,7 @@ podman unshare sh -c "grep -c '^key' /var/mnt/extern1/borg-server/*/*/config"
 podman unshare find /var/mnt/extern1/borg-server -name '*.borgkey' -o -name 'keyfile*'
 ```
 
-The `*/*/config` glob covers both groups: a `MIRROR` repository has to satisfy
-this claim exactly as an `OWN` one does.
+The `*/config` glob covers every client repository equally.
 
 **Pass** — every count is `0` and the `find` returns nothing. A keyfile-mode
 repository stores no key material server-side; a repokey repository would
@@ -1543,13 +1528,13 @@ the forced command's fixed repo path plus borg's `--restrict-to-path`. The
 path a client sends is never trusted.
 
 **Why it matters** — cross-client access would leak both data and metadata
-between unrelated parties, including between `OWN` devices and external
-`MIRROR` partners.
+between unrelated parties, including between your own devices and any
+external partners backing up into this server.
 
 **Run** — from client A, aim at client B's repository path:
 
 ```bash
-borg list ssh://borgserver/repo/OWN/<other-client>
+borg list ssh://borgserver/repo/<other-client>
 borg list ssh://borgserver/repo/
 borg list ssh://borgserver/etc/
 ```
@@ -1562,7 +1547,7 @@ the `command=` path in `authorized_keys` matches the repo assigned in
 `clients.conf` — 3B is that comparison for every client at once.
 
 **Negative test** — staged and confirmed (v0.1.0-beta.31), using 3B's own
-failing state: with a second key authorized for `/repo/OWN/mint-client`
+failing state: with a second key authorized for `/repo/mint-client`
 (another client's path), `--restrict-to-path` let the connection through —
 none of the `Repository path not allowed` refusal a genuinely foreign key
 gets. The attempt stalled afterwards only on the client-side passphrase
@@ -1755,7 +1740,7 @@ you rely on. That is the price of measuring the claim instead of deducing it.
 intact with all its segments:
 
 ```
-ValueError: /repo/OWN/<client> is in append-only mode
+ValueError: /repo/<client> is in append-only mode
 ```
 
 Verified against Borg 1.2.8: the same command against a repository without
@@ -1784,7 +1769,7 @@ See below.
 line beside the error:
 
 ```
-Borg server: sys.argv: ['/usr/bin/borg', 'serve', '--restrict-to-path', '/repo/OWN/<client>', '--append-only']
+Borg server: sys.argv: ['/usr/bin/borg', 'serve', '--restrict-to-path', '/repo/<client>', '--append-only']
 Borg server: SSH_ORIGINAL_COMMAND: 'borg serve'
 ```
 
@@ -1811,7 +1796,7 @@ dropped (Roadmap 11.2).
 
 ## 11. Point-in-time snapshots survive host-side destruction
 
-**Claim** — [Snapshots](SNAPSHOTS.md) / [Roadmap](../ROADMAP.md) 11.5: a completed snapshot generation under `SNAPSHOT_BASE` is made immutable (`chattr +i`) and cannot be removed by an ordinary command, not even the operator's own `sudo rm -rf`, and restoring one reconstructs the client's XFS project id and enforced quota exactly as they were — not a freshly allocated approximation of them. The tree under `SNAPSHOT_BASE` mirrors `HOST_REPO_BASE`: `<group>/<client>/<timestamp>/`, `<group>` one of `OWN`/`MIRROR` and `<client>` matching the same globally-unique name rule as the live repositories ([Design](DESIGN.md) Chapter 1.2.3). And ([Recovery](RECOVERY.md) Chapter 5) the whole path — snapshot, wipe, restore — returns a client's data unchanged.
+**Claim** — [Snapshots](SNAPSHOTS.md) / [Roadmap](../ROADMAP.md) 11.5: a completed snapshot generation under `SNAPSHOT_BASE` is made immutable (`chattr +i`) and cannot be removed by an ordinary command, not even the operator's own `sudo rm -rf`, and restoring one reconstructs the client's XFS project id and enforced quota exactly as they were — not a freshly allocated approximation of them. The tree under `SNAPSHOT_BASE` mirrors `HOST_REPO_BASE`: `<client>/<timestamp>/`, `<client>` matching the same globally-unique name rule as the live repositories ([Design](DESIGN.md) Chapter 1.2.3). And ([Recovery](RECOVERY.md) Chapter 5) the whole path — snapshot, wipe, restore — returns a client's data unchanged.
 
 **Why it matters** — this is the local, fast half of recovering from operator error or destructive host-side software ([Recovery](RECOVERY.md) Chapter 5). If a completed generation could be removed the same way its live source can, the rollback path is exposed to exactly the class of accident it exists to survive. And a restore that silently drops or mis-applies the quota leaves a repository that looks recovered but is no longer protected — the failure mode [`77-restore-last-snapshot.sh`](SNAPSHOTS.md#7-restoring-the-most-recent-snapshot--77-restore-last-snapshotsh)'s own header calls out by name.
 
@@ -1868,7 +1853,7 @@ The failing direction needed a genuine race, not a sequential recipe — `OLD_EN
 
 ```
 ERROR: after re-applying project id 1011, the enforced quota on
-       '/var/mnt/borg-repo/repo/OWN/racetest01' is '1022976', not the original
+       '/var/mnt/borg-repo/repo/racetest01' is '1022976', not the original
        2.0 GiB. The directory exists but is NOT
        correctly quota-protected -- needs manual attention before this
        client is used again.
@@ -1904,9 +1889,9 @@ ERROR: '/tmp/external-target' does not resolve inside SNAPSHOT_BASE
 
 **What this does not show** — resistance to an attacker who already has host-level write access to `SNAPSHOT_BASE` itself. The check is that a *generation name resolving somewhere else* is caught; a target that genuinely lives inside `SNAPSHOT_BASE` but was tampered with in place is a different threat this check says nothing about.
 
-### 11D — the snapshot tree matches the declared structure ✅
+### 11D — the snapshot tree matches the declared structure ⚠️
 
-The counterpart of 3D, for `SNAPSHOT_BASE`. The tree mirrors `HOST_REPO_BASE` — `<group>/<client>/<timestamp>/` — and `75-`/`76-`/`77-` filter by the `YYYYMMDDTHHMMSSZ` name format, so anything that is not a group directory, a client directory, or a generation directory is invisible to them and sits indefinitely.
+The counterpart of 3D, for `SNAPSHOT_BASE`. The tree mirrors `HOST_REPO_BASE` — `<client>/<timestamp>/` — and `75-`/`76-`/`77-` filter by the `YYYYMMDDTHHMMSSZ` name format, so anything that is not a client directory or a generation directory is invisible to them and sits indefinitely.
 
 **Run** (on the host; needs read access to `SNAPSHOT_BASE`)
 
@@ -1914,32 +1899,20 @@ The counterpart of 3D, for `SNAPSHOT_BASE`. The tree mirrors `HOST_REPO_BASE` �
 base=/var/mnt/extern1/.snapshots/borg-server   # your SNAPSHOT_BASE, as config.sh resolves it
 ts='[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z'
 
-# 1. top level: only OWN/ and MIRROR/ directories, plus the .lock file
+# 1. top level: client directories (names matching the client charset), plus .lock
 for e in "$base"/* "$base"/.*; do
     [ -e "$e" ] || continue
     n=${e##*/}
     case "$n" in
-        .|..|.lock|OWN|MIRROR) ;;
-        *) echo "top level: unexpected '$n'" ;;
+        .|..|.lock) ;;
+        ''|-*|*[!a-zA-Z0-9_-]*) echo "top level: bad name '$n'" ;;
+        *) [ -d "$e" ] || echo "top level: '$n' is not a directory" ;;
     esac
 done
 
-# 2. one level down: client directories, names matching the client charset
-for g in "$base"/OWN "$base"/MIRROR; do
-    [ -d "$g" ] || continue
-    for c in "$g"/*; do
-        [ -e "$c" ] || continue
-        n=${c##*/}
-        case "$n" in
-            ''|-*|*[!a-zA-Z0-9_-]*) echo "${g##*/}: bad client name '$n'" ;;
-            *) [ -d "$c" ] || echo "${g##*/}: '$n' is not a directory" ;;
-        esac
-    done
-done
-
-# 3. inside each client: <timestamp>/ generations only
+# 2. inside each client: <timestamp>/ generations only
 #    (a .creating-* directory is an interrupted run — reported, not fatal)
-for c in "$base"/OWN/*/ "$base"/MIRROR/*/; do
+for c in "$base"/*/; do
     [ -d "$c" ] || continue
     cn=${c%/}; cn=${cn##*/}
     for e in "$c"* "$c".*; do
@@ -1953,37 +1926,24 @@ for c in "$base"/OWN/*/ "$base"/MIRROR/*/; do
         esac
     done
 done
-
-# 4. no client name appears under both groups
-for c in "$base"/OWN/*/; do
-    [ -d "$c" ] || continue
-    cn=${c%/}; cn=${cn##*/}
-    [ -d "$base/MIRROR/$cn" ] && echo "client '$cn' exists under both OWN and MIRROR"
-done
 ```
 
-**Pass** — none of the four blocks produces output.
+**Pass** — neither block produces output.
 
 **Fail** —
 
-- `top level: unexpected` — something other than `OWN/`, `MIRROR/` or `.lock` sits in `SNAPSHOT_BASE`. `70-create-snapshot.sh` creates only the two group directories (via `mkdir -p`) and `.lock`.
-- `bad client name` / `is not a directory` — an entry under a group directory that is not a well-formed client directory.
+- `top level: bad name` / `is not a directory` — an entry directly under `SNAPSHOT_BASE` that is not a well-formed client directory or `.lock`. `70-create-snapshot.sh` creates only client directories (via `mkdir -p`) and `.lock`.
 - `unexpected entry` inside a client — not a `<timestamp>` generation. `75-`/`76-` never list it and `76-` never cleans it; it stays until removed by hand.
 - `staging dir from an interrupted run` — a `.creating-*` that outlived its run. `70-`'s next run for that client removes it (`sudo rm -rf`), so a persistent one means either that client has not been snapshotted since, or the cleanup lacked privilege.
-- output from block 4 — the same client name under both groups. Under [Design](DESIGN.md) 1.2.3 the provisioning scripts make this impossible; a snapshot tree that has it was populated before the rule or out of band. `75-`/`76-`/`77-` refuse such a client — they resolve the group by glob and will not guess.
 
-**Negative test** — measured directly against `FCOS-BorgBackupServer` (2026-08-29), both readings: all four blocks produced no output against a real generation (a disposable client snapshotted once with `70-`). All four planned anomalies were then created at once — `sudo touch SNAPSHOT_BASE/loose-file`, `sudo touch SNAPSHOT_BASE/OWN/<client>/stray.txt`, `sudo mkdir SNAPSHOT_BASE/OWN/<client>/.creating-fake`, and `sudo mkdir SNAPSHOT_BASE/MIRROR/<client>` (same name as the real `OWN` client) — and the check reported all four, one per block, correctly:
+**Negative test** — ⚠️ **not yet staged against the 1.0.0 (flat) layout.** The
+grouped form (with a fourth block for "same name under both groups") was staged
+against `FCOS-BorgBackupServer` (2026-08-29). Re-stage: `sudo touch
+SNAPSHOT_BASE/loose-file` → block 1; `sudo touch
+SNAPSHOT_BASE/<client>/stray.txt` and `sudo mkdir
+SNAPSHOT_BASE/<client>/.creating-fake` → block 2; removing each clears the check.
 
-```
-top level: unexpected 'loose-file'
-snap-demo01: unexpected entry 'stray.txt'
-snap-demo01: staging dir from an interrupted run: .creating-fake
-client 'snap-demo01' exists under both OWN and MIRROR
-```
-
-Removing all four restored a clean run.
-
-**What this does not show** — that a generation is actually immutable (11A) or that a restore reconstructs the repository (11B); this is structure only. A `<group>/<client>` directory with generations but *no* live repository is legitimate — retained history of a removed client — and is not flagged.
+**What this does not show** — that a generation is actually immutable (11A) or that a restore reconstructs the repository (11B); this is structure only. A `<client>` directory with generations but *no* live repository is legitimate — retained history of a removed client — and is not flagged.
 
 ### 11E — the snapshot → restore loop round-trips a client's data ✅
 
@@ -1999,7 +1959,7 @@ head -c 20M /dev/urandom > /tmp/e2e-orig/blob          # incompressible
 seq 1 100000            > /tmp/e2e-orig/text            # compressible
 ( cd /tmp/e2e-orig && find . -type f -exec sha256sum {} + | sort ) > /tmp/e2e-orig.sha256
 
-export BORG_REPO=ssh://borgserver/repo/OWN/<client>
+export BORG_REPO=ssh://borgserver/repo/<client>
 borg init --encryption=keyfile-blake2
 borg create ::before /tmp/e2e-orig
 borg list                                              # archive 'before' is there
@@ -2012,8 +1972,8 @@ borg list                                              # archive 'before' is the
 ./snapshots/75-list-snapshots.sh <client>              # note the newest timestamp
 
 systemctl --user stop <CONTAINER>.service    # release any open handles (Recovery Ch. 5)
-podman unshare find <HOST_REPO_BASE>/OWN/<client> -mindepth 1 -delete
-podman unshare ls -A <HOST_REPO_BASE>/OWN/<client>     # must print nothing
+podman unshare find <HOST_REPO_BASE>/<client> -mindepth 1 -delete
+podman unshare ls -A <HOST_REPO_BASE>/<client>     # must print nothing
 ```
 
 *On the host* — restore from the snapshot, then bring the server back:
@@ -2054,7 +2014,7 @@ Negative, skip-the-snapshot case: a second disposable client with **no** snapsho
 
 Negative, tampered-restore case: after the positive run above, one restored file was modified (`echo tampered >> .../text`) and re-hashed — the sha256 changed from the original manifest's value, confirming the comparison technique itself would have caught a real mismatch had the restore been wrong.
 
-**What this does not show** — that restores keep working over time as the client's data changes; that is the client's ongoing restore-testing discipline ([Best Practices](BEST_PRACTICES.md) Chapter 7), not a one-time check of the tooling. `MIRROR` clients are not exercised here, but the snapshot path treats them identically.
+**What this does not show** — that restores keep working over time as the client's data changes; that is the client's ongoing restore-testing discipline ([Best Practices](BEST_PRACTICES.md) Chapter 7), not a one-time check of the tooling. External-partner clients are not exercised separately here, but the snapshot path treats every client identically.
 
 ### 11F — repeated snapshot/delete/restore cycles add no additional disk usage ✅
 
@@ -2120,7 +2080,7 @@ None of 11A–11F checks whether a size figure `snapshots/` prints for a generat
 
 ```bash
 ./snapshots/70-create-snapshot.sh
-GEN=$(ls -d "${SNAPSHOT_BASE}"/OWN/<client>/*/ | tail -1)
+GEN=$(ls -d "${SNAPSHOT_BASE}"/<client>/*/ | tail -1)
 sudo du -sh "$GEN"                          # ground truth
 ./snapshots/75-list-snapshots.sh <client>            # what 75- shows
 ./snapshots/77-restore-last-snapshot.sh <client>     # what 77- shows -- type N, abort, nothing touched

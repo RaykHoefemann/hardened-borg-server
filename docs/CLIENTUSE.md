@@ -17,10 +17,10 @@ the port your operator gave you, and `<repo>` with your assigned repository
 URL. Your operator hands that out in full:
 
 ```
-ssh://borg@<server>:2222/repo/OWN/user1-os1-pc1
+ssh://borg@<server>:2222/repo/user1-os1-pc1
 ```
 
-Chapter 1 shortens it to `ssh://borgserver/repo/OWN/user1-os1-pc1`, and that is
+Chapter 1 shortens it to `ssh://borgserver/repo/user1-os1-pc1`, and that is
 the form used from there on — not for brevity, but because the short form is
 the one that selects your backup key.
 
@@ -69,7 +69,7 @@ Host borgserver
     IdentitiesOnly yes
 ```
 
-Your repository URL then shortens to `ssh://borgserver/repo/OWN/user1-os1-pc1`.
+Your repository URL then shortens to `ssh://borgserver/repo/user1-os1-pc1`.
 Every command in this document, and every client-side command in
 [Verification](VERIFICATION.md), is written that way.
 
@@ -101,7 +101,7 @@ For Borg, which has no key option of its own — it runs ssh for you, and
 
 ```bash
 export BORG_RSH="ssh -i ~/.ssh/borg_backup -o IdentitiesOnly=yes"
-borg list ssh://borg@<server>:2222/repo/OWN/user1-os1-pc1
+borg list ssh://borg@<server>:2222/repo/user1-os1-pc1
 ```
 
 Keep `IdentitiesOnly=yes` in both. Without it, ssh offers your default keys and
@@ -172,7 +172,7 @@ The server accepts **only client-held keyfile encryption** and verifies it on
 every connection:
 
 ```bash
-borg init --encryption=keyfile-blake2 ssh://borgserver/repo/OWN/user1-os1-pc1
+borg init --encryption=keyfile-blake2 ssh://borgserver/repo/user1-os1-pc1
 ```
 
 `keyfile` is also accepted. `repokey`, `repokey-blake2`, `authenticated` and
@@ -219,7 +219,7 @@ Lose this machine without a copy, and the backups it made become permanently
 unreadable ciphertext.
 
 ```bash
-borg key export ssh://borgserver/repo/OWN/user1-os1-pc1 /secure/offline/user1-os1-pc1.borgkey
+borg key export ssh://borgserver/repo/user1-os1-pc1 /secure/offline/user1-os1-pc1.borgkey
 ```
 
 Then, and this is the part most often skipped:
@@ -236,7 +236,7 @@ Verify that the copy actually works before you rely on it, on a different
 machine if you can:
 
 ```bash
-borg key import ssh://borgserver/repo/OWN/user1-os1-pc1 /secure/offline/user1-os1-pc1.borgkey
+borg key import ssh://borgserver/repo/user1-os1-pc1 /secure/offline/user1-os1-pc1.borgkey
 ```
 
 An untested backup of the key is a guess. See
@@ -281,7 +281,7 @@ Three consequences follow:
 ## 5. Run backups
 
 ```bash
-export BORG_REPO=ssh://borgserver/repo/OWN/user1-os1-pc1
+export BORG_REPO=ssh://borgserver/repo/user1-os1-pc1
 
 borg create --stats --compression zstd \
     ::'{hostname}-{now:%Y-%m-%dT%H:%M:%S}' \
@@ -319,7 +319,7 @@ Description=Borg backup
 
 [Service]
 Type=oneshot
-Environment=BORG_REPO=ssh://borgserver/repo/OWN/user1-os1-pc1
+Environment=BORG_REPO=ssh://borgserver/repo/user1-os1-pc1
 Environment=BORG_PASSCOMMAND=cat %h/.config/borg/passphrase
 ExecStart=/usr/bin/borg create --compression zstd --exclude-caches ::{hostname}-{now:%%Y-%%m-%%dT%%H:%%M:%%S} %h /etc
 ```
@@ -400,7 +400,7 @@ A reinstalled machine has no key, so restore that first from the offline copy
 you made in Chapter 3.2:
 
 ```bash
-borg key import ssh://borgserver/repo/OWN/user1-os1-pc1 /secure/offline/user1-os1-pc1.borgkey
+borg key import ssh://borgserver/repo/user1-os1-pc1 /secure/offline/user1-os1-pc1.borgkey
 borg list ::
 ```
 

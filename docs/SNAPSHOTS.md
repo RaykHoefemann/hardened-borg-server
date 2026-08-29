@@ -18,7 +18,7 @@ Point-in-time snapshots of `HOST_REPO_BASE` — the storage this server's client
 
 Only `HOST_REPO_BASE` — client repositories — is snapshotted. `HOST_CONFIG_BASE` (`clients.conf`, `config/keys/`) and `HOST_LOG_BASE` are deliberately out of scope: they live inside the git checkout, not on the quota-enforcing storage volume, and are cheap to reconstruct. If a client's directory survives a `HOST_REPO_BASE`-only restore but its `clients.conf` entry does not, that is what [`04-reattach-client.sh`](OPERATIONS.md#921-04-reattach-clientsh) is for.
 
-The repository path structure this tooling walks and restores into — `HOST_REPO_BASE/<group>/<client>`, with `<client>` globally unique across groups — is defined in [Design](DESIGN.md) Chapter 1.2.3 and is a precondition, not an assumption: see "Layout on disk" below for how each script enforces or checks it.
+The repository path structure this tooling walks and restores into — `HOST_REPO_BASE/<client>`, with `<client>` globally unique — is defined in [Design](DESIGN.md) Chapter 1.2.3 and is a precondition, not an assumption: see "Layout on disk" below for how each script enforces or checks it.
 
 This is also not a general-purpose, multi-container host snapshot tool. If this host runs other containers with their own data on the same physical disk, each needs its own, independently-scheduled equivalent — this tooling only ever touches its own `${CONTAINER}` branch (see "Layout" below), by construction.
 
@@ -36,14 +36,12 @@ This is also not a general-purpose, multi-container host snapshot tool. If this 
 ## 3. Layout on disk
 
 ```
-${SNAPSHOT_BASE}/<group>/<client>/<timestamp>/
+${SNAPSHOT_BASE}/<client>/<timestamp>/
 ```
 
-**The tree mirrors `HOST_REPO_BASE/<group>/<client>` exactly** ([Design](DESIGN.md) Chapter 1.2.3) — same shape, so an operator reads one the way they read the other, which is the point: identical structures, fewer ways to reach for the wrong path.
+**The tree mirrors `HOST_REPO_BASE/<client>` exactly** ([Design](DESIGN.md) Chapter 1.2.3) — same flat shape, so an operator reads one the way they read the other, which is the point: identical structures, fewer ways to reach for the wrong path.
 
-Nested **group, then client, then timestamp** — the timestamp is the deepest level, never higher. A generation-first layout (`<timestamp>/<client>/...`) would make the timestamp, not the client, the smallest unit that could be pruned, so removing one compromised client's history would mean touching every other client's snapshots for the same window too. This layout keeps `${SNAPSHOT_BASE}/<group>/<client>/` as the single prunable unit: "remove everything belonging to client X" — the operation needed for a compromised client, a client's own repository reset, or complete client removal — is clearing the immutable flag and deleting once under that one directory, with every other client's history structurally untouched.
-
-**The group is in the path but not in the scripts' arguments.** `75-`/`76-`/`77-` still take `<client>` alone and resolve `<group>` from the tree by glob (`${SNAPSHOT_BASE}/*/<client>/`). [Design](DESIGN.md) 1.2.3 requires client names to be globally unique across `OWN` and `MIRROR` and the provisioning scripts enforce it, so that glob matches exactly one group; if it ever matched two — the invariant violated out of band — the script refuses rather than guessing. Carrying the group in the path is what makes the snapshot tree structurally collision-proof even in that case. [Verification](VERIFICATION.md) checks 3C, 3D and 11D are the standing test that the structure holds.
+Nested **client, then timestamp** — the timestamp is the deepest level, never higher. A generation-first layout (`<timestamp>/<client>/...`) would make the timestamp, not the client, the smallest unit that could be pruned, so removing one compromised client's history would mean touching every other client's snapshots for the same window too. This layout keeps `${SNAPSHOT_BASE}/<client>/` as the single prunable unit: "remove everything belonging to client X" — the operation needed for a compromised client, a client's own repository reset, or complete client removal — is clearing the immutable flag and deleting once under that one directory, with every other client's history structurally untouched.
 
 Timestamps are `YYYYMMDDTHHMMSSZ` (UTC, ISO-8601 basic, e.g. `20260825T210335Z`) — the exact value every script below both produces and accepts, so one is always copy-pasteable out of another's output.
 
@@ -53,7 +51,7 @@ Timestamps are `YYYYMMDDTHHMMSSZ` (UTC, ISO-8601 basic, e.g. `20260825T210335Z`)
 ./snapshots/70-create-snapshot.sh
 ```
 
-No arguments. Sweeps every client currently found under `HOST_REPO_BASE` (discovered by walking the filesystem, not by reading `clients.conf` — a client with a missing or wrong config entry is still protected) and, for each: `sudo cp -a --reflink=always` into a new `${SNAPSHOT_BASE}/<group>/<client>/<timestamp>/`, then `sudo chattr -R +i` to make it read-only, rename-proof and delete-proof — verified back with `lsattr` rather than trusting the exit code. One client failing does not stop the others; the run's exit status reflects whether all of them succeeded.
+No arguments. Sweeps every client currently found under `HOST_REPO_BASE` (discovered by walking the filesystem, not by reading `clients.conf` — a client with a missing or wrong config entry is still protected) and, for each: `sudo cp -a --reflink=always` into a new `${SNAPSHOT_BASE}/<client>/<timestamp>/`, then `sudo chattr -R +i` to make it read-only, rename-proof and delete-proof — verified back with `lsattr` rather than trusting the exit code. One client failing does not stop the others; the run's exit status reflects whether all of them succeeded.
 
 **Copying a live, actively-written repository is safe — tested, not assumed.** A `cp -a` walk is not atomic the way a block-layer snapshot would be, so an obvious worry is a transaction committing mid-copy: an index that names a segment the copy never actually captured. Tested empirically (Borg 1.2.8): a deterministic worst case built directly (segments copied before a second archive committed, then the index copied after — an index referencing more than the segments present), the reverse ordering, and a real `borg create` interrupted mid-write by a plain `cp -a` all came back clean under `borg check`. On a cache-less first access Borg does not appear to trust a copied index at face value — it rebuilds the true state from the segments actually present in `data/`, the same replay a hard crash already relies on. `70-create-snapshot.sh` therefore does one unordered copy per client, no special-casing of `index`/`hints` versus `data/`.
 

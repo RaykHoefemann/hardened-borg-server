@@ -17,21 +17,18 @@ All client access is config-driven. Nothing is provisioned automatically beyond 
 ## 7.1. clients.conf
 
 - **File:** `config/clients.conf`
-- **Format:** `<client>:<group>:<repo>:<quota>`
-- **Groups:**
-  - `OWN` – internal clients from your own network
-  - `MIRROR` – external clients (e.g. friends, offsite partners)
+- **Format:** `<client>:<repo>:<quota>`
 - **Quota:** mandatory, format `<number>G` (e.g. `10G`, `50G`). There is no `unlimited` value — every client must have an explicit quota.
 
-The repository path structure — `<repo>` is always `/repo/<group>/<client>`, `<client>` is globally unique across groups — is defined once in [Design](DESIGN.md) Chapter 1.2.3 and is the source of truth for every script, test and document here.
+The repository path structure — `<repo>` is always `/repo/<client>`, `<client>` globally unique — is defined once in [Design](DESIGN.md) Chapter 1.2.3 and is the source of truth for every script, test and document here. There is no client group; separating trust levels is a second instance ([Deployment](DEPLOYMENT.md) 6.2.4).
 
 **Example:**
 
 ```
-user1-os1-pc1:OWN:/repo/OWN/user1-os1-pc1:50G
-user2-os1-pc1:OWN:/repo/OWN/user2-os1-pc1:50G
-user-pc2:OWN:/repo/OWN/user-pc2:20G
-friend1:MIRROR:/repo/MIRROR/friend1:200G
+user1-os1-pc1:/repo/user1-os1-pc1:50G
+user2-os1-pc1:/repo/user2-os1-pc1:50G
+user-pc2:/repo/user-pc2:20G
+friend1:/repo/friend1:200G
 ```
 
 > A missing or empty `clients.conf` is a valid state, not an error — it is what
@@ -117,7 +114,7 @@ location: Frankfurt, DE
 contact: admin@example.com
 
 [software]
-version: 0.2.1
+version: 1.0.0
 source: https://github.com/RaykHoefemann/hardened-borg-server
 
 [client]
@@ -249,16 +246,15 @@ Run as the normal operator user, not as root — only the individual
 there) for the operations that need `CAP_SYS_ADMIN`.
 
 ```bash
-./scripts/00-ssh-create-user.sh <username> <group> <quota>
+./scripts/00-ssh-create-user.sh <username> <quota>
 ```
 
-- `<group>`: `OWN` or `MIRROR`
 - `<quota>`: mandatory, format `<number>G` (e.g. `50G`)
 
 **Example:**
 
 ```bash
-./scripts/00-ssh-create-user.sh user1-os1-pc1 OWN 50G
+./scripts/00-ssh-create-user.sh user1-os1-pc1 50G
 ```
 
 It creates the client but does not authorize it: that takes the key (Chapter 9.3) and a container restart (Chapter 9.10), and the script closes by naming both. `authorized_keys` is generated at container start and nowhere else, and a client whose key file is still empty is skipped there — so restarting before the key is set authorizes nobody.
@@ -271,7 +267,7 @@ Reconnects `clients.conf` to a client whose repository directory, host ownership
 ./scripts/04-reattach-client.sh <username>
 ```
 
-**What it reads, all from the directory itself, and consults `clients.conf` for nothing:** the group (which of `HOST_REPO_BASE/OWN/<username>` or `HOST_REPO_BASE/MIRROR/<username>` exists), the XFS project id, and the quota currently enforced. From those alone it writes one line to `clients.conf` and, unless a key file already survived, one empty one — nothing it did not already find on disk.
+**What it reads, all from the directory itself, and consults `clients.conf` for nothing:** the XFS project id and the quota currently enforced on `HOST_REPO_BASE/<username>`. From those alone it writes one line to `clients.conf` and, unless a key file already survived, one empty one — nothing it did not already find on disk.
 
 **It needs no `podman unshare` and no mutating `xfs_quota` call.** Nothing on the filesystem is created or changed — the directory, its ownership and its project id are already correct, which is the whole precondition for reattaching rather than provisioning. The only privileged call is the same read-only `xfs_quota -x -c 'state -p'` enforcement check `00`/`02`/`03` all make before trusting anything quota-related.
 
@@ -279,7 +275,6 @@ Reconnects `clients.conf` to a client whose repository directory, host ownership
 
 - `clients.conf` already holding this username — that is not this script's problem; it points at Chapter 9.4.1 instead.
 - No repository directory for this username at all — nothing to reattach; it points at Chapter 9.2 instead.
-- A repository directory under more than one group, or under a group that is neither `OWN` nor `MIRROR` — needs manual review.
 - No readable XFS project id on the directory — an unexpected state this script does not build a fresh id for (that would be Chapter 9.4.1's job, but `03` itself requires the `clients.conf` entry this script exists to create) — needs manual review.
 - No limit currently enforced (`df` reports the whole volume) — recording that in `clients.conf` would recreate exactly the drift Chapter 9.5 exists to catch.
 - An enforced quota that is not a whole number of GiB — `clients.conf`'s `<n>G` format cannot represent it, and rounding would record a limit different from the one actually enforced. This can only happen if something outside this project's tooling set the limit; correct it to a whole GiB with `xfs_quota` directly, then re-run.
@@ -287,8 +282,8 @@ Reconnects `clients.conf` to a client whose repository directory, host ownership
 Otherwise it previews the reattachment the same way `00` previews a new client — current state (client absent from `clients.conf`, and so invisible to the volume's committed total) against after (the client declared with the quota already enforced) — and asks before writing anything:
 
 ```
-[reattach] Client:      user1-os1-pc1 (OWN)
-[reattach] Directory:   /var/mnt/extern1/borg-server/OWN/user1-os1-pc1
+[reattach] Client:      user1-os1-pc1
+[reattach] Directory:   /var/mnt/extern1/borg-server/user1-os1-pc1
 [reattach] Project id 1003, enforced limit 50.0 GiB -- reattaching as 50G
 
 [quota] Volume /var/mnt/extern1/borg-server — 3.6 TiB
@@ -389,7 +384,7 @@ Provisions the **filesystem** side of a client `clients.conf` already declares: 
 ./scripts/03-provision-client.sh <username>
 ```
 
-> **It is called *provision* and not *repair* for a reason.** It creates what is missing and nothing else. It does not bring back what was in the directory, it does not change a limit that is merely wrong, and it does not correct a group directory it did not create. A name promising more than that would be read as a promise in exactly the situation where the reader is in a hurry.
+> **It is called *provision* and not *repair* for a reason.** It creates what is missing and nothing else. It does not bring back what was in the directory, and it does not change a limit that is merely wrong. A name promising more than that would be read as a promise in exactly the situation where the reader is in a hurry.
 
 **Why this needs a script of its own.** A client has two halves and they are applied by different mechanisms. The SSH half — `clients.conf` plus `config/keys/*.pub` — is rendered from scratch by `build_authorized_keys.sh` at every container start, so it re-applies itself: put a key file back, restart, and the client is authorized again. The filesystem half was applied inline by `00-ssh-create-user.sh` and nowhere else, so there was no way to apply it a second time. A repository directory deleted by hand therefore left a client that nothing could put right: the server refuses it (`DENY: repository directory missing`), `02-change-user-quota.sh` refuses a directory it cannot find, and `00-ssh-create-user.sh` refuses a name `clients.conf` already holds. `02`'s own error even told the operator to assign a project id "manually first" — a step no script performed.
 
@@ -413,7 +408,6 @@ Provisions the **filesystem** side of a client `clients.conf` already declares: 
                  ./scripts/02-change-user-quota.sh user1-os1-pc1 50G
     ```
 
-- **It adds what is missing and changes nothing else.** A group directory (`<HOST_REPO_BASE>/OWN`, `/MIRROR`) that exists with unexpected ownership is reported, not corrected.
 - **It brings back no archives.** What it restores is the client's *access*. A recreated directory is empty; everything the client stored went with the deleted one, and the client has to run `borg init` again ([Client Usage](CLIENTUSE.md) chapter 3.1). The script says so before asking, because it is the one consequence an operator must not discover afterwards.
 
 Like `00` and `02` it previews the change as a share of the volume and asks before writing anything, refuses a recorded quota above 99% of the volume, and needs no container restart afterwards — nothing under `/config` changes. Run it as **the same user that runs the container**, for the reason in Chapter 9.2.
@@ -422,14 +416,13 @@ Re-running it on a client that is already correct is a no-op that says so, which
 
 ## 9.5. 09-show-all-users.sh
 
-Prints an overview of every configured client, grouped by `OWN`/`MIRROR`, with each client's configured quota, the quota **actually enforced** for it, and its **live** storage usage — the latter two read the same way the client `info` channel reads them (directly from the enforcing XFS project quota via `df`, see Chapter 8), not from the static `clients.conf` value. Also reports the physical usage and free space of the underlying storage volume. Read-only, does not require root.
+Prints an overview of every configured client — one flat table — with each client's configured quota, the quota **actually enforced** for it, and its **live** storage usage — the latter two read the same way the client `info` channel reads them (directly from the enforcing XFS project quota via `df`, see Chapter 8), not from the static `clients.conf` value. Also reports the physical usage and free space of the underlying storage volume. Read-only, does not require root.
 
 ```bash
 ./scripts/09-show-all-users.sh
 ```
 
 ```
-=== OWN ===
 USERNAME                 QUOTA        % OF VOL  CONFIGURED   USED
 user1-os1-pc1            50.0 GiB     1%        50G          31.4 GiB of 50.0 GiB (63%)
 user2-os1-pc1            10.0 GiB     0%        20G (!)      8.1 GiB of 10.0 GiB (81%)
@@ -462,7 +455,7 @@ Counting it any other way would make the figure look *better* the more dangerous
 - `20G (!)` — it does not. The client is bound by the `QUOTA` column, whatever the file says. Re-apply the intended value with Chapter 9.4.
 - `none (!)` in `QUOTA` — no project quota governs that directory at all (`df` reports the whole volume), so the client is bounded by nothing. Typically a directory that predates quota enforcement or lost its project id.
 - `n/a (!)` in `QUOTA`, beside `MISSING on host` in `USED` — the repository directory named in `clients.conf` does not exist. Nothing is enforced for that client, and nothing serves it either: its next connection is refused with `DENY: repository directory missing – needs operator action`. Neither the wrapper nor the container's key generator will create one, deliberately — a directory made in there is owned by the wrong user and carries no XFS project id, so it would serve the client with no quota at all. Provisioned again on the host with `03-provision-client.sh` (Chapter 9.4.1), which recreates the directory but not what was in it.
-- `n/a (!)` in `QUOTA`, beside `unreadable` in `USED` — the directory exists and `df` reported nothing for it. Typically a directory in the path that can no longer be traversed — `statfs()` needs search permission on every *parent*, not on the target, so this is a group directory or `HOST_REPO_BASE` rather than the client's own — or a volume that is no longer mounted. Nothing is known about that client's limit in either direction, which is why it is marked: a figure that could not be measured is not a figure that agrees.
+- `n/a (!)` in `QUOTA`, beside `unreadable` in `USED` — the directory exists and `df` reported nothing for it. Typically a directory in the path that can no longer be traversed — `statfs()` needs search permission on every *parent*, not on the target, so this is `HOST_REPO_BASE` rather than the client's own — or a volume that is no longer mounted. Nothing is known about that client's limit in either direction, which is why it is marked: a figure that could not be measured is not a figure that agrees.
 - `n/a (!)` in `QUOTA`, beside `n/a (HOST_REPO_BASE not set)` in `USED` — `config.sh` carries no repository base, so nothing could be measured for any client.
 
 `(!)` always means the same thing — **this needs attention, something here is not right** — and always comes with an explanation, either in the cell itself or in a paragraph under the listing. What differs is the line it sits on, and that is what tells you which kind of problem it is:
@@ -640,8 +633,8 @@ Content without a `config` is not a state this server or borg produces on its ow
 Run as **the same user that runs the container**, for the reason given in Chapter 9.2: the repository files belong to the container's `borg` user, and `podman unshare` resolves that mapping for *that user's* namespace only.
 
 ```bash
-podman unshare ls -A   <HOST_REPO_BASE>/<group>/<client>
-podman unshare find    <HOST_REPO_BASE>/<group>/<client>/data -type f
+podman unshare ls -A   <HOST_REPO_BASE>/<client>
+podman unshare find    <HOST_REPO_BASE>/<client>/data -type f
 ```
 
 - Exactly `README`, `config` and `data`, with the `find` printing **nothing** — the skeleton. This is the first row of the table, and clearing is safe.
@@ -650,8 +643,8 @@ podman unshare find    <HOST_REPO_BASE>/<group>/<client>/data -type f
 **Step 2 — clear the contents, never the directory.**
 
 ```bash
-podman unshare find <HOST_REPO_BASE>/<group>/<client> -mindepth 1 -delete
-podman unshare ls -A <HOST_REPO_BASE>/<group>/<client>          # must print nothing
+podman unshare find <HOST_REPO_BASE>/<client> -mindepth 1 -delete
+podman unshare ls -A <HOST_REPO_BASE>/<client>          # must print nothing
 ```
 
 `-mindepth 1` is the whole point: it empties the directory and leaves the directory itself standing. Verify with `ls -A` rather than `ls` — the wrapper's "is this repository fresh" test counts hidden entries too, so a single leftover dotfile keeps the client refused, and with a *different* message (`repo non-empty but config missing`) that sends the next reader to the wrong chapter.
@@ -666,7 +659,7 @@ The way back is `03-provision-client.sh` (Chapter 9.4.1), which provisions the d
 
 > **Earlier releases were worse here, and the reason is worth knowing.** Both the wrapper and the container's key generator used to `mkdir -p` a missing repository directory. Neither could finish the job — a directory created in the container carries no project id and the wrong owner — so the deletion produced a client that was *served with no quota at all*, bounded by the volume rather than by its limit, which is the first failure shape of verification check `5.5B`. It also made the state unstable: `MISSING on host` until the next container start, then silently something else. Both `mkdir` calls are gone; the refusals above are what replaced them.
 
-**A deletion this chapter is not about, and which is worse.** Everything above concerns the *client's own* directory. Removing a **group** directory — `<HOST_REPO_BASE>/OWN` or `/MIRROR` — takes every client under it with it, and each of them then meets the same refusal. `03-provision-client.sh` recreates the group directory as a side effect of recreating the first client under it, but it has to be run once per client, and each of them comes back empty. There is no `-mindepth 1` version of that mistake to fall back on, which is the one good reason to keep the deletion command narrow enough to name a single client.
+**A deletion this chapter is not about, and which is worse.** Everything above concerns one *client's own* directory. `rm -rf <HOST_REPO_BASE>` itself takes every client with it, and each of them then meets the same refusal — `03-provision-client.sh` has to be run once per client and each comes back empty. There is no `-mindepth 1` version of that mistake to fall back on, which is the one good reason to keep the deletion command narrow enough to name a single client. (This is also why the flat `HOST_REPO_BASE/<client>` layout has no intermediate group directory to lose in one stroke.)
 
 **Step 3 — the client re-initializes.**
 

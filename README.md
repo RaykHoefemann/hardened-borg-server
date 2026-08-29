@@ -9,7 +9,7 @@ limits are enforced by the host filesystem — not merely tracked. No web UI, no
 orchestration, no auxiliary interfaces: a small, predictable, privacy-preserving
 attack surface by design.
 
-> **Status:** Current stable release `v0.2.1` (storage snapshots). See
+> **Status:** Current stable release `v1.0.0`. See
 > [Deployment](docs/DEPLOYMENT.md) for how to run it.
 
 ---
@@ -39,7 +39,7 @@ attack surface by design.
 - **Minimal, auditable surface** — no orchestration layer, deterministic
   execution, centralized logging.
 - **Multi-client + offsite-partner ingestion** — own devices and friends'
-  machines (the `MIRROR` group) back up *into* this server; it is a
+  machines back up *into* this server; it is a
   destination, never a source that pushes elsewhere (see [Roadmap](ROADMAP.md)
   11.2).
 

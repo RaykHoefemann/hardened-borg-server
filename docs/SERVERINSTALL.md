@@ -8,6 +8,23 @@
 
 ---
 
+> [!IMPORTANT]
+> **Upgrading from 0.x — read this first.** Release **1.0.0** removes the
+> `OWN`/`MIRROR` client group. `clients.conf` lines go from
+> `name:group:repo:quota` to `name:repo:quota`, and every path drops the
+> group level (`/repo/<client>`, `HOST_REPO_BASE/<client>`,
+> `SNAPSHOT_BASE/<client>/`). **There is no in-place migration.** A 0.x
+> installation must be set up fresh on 1.0.0: recreate the client
+> directories and re-provision each client with
+> `00-ssh-create-user.sh <username> <quota>`. Existing repositories can be
+> moved into the new flat layout by hand (`mv HOST_REPO_BASE/OWN/<c>
+> HOST_REPO_BASE/<c>`) and reattached with `04-reattach-client.sh`, but that
+> is an operator-run recovery, not a supported upgrade path. The group was
+> organisational only ([Design](DESIGN.md) 1.2.3); separating trust levels
+> is now a second instance ([Deployment](DEPLOYMENT.md) 6.2.4).
+
+---
+
 # Server Installation
 
 This is the one path to follow when setting up hardened-borg-server on a new
@@ -58,7 +75,7 @@ is there if you want it — it does nothing until you run it.)
 
 ```bash
 INSTALL_PATH=~/containers/borg-server
-RELEASE=v0.2.1
+RELEASE=v1.0.0
 mkdir -p "$INSTALL_PATH"
 
 git clone --branch "$RELEASE" --depth 1 \
@@ -276,10 +293,9 @@ created and handed to the container's `borg` user through `podman unshare`,
 which resolves that user's rootless UID mapping:
 
 ```bash
-./scripts/00-ssh-create-user.sh user1-os1-pc1 OWN 50G
+./scripts/00-ssh-create-user.sh user1-os1-pc1 50G
 ```
 
-- Group is `OWN` (your own devices) or `MIRROR` (external/offsite partners)
 - Quota is mandatory — there is no unlimited option. The script shows it as a
   share of the volume, together with the sum across all clients as it would
   stand afterwards, and asks before creating anything; a quota above 99% of the

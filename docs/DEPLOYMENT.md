@@ -24,7 +24,7 @@ Architecture overview and how to run the server — from an ad-hoc test containe
 
 ## 5.2. Backup Flows
 
-- Client → Server (SSH / optionally VPN) — own devices (`OWN`) and external partners (`MIRROR`); a partner's own server connects here as a client too
+- Client → Server (SSH / optionally VPN) — your own devices and any external partners; a partner's own server connects here as a client too
 - Server → removable media — the operator's manual offline export ([Roadmap](../ROADMAP.md) 11.2). The server never pushes to another server; offsite redundancy is a client-side second `borg create` target (see [Roadmap](../ROADMAP.md) 11.2, [Client Usage](CLIENTUSE.md) Chapter 9)
 
 ---
@@ -195,7 +195,7 @@ Run it outside a backup window: the restart interrupts any transfer in progress,
 
 ```bash
 cd "$INSTALL_PATH"
-NEW=v0.2.1
+NEW=v1.0.0
 
 # 1. Record where you are, so you can tell afterwards that something changed
 ./scripts/99-container-status.sh | head -10
@@ -246,8 +246,8 @@ The `diff`s in step 6 are the point of the backup: each shows both your own sett
 The report opens with two pairs, and an upgrade has to move both ([Operations](OPERATIONS.md) Chapter 9.11). `Host scripts` and `Running version` must both name the new release; `Configured image` and `Running image` must both carry the digest resolved in step 4:
 
 ```
-Host scripts:     0.2.1
-Running version:  0.2.1
+Host scripts:     1.0.0
+Running version:  1.0.0
 Configured image: ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest from step 4>
 Running image:    ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest from step 4>
 ```

@@ -137,16 +137,17 @@ Every client is bound to exactly one repository path, and that path is the isola
 **The repository path is fixed by structure, not chosen per client:**
 
 ```
-/repo/<group>/<client>
+/repo/<client>
 ```
 
-- **`/repo/`** — the container's repository mount (`CONTAINER_REPO_BASE`). On the host the same directory is `HOST_REPO_BASE/<group>/<client>`; the two are one bind mount, so every host-side script and the container operate on the identical path.
-- **`<group>`** — exactly **`OWN`** (the operator's own devices) or **`MIRROR`** (external partners, e.g. friends). `00-ssh-create-user.sh`, `03-provision-client.sh` and `04-reattach-client.sh` accept no other value; `build_authorized_keys.sh` additionally constrains it to `[A-Za-z0-9_-]+` at render time.
-- **`<client>`** — the client's name: `[A-Za-z0-9_-]`, non-empty, and not starting with `-` (a leading dash could be read as an option flag downstream). Every script that accepts a client name enforces this charset, and so does `build_authorized_keys.sh` at render time. The name is also **globally unique across both groups** — the provisioning scripts each refuse a name already present in `clients.conf`, regardless of group. A name is therefore a complete identifier on its own: the key file is `config/keys/<client>.pub`, and the snapshot tooling ([Snapshots](SNAPSHOTS.md)) takes `<client>` alone and resolves the group from the tree. The info-channel file (`/run/borg-info/repo/<group>/<client>.txt`) and the snapshot tree (`SNAPSHOT_BASE/<group>/<client>/`) both repeat the full `<group>/<client>` path — deliberately, so those trees read the same as `HOST_REPO_BASE` and cannot be walked into the wrong place even if the uniqueness rule is somehow violated.
+- **`/repo/`** — the container's repository mount (`CONTAINER_REPO_BASE`). On the host the same directory is `HOST_REPO_BASE/<client>`; the two are one bind mount, so every host-side script and the container operate on the identical path.
+- **`<client>`** — the client's name: `[A-Za-z0-9_-]`, non-empty, and not starting with `-` (a leading dash could be read as an option flag downstream). Every script that accepts a client name enforces this charset, and so does `build_authorized_keys.sh` at render time. The name is a complete identifier on its own: the key file is `config/keys/<client>.pub`, the info-channel file is `/run/borg-info/repo/<client>.txt`, and the snapshot tree is `SNAPSHOT_BASE/<client>/`. The provisioning scripts refuse a name already present in `clients.conf`.
 
-**`clients.conf` is the declaration.** Each line is `name:group:repo:quota`, and `repo` MUST be exactly `/repo/<group>/<name>` — not a free field. `build_authorized_keys.sh` copies it verbatim into the forced command, so a value departing from the structure is a misconfiguration, not a customization. Verification checks 3B–3D hold the three representations — `clients.conf`, `authorized_keys`, and the on-disk tree — to the same structure.
+**`clients.conf` is the declaration.** Each line is `name:repo:quota`, and `repo` MUST be exactly `/repo/<name>` — not a free field. `build_authorized_keys.sh` copies it verbatim into the forced command, so a value departing from the structure is a misconfiguration, not a customization. Verification checks 3B–3D hold the three representations — `clients.conf`, `authorized_keys`, and the on-disk tree — to the same structure.
 
-**Inside `<group>/<client>` is an opaque Borg repository** (`data/`, `config`, `index.*`, `hints.*`, …). The server never reads it (Chapter 2.1). The XFS project quota that bounds the client is set on the `<group>/<client>` directory itself (1.1.3). No cross-repository filesystem access exists through the application layer.
+**Inside `/repo/<client>` is an opaque Borg repository** (`data/`, `config`, `index.*`, `hints.*`, …). The server never reads it (Chapter 2.1). The XFS project quota that bounds the client is set on the `<client>` directory itself (1.1.3). No cross-repository filesystem access exists through the application layer.
+
+**No client groups.** Earlier releases put an `OWN`/`MIRROR` group between `/repo/` and `<client>`. It was organisational only — the isolation above is per client, and nothing about it, append-only, the keyfile policy or the quota ever differed by group. Separating trust levels — your own devices from external partners, say — is done instead by running a **second instance** of this project (a distinct `CONTAINER` and `SSH_PORT`, see [Deployment](DEPLOYMENT.md) 6.2.4). That is a real boundary: a separate container, a separate published port, a separate repository tree, and — if the two run under different host service accounts — a separate uid a container escape would land on. A path convention was never any of that. The removal is a breaking change; see the migration note at the top of [Server Installation](SERVERINSTALL.md).
 
 ### 1.2.4. Append-Only Semantics
 
@@ -254,7 +255,7 @@ This check is tied to the Borg **1.x** repository format: it reads the manifest'
 
 Logging has two destinations, and they carry deliberately different data.
 
-**`/log` — provisioning and startup.** `entrypoint.log` and `build_authorized_keys.log` record the container's startup sequence and how `authorized_keys` was generated. These entries do reference **client names, groups, repository paths and quotas** — a provisioning log that cannot name what it provisioned is useless for diagnosing a failed client setup. All of it is data that already lives in `clients.conf` on the same host, so this exposes nothing the operator does not already hold.
+**`/log` — provisioning and startup.** `entrypoint.log` and `build_authorized_keys.log` record the container's startup sequence and how `authorized_keys` was generated. These entries do reference **client names, repository paths and quotas** — a provisioning log that cannot name what it provisioned is useless for diagnosing a failed client setup. All of it is data that already lives in `clients.conf` on the same host, so this exposes nothing the operator does not already hold.
 
 What `/log` does **not** contain: backup content, archive names, per-backup activity, or client IP addresses. Nothing there records what a client backed up, or when.
 
@@ -365,7 +366,7 @@ Documented as roadmap items, and **absent today**. A deployment must be planned 
 
 | Gap | Consequence today | Item |
 |---|---|---|
-| No offline export helper | Copying the operator's own (`OWN`) repositories to removable media is a hand-run `rsync` | 11.2 |
+| No offline export helper | Copying repositories to removable media is a hand-run `rsync` | 11.2 |
 | No scheduled integrity verification | On-disk corruption is detected when data is read, not before | 11.3 |
 
 Deliberately **not** on this list because it will not be built: automated pruning (11.1). Nothing is ever deleted; capacity is bounded by quotas and managed by monitoring instead ([Operations](OPERATIONS.md) 10).
