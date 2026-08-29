@@ -11,7 +11,7 @@
 #   02-change-user-quota.sh  the preview, the refusal of a limit that cannot be
 #                            enforced, and the rollback of one that does not
 #                            verify
-#   09-show-all-users.sh     clients.conf parsing, grouping, quota reporting
+#   09-show-all-users.sh     clients.conf parsing and quota reporting
 #   99-container-status.sh   how a unit's state is rendered
 #   config.sh                the quota helpers shared by 00/02/09
 #
@@ -34,7 +34,7 @@
 # 09 is deliberately exercised under bash-invoked-as-sh as well. Its shebang is
 # /bin/sh, which is dash on Debian but bash on Fedora CoreOS — the platform this
 # project requires — and a bug that only appears under bash is exactly what
-# slipped through before (see the GROUPS regression, section 9.1).
+# slipped through before (section 9.1).
 #
 # Requires: bash, ssh-keygen.
 # Usage:    tests/host-scripts.sh
@@ -296,7 +296,7 @@ assert "0.9 nothing in the image's sshd_config makes those directives conditiona
 # =========================================================================
 
 new_tree
-printf 'user1:OWN:/repo/OWN/user1:50G\n' > "$T/config/clients.conf"
+printf 'user1:/repo/user1:50G\n' > "$T/config/clients.conf"
 
 run sh "$T/scripts/01-ssh-set-user-key.sh"
 [ "$RC" -ne 0 ]; assert "1.1 missing arguments rejected" $?
@@ -310,27 +310,27 @@ run sh "$T/scripts/01-ssh-set-user-key.sh" user1 "$WORK/id.pub"
 assert "1.3 valid key from a file is stored" $?
 
 new_tree
-printf 'user1:OWN:/repo/OWN/user1:50G\n' > "$T/config/clients.conf"
+printf 'user1:/repo/user1:50G\n' > "$T/config/clients.conf"
 run sh "$T/scripts/01-ssh-set-user-key.sh" user1 "$(cat "$WORK/id.pub")"
 { [ "$RC" -eq 0 ] && grep -q 'ssh-ed25519' "$T/config/keys/user1.pub"; }
 assert "1.4 valid key passed as a string is stored" $?
 
 new_tree
-printf 'user1:OWN:/repo/OWN/user1:50G\n' > "$T/config/clients.conf"
+printf 'user1:/repo/user1:50G\n' > "$T/config/clients.conf"
 run sh "$T/scripts/01-ssh-set-user-key.sh" user1 "this is not a key"
 { [ "$RC" -ne 0 ] && [ ! -e "$T/config/keys/user1.pub" ]; }
 assert "1.5 malformed key rejected and the partial file removed" $?
 
 # Overwrite confirmation
 new_tree
-printf 'user1:OWN:/repo/OWN/user1:50G\n' > "$T/config/clients.conf"
+printf 'user1:/repo/user1:50G\n' > "$T/config/clients.conf"
 cp "$WORK/id.pub" "$T/config/keys/user1.pub"
 OUT="$(printf 'n\n' | sh "$T/scripts/01-ssh-set-user-key.sh" user1 "$WORK/id2.pub" 2>&1)"; RC=$?
 diff -q "$WORK/id.pub" "$T/config/keys/user1.pub" >/dev/null
 assert "1.6 declining the overwrite prompt keeps the existing key" $?
 
 new_tree
-printf 'user1:OWN:/repo/OWN/user1:50G\n' > "$T/config/clients.conf"
+printf 'user1:/repo/user1:50G\n' > "$T/config/clients.conf"
 cp "$WORK/id.pub" "$T/config/keys/user1.pub"
 OUT="$(printf 'y\n' | sh "$T/scripts/01-ssh-set-user-key.sh" user1 "$WORK/id2.pub" 2>&1)"; RC=$?
 diff -q "$WORK/id2.pub" "$T/config/keys/user1.pub" >/dev/null
@@ -340,7 +340,7 @@ assert "1.7 confirming the overwrite replaces the key" $?
 # client would lose access on the next container restart, and the operator
 # would have no copy left to restore from.
 new_tree
-printf 'user1:OWN:/repo/OWN/user1:50G\n' > "$T/config/clients.conf"
+printf 'user1:/repo/user1:50G\n' > "$T/config/clients.conf"
 cp "$WORK/id.pub" "$T/config/keys/user1.pub"
 OUT="$(printf 'y\n' | sh "$T/scripts/01-ssh-set-user-key.sh" user1 "not a key" 2>&1)"; RC=$?
 [ -s "$T/config/keys/user1.pub" ] && diff -q "$WORK/id.pub" "$T/config/keys/user1.pub" >/dev/null
@@ -383,8 +383,8 @@ assert "2.4 ... and converts the largest value it accepts exactly" $?
 # The point of quota_verify: a limit that xfs_quota accepted still has to be
 # the limit the kernel enforces on that directory. Only the read-back proves
 # it, so the two directions below are what 00 and 02 stake their exit codes on.
-df_stub "$T/repo/OWN/user1:$((50 * GIB)):$((5 * GIB))"
-run_stubbed sh "$DRV" quota_verify "$T/repo/OWN/user1" 50G
+df_stub "$T/repo/user1:$((50 * GIB)):$((5 * GIB))"
+run_stubbed sh "$DRV" quota_verify "$T/repo/user1" 50G
 { [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q '50.0 GiB is in effect'; }
 assert "2.5 quota_verify accepts a limit that is really enforced" $?
 
@@ -394,8 +394,8 @@ assert "2.6 quota_verify shows current usage against the limit" $?
 # The dangerous case: the command succeeded but the directory is governed by
 # something else (wrong project id, quotas not enforcing) — here it still
 # reports the whole volume.
-df_stub "$T/repo/OWN/user1:$((4000 * GIB)):$((5 * GIB))"
-run_stubbed sh "$DRV" quota_verify "$T/repo/OWN/user1" 50G
+df_stub "$T/repo/user1:$((4000 * GIB)):$((5 * GIB))"
+run_stubbed sh "$DRV" quota_verify "$T/repo/user1" 50G
 { [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'NOT enforced'; }
 assert "2.7 quota_verify rejects a limit that is not in effect" $?
 
@@ -403,7 +403,7 @@ printf '%s' "$OUT" | grep -q '4000.0 GiB'
 assert "2.8 quota_verify names the limit that is actually enforced" $?
 
 # An unreadable directory must fail closed, never pass for lack of an answer.
-run_stubbed sh "$DRV" quota_verify "$T/repo/OWN/nonexistent-and-unstubbed" 50G
+run_stubbed sh "$DRV" quota_verify "$T/repo/nonexistent-and-unstubbed" 50G
 [ "$RC" -ne 0 ]; assert "2.9 quota_verify fails when nothing can be read back" $?
 
 # =========================================================================
@@ -416,7 +416,7 @@ echo
 # is every installation whose server was started before its first client
 # existed, i.e. the order SERVERINSTALL.md documents. The old fixture was bare
 # data, so a parser that treats comments as clients passed all of section 9
-# while producing a phantom group, two spurious "MISSING on host" rows and a
+# while producing a phantom client, spurious "MISSING on host" rows and a
 # client count of 12 on real installations.
 #
 # The two trailing lines are not from the real header. They are the shapes a
@@ -426,13 +426,13 @@ clients_conf_header() {
     cat <<'HDR'
 # Client roster — one line per client:
 #
-#   name:group:repo:quota
+#   name:repo:quota
 #
-# e.g.  user1-os1-pc1:OWN:/repo/OWN/user1-os1-pc1:50G
+# e.g.  user1-os1-pc1:/repo/user1-os1-pc1:50G
 #
-# group is OWN (your own devices) or MIRROR (external partners); quota is
-# mandatory and has the form <digits>G. Written by scripts/00-ssh-create-user.sh
-# — there is normally no reason to edit this file by hand.
+# repo is always /repo/<name>; quota is mandatory and has the form <digits>G.
+# Written by scripts/00-ssh-create-user.sh — there is normally no reason to
+# edit this file by hand.
 
    # indented comment
 HDR
@@ -442,24 +442,23 @@ setup_09() {
     new_tree
     {
       clients_conf_header
-      echo 'user1:OWN:/repo/OWN/user1:50G'
-      echo 'user2:OWN:/repo/OWN/user2:20G'
-      echo 'friend1:MIRROR:/repo/MIRROR/friend1:200G'
+      echo 'user1:/repo/user1:50G'
+      echo 'user2:/repo/user2:20G'
+      echo 'friend1:/repo/friend1:200G'
     } > "$T/config/clients.conf"
-    mkdir -p "$T/repo/OWN/user1" "$T/repo/OWN/user2" "$T/repo/MIRROR/friend1"
+    mkdir -p "$T/repo/user1" "$T/repo/user2" "$T/repo/friend1"
 }
 
-# 9.1 The GROUPS regression. In bash, GROUPS is a built-in array of the
-# operator's numeric group IDs and assignments to it are silently ignored, so
-# the group loop iterated over those instead of the configured group names —
-# printing no clients at all on any host where /bin/sh is bash.
+# 9.1/9.2 One flat table (groups were removed in 1.0.0). Run under bash-as-sh,
+# the platform this project requires, where the removed group loop used to hit
+# the GROUPS built-in and print nothing at all.
 setup_09
 run_in "$WORK/sh" "$T/scripts/09-show-all-users.sh"
-printf '%s' "$OUT" | grep -q '=== OWN ===' && printf '%s' "$OUT" | grep -q '=== MIRROR ==='
-assert "9.1 group headers come from clients.conf under bash-as-sh" $?
+for u in user1 user2 friend1; do printf '%s' "$OUT" | grep -q "$u" || { false; break; }; done
+assert "9.1 every configured client is listed under bash-as-sh" $?
 
-printf '%s' "$OUT" | grep -qE '^=== [0-9]+ ==='
-[ $? -ne 0 ]; assert "9.2 no numeric group ID is printed as a header" $?
+printf '%s' "$OUT" | grep -qE '^=== '
+[ $? -ne 0 ]; assert "9.2 no group headers are printed — one flat table" $?
 
 for u in user1 user2 friend1; do printf '%s' "$OUT" | grep -q "$u" || { false; break; }; done
 assert "9.3 every configured client is listed" $?
@@ -467,7 +466,7 @@ assert "9.3 every configured client is listed" $?
 # Same run under the system /bin/sh, whatever that is on this machine.
 setup_09
 run sh "$T/scripts/09-show-all-users.sh"
-printf '%s' "$OUT" | grep -q '=== OWN ===' && printf '%s' "$OUT" | grep -q '=== MIRROR ==='
+for u in user1 user2 friend1; do printf '%s' "$OUT" | grep -q "$u" || { false; break; }; done
 assert "9.4 same result under the system /bin/sh" $?
 
 printf '%s' "$OUT" | grep -q 'Total clients: 3'
@@ -476,7 +475,7 @@ assert "9.5 client count reported" $?
 # A repository directory that is absent on the host must be reported as such
 # rather than silently shown as empty usage.
 setup_09
-rm -rf "$T/repo/OWN/user2"
+rm -rf "$T/repo/user2"
 run_in "$WORK/sh" "$T/scripts/09-show-all-users.sh"
 printf '%s' "$OUT" | grep -q 'MISSING on host'
 assert "9.6 a missing repository directory is flagged" $?
@@ -490,9 +489,9 @@ assert "9.6 a missing repository directory is flagged" $?
 setup_09
 df_stub \
     "$T/repo:$((4000 * GIB)):$((100 * GIB))" \
-    "$T/repo/OWN/user1:$((50 * GIB)):$((5 * GIB))" \
-    "$T/repo/OWN/user2:$((20 * GIB)):0" \
-    "$T/repo/MIRROR/friend1:$((200 * GIB)):$((10 * GIB))"
+    "$T/repo/user1:$((50 * GIB)):$((5 * GIB))" \
+    "$T/repo/user2:$((20 * GIB)):0" \
+    "$T/repo/friend1:$((200 * GIB)):$((10 * GIB))"
 run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
 printf '%s' "$OUT" | grep -qE '^user1 +50\.0 GiB +1% +50G +5\.0 GiB of 50\.0 GiB \(10%\)'
 assert "9.7 the enforced limit is the quota shown, with clients.conf beside it" $?
@@ -504,9 +503,9 @@ printf '%s' "$OUT" | grep -q '(!)'
 setup_09
 df_stub \
     "$T/repo:$((4000 * GIB)):$((100 * GIB))" \
-    "$T/repo/OWN/user1:$((50 * GIB)):$((5 * GIB))" \
-    "$T/repo/OWN/user2:$((10 * GIB)):0" \
-    "$T/repo/MIRROR/friend1:$((200 * GIB)):$((10 * GIB))"
+    "$T/repo/user1:$((50 * GIB)):$((5 * GIB))" \
+    "$T/repo/user2:$((10 * GIB)):0" \
+    "$T/repo/friend1:$((200 * GIB)):$((10 * GIB))"
 run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
 printf '%s' "$OUT" | grep -qE '^user2 +10\.0 GiB +0% +20G \(!\)'
 assert "9.9 a limit differing from clients.conf shows the real one, config flagged" $?
@@ -519,9 +518,9 @@ assert "9.10 the drift hint is printed once a mismatch was seen" $?
 setup_09
 df_stub \
     "$T/repo:$((4000 * GIB)):$((100 * GIB))" \
-    "$T/repo/OWN/user1:$((4000 * GIB)):$((5 * GIB))" \
-    "$T/repo/OWN/user2:$((20 * GIB)):0" \
-    "$T/repo/MIRROR/friend1:$((200 * GIB)):$((10 * GIB))"
+    "$T/repo/user1:$((4000 * GIB)):$((5 * GIB))" \
+    "$T/repo/user2:$((20 * GIB)):0" \
+    "$T/repo/friend1:$((200 * GIB)):$((10 * GIB))"
 run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
 printf '%s' "$OUT" | grep -qE '^user1 +none \(!\) +n/a +50G \(!\) +5\.0 GiB \(unlimited\)'
 assert "9.11 a directory with no quota in effect is reported as unlimited" $?
@@ -535,14 +534,14 @@ assert "9.11 a directory with no quota in effect is reported as unlimited" $?
 # trains the operator to ignore the one signal this listing exists to raise.
 setup_09
 run_in "$WORK/sh" "$T/scripts/09-show-all-users.sh"
-printf '%s' "$OUT" | grep -E '^=== ' | grep -qvE '^=== (OWN|MIRROR) ===$'
-[ $? -ne 0 ]; assert "9.12 the format legend does not become a group of its own" $?
+printf '%s' "$OUT" | grep -qE '^=== '
+[ $? -ne 0 ]; assert "9.12 the format legend does not become a header of its own" $?
 
 printf '%s' "$OUT" | grep -q 'MISSING on host'
 [ $? -ne 0 ]; assert "9.13 no client is invented from a comment line" $?
 
-# The example line in the header has OWN as its second field, so it lands in a
-# real group rather than a phantom one — the count is where it shows up.
+# The example line in the header is a comment (`# e.g. ...`), so clients_lines
+# filters it — the count is of real client lines, not of file lines.
 printf '%s' "$OUT" | grep -q 'Total clients: 3'
 assert "9.14 the count is of clients, not of lines" $?
 
@@ -560,9 +559,9 @@ assert "9.15 a header-only clients.conf reports no clients, not a listing" $?
 
 setup_09
 df_stub "$T/repo:$((4000 * GIB)):$((100 * GIB))" \
-    "$T/repo/OWN/user1:$((50 * GIB)):$((5 * GIB))" \
-    "$T/repo/OWN/user2:$((20 * GIB)):0" \
-    "$T/repo/MIRROR/friend1:$((200 * GIB)):$((10 * GIB))"
+    "$T/repo/user1:$((50 * GIB)):$((5 * GIB))" \
+    "$T/repo/user2:$((20 * GIB)):0" \
+    "$T/repo/friend1:$((200 * GIB)):$((10 * GIB))"
 run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
 printf '%s' "$OUT" | grep -q 'Committed:     270.0 GiB of 4000.0 GiB volume (6%) across 3 client(s)'
 assert "9.16 the enforced limits are summed against the volume" $?
@@ -576,9 +575,9 @@ assert "9.17 the enforced limit is shown as a share of the volume too" $?
 # the installation gets, which is the opposite of what it is for.
 setup_09
 df_stub "$T/repo:$((4000 * GIB)):$((100 * GIB))" \
-    "$T/repo/OWN/user1:$((4000 * GIB)):$((5 * GIB))" \
-    "$T/repo/OWN/user2:$((20 * GIB)):0" \
-    "$T/repo/MIRROR/friend1:$((200 * GIB)):$((10 * GIB))"
+    "$T/repo/user1:$((4000 * GIB)):$((5 * GIB))" \
+    "$T/repo/user2:$((20 * GIB)):0" \
+    "$T/repo/friend1:$((200 * GIB)):$((10 * GIB))"
 run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
 printf '%s' "$OUT" | grep -q 'Committed:     4000.0 GiB of 4000.0 GiB volume (100%) (!)'
 assert "9.18 one client without a limit commits the whole volume" $?
@@ -607,9 +606,9 @@ assert "9.20 physical usage and free space are reported alongside the promises" 
 # reads as 100%, which is the truth the operator needs.
 setup_09
 df_stub "$T/repo:$((100 * GIB)):$((95 * GIB)):0" \
-    "$T/repo/OWN/user1:$((50 * GIB)):$((50 * GIB)):0" \
-    "$T/repo/OWN/user2:$((20 * GIB)):0" \
-    "$T/repo/MIRROR/friend1:$((10 * GIB)):0"
+    "$T/repo/user1:$((50 * GIB)):$((50 * GIB)):0" \
+    "$T/repo/user2:$((20 * GIB)):0" \
+    "$T/repo/friend1:$((10 * GIB)):0"
 run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
 printf '%s' "$OUT" | grep -q 'Disk usage:    95.0 GiB of 100.0 GiB (100%)' \
     && printf '%s' "$OUT" | grep -q 'Disk free:     0 KiB'
@@ -621,9 +620,9 @@ assert "9.21 a volume with nothing left reports 100%, whatever its size says" $?
 # that gap is the reason the percentage is not computed against the size.
 setup_09
 df_stub "$T/repo:$((100 * GIB)):$((90 * GIB)):$((5 * GIB))" \
-    "$T/repo/OWN/user1:$((50 * GIB)):0" \
-    "$T/repo/OWN/user2:$((20 * GIB)):0" \
-    "$T/repo/MIRROR/friend1:$((10 * GIB)):0"
+    "$T/repo/user1:$((50 * GIB)):0" \
+    "$T/repo/user2:$((20 * GIB)):0" \
+    "$T/repo/friend1:$((10 * GIB)):0"
 run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
 printf '%s' "$OUT" | grep -q 'Disk usage:    90.0 GiB of 100.0 GiB (95%)' \
     && printf '%s' "$OUT" | grep -q 'Disk free:     5.0 GiB'
@@ -636,9 +635,9 @@ assert "9.22 reserved blocks count as full, not as free" $?
 # operator to wave both away (issue #17).
 setup_09
 df_stub "$T/repo:$((100 * GIB)):$((2 * GIB))" \
-    "$T/repo/OWN/user1:$((50 * GIB)):0" \
-    "$T/repo/OWN/user2:$((20 * GIB)):0" \
-    "$T/repo/MIRROR/friend1:$((200 * GIB)):0"
+    "$T/repo/user1:$((50 * GIB)):0" \
+    "$T/repo/user2:$((20 * GIB)):0" \
+    "$T/repo/friend1:$((200 * GIB)):0"
 run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
 printf '%s' "$OUT" | grep -q 'Committed:     270.0 GiB of 100.0 GiB volume (270%) (!)' \
     && printf '%s' "$OUT" | grep -q 'they cannot all be honoured at once'
@@ -649,9 +648,9 @@ assert "9.23 an overcommitted volume explains its own marker" $?
 # complaint behind the case above.
 setup_09
 df_stub "$T/repo:$((4000 * GIB)):$((2 * GIB))" \
-    "$T/repo/OWN/user1:$((50 * GIB)):0" \
-    "$T/repo/OWN/user2:$((20 * GIB)):0" \
-    "$T/repo/MIRROR/friend1:$((200 * GIB)):0"
+    "$T/repo/user1:$((50 * GIB)):0" \
+    "$T/repo/user2:$((20 * GIB)):0" \
+    "$T/repo/friend1:$((200 * GIB)):0"
 run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
 printf '%s' "$OUT" | grep -q '(!)'
 [ $? -ne 0 ]; assert "9.24 ... and a listing with nothing wrong carries no marker at all" $?
@@ -663,10 +662,10 @@ printf '%s' "$OUT" | grep -q '(!)'
 # columns (#30). These belong with 9.6 and are appended here rather than
 # renumbered in.
 setup_09
-rm -rf "$T/repo/OWN/user2"
+rm -rf "$T/repo/user2"
 df_stub "$T/repo:$((4000 * GIB)):$((100 * GIB))" \
-    "$T/repo/OWN/user1:$((50 * GIB)):$((5 * GIB))" \
-    "$T/repo/MIRROR/friend1:$((200 * GIB)):$((10 * GIB))"
+    "$T/repo/user1:$((50 * GIB)):$((5 * GIB))" \
+    "$T/repo/friend1:$((200 * GIB)):$((10 * GIB))"
 run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
 printf '%s' "$OUT" | grep -qE '^user2 +n/a \(!\) +n/a +20G +MISSING on host'
 assert "9.25 a missing repository is marked in the column the check reads" $?
@@ -688,9 +687,9 @@ printf '%s' "$OUT" | grep -q 'does not match clients.conf'
 # pass on a row whose measurement had failed, which is #30 one cause further on.
 setup_09
 df_stub "$T/repo:$((4000 * GIB)):$((100 * GIB))" \
-    "$T/repo/OWN/user1:$((50 * GIB)):$((5 * GIB))" \
-    "$T/repo/OWN/user2:!" \
-    "$T/repo/MIRROR/friend1:$((200 * GIB)):$((10 * GIB))"
+    "$T/repo/user1:$((50 * GIB)):$((5 * GIB))" \
+    "$T/repo/user2:!" \
+    "$T/repo/friend1:$((200 * GIB)):$((10 * GIB))"
 run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
 printf '%s' "$OUT" | grep -qE '^user2 +n/a \(!\) +n/a +20G +unreadable'
 assert "9.28 a client whose figures cannot be read is marked" $?
@@ -825,19 +824,19 @@ setup_create() { # a tree whose repo base exists, with no clients yet
 # because on a running installation the base belongs to the container's mapped
 # uid and the operator cannot write into it.
 setup_create
-df_stub "$T/repo:$((4000 * GIB)):0" "$T/repo/OWN/user1:$((50 * GIB)):0"
-run_create user1 OWN 50G
+df_stub "$T/repo:$((4000 * GIB)):0" "$T/repo/user1:$((50 * GIB)):0"
+run_create user1 50G
 [ "$RC" -eq 0 ]; assert "10.1 a client is created" $?
 
-grep -q "^podman unshare mkdir -p $T/repo/OWN/user1$" "$WORK/podman.log"
+grep -q "^podman unshare mkdir -p $T/repo/user1$" "$WORK/podman.log"
 assert "10.2 the repository directory is created inside the user namespace" $?
 
-grep -q "^podman unshare chown 1111:1111 $T/repo/OWN/user1$" "$WORK/podman.log"
+grep -q "^podman unshare chown 1111:1111 $T/repo/user1$" "$WORK/podman.log"
 assert "10.3 ownership is handed to the container's borg user from BORG_UID/BORG_GID" $?
 
-[ -d "$T/repo/OWN/user1" ]; assert "10.4 the directory exists afterwards" $?
+[ -d "$T/repo/user1" ]; assert "10.4 the directory exists afterwards" $?
 
-grep -q '^user1:OWN:/repo/OWN/user1:50G$' "$T/config/clients.conf"
+grep -q '^user1:/repo/user1:50G$' "$T/config/clients.conf"
 assert "10.5 the clients.conf entry carries the container-side path" $?
 
 [ -f "$T/config/keys/user1.pub" ]; assert "10.6 an empty key placeholder is created" $?
@@ -849,10 +848,10 @@ assert "10.7 the operator is told ownership is already correct" $?
 
 # Project ids: max+1 over what the existing directories report.
 setup_create
-mkdir -p "$T/repo/OWN/existing1" "$T/repo/MIRROR/existing2"
-lsattr_stub "$T/repo/OWN/existing1:1000" "$T/repo/MIRROR/existing2:1007"
-df_stub "$T/repo:$((4000 * GIB)):0" "$T/repo/OWN/user1:$((50 * GIB)):0"
-run_create user1 OWN 50G
+mkdir -p "$T/repo/existing1" "$T/repo/existing2"
+lsattr_stub "$T/repo/existing1:1000" "$T/repo/existing2:1007"
+df_stub "$T/repo:$((4000 * GIB)):0" "$T/repo/user1:$((50 * GIB)):0"
+run_create user1 50G
 printf '%s' "$OUT" | grep -q 'project id 1008'
 assert "10.8 the next project id is one above the highest in use" $?
 
@@ -860,14 +859,14 @@ assert "10.8 the next project id is one above the highest in use" $?
 # skipped: skipping hands out an id that is already in use, and two clients
 # then share one quota without either of them being told.
 setup_create
-mkdir -p "$T/repo/OWN/unreadable"
+mkdir -p "$T/repo/unreadable"
 lsattr_stub ""
-df_stub "$T/repo:$((4000 * GIB)):0" "$T/repo/OWN/user1:$((50 * GIB)):0"
-run_create user1 OWN 50G
+df_stub "$T/repo:$((4000 * GIB)):0" "$T/repo/user1:$((50 * GIB)):0"
+run_create user1 50G
 [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'cannot read the XFS project id'
 assert "10.9 an unreadable project id aborts instead of risking a shared quota" $?
 
-grep -q "^podman unshare rmdir $T/repo/OWN/user1$" "$WORK/podman.log"
+grep -q "^podman unshare rmdir $T/repo/user1$" "$WORK/podman.log"
 assert "10.10 the half-created directory is removed through the namespace too" $?
 
 [ ! -f "$T/config/clients.conf" ] || ! grep -q '^user1:' "$T/config/clients.conf"
@@ -876,28 +875,28 @@ assert "10.11 no clients.conf entry is left behind by the abort" $?
 # A quota that does not read back is the other abort path, and the one the
 # script exists to protect: an unlimited client is worse than no client.
 setup_create
-df_stub "$T/repo:$((4000 * GIB)):0" "$T/repo/OWN/user1:$((4000 * GIB)):0"
-run_create user1 OWN 50G
+df_stub "$T/repo:$((4000 * GIB)):0" "$T/repo/user1:$((4000 * GIB)):0"
+run_create user1 50G
 [ "$RC" -ne 0 ]; assert "10.12 a quota that does not take effect aborts the creation" $?
 
-grep -q "^podman unshare rmdir $T/repo/OWN/user1$" "$WORK/podman.log"
+grep -q "^podman unshare rmdir $T/repo/user1$" "$WORK/podman.log"
 assert "10.13 ... and the directory is cleaned up" $?
 
 # The base has to belong to a mapping this user shares with the container. A
 # uid that is neither means somebody else runs the container, and creating the
 # directory anyway would produce a client whose backups cannot be written.
 setup_create
-PODMAN_STAT_UID=65534 run_create user1 OWN 50G
+PODMAN_STAT_UID=65534 run_create user1 50G
 [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'same user that runs the container'
 assert "10.14 a repository base under a foreign uid mapping is refused" $?
 
-[ ! -d "$T/repo/OWN/user1" ]; assert "10.15 ... before anything is created" $?
+[ ! -d "$T/repo/user1" ]; assert "10.15 ... before anything is created" $?
 
 # The base already owned by the container's borg user is the normal state of
 # every installation whose server has started once.
 setup_create
-df_stub "$T/repo:$((4000 * GIB)):0" "$T/repo/OWN/user1:$((50 * GIB)):0"
-PODMAN_STAT_UID=1111 run_create user1 OWN 50G
+df_stub "$T/repo:$((4000 * GIB)):0" "$T/repo/user1:$((50 * GIB)):0"
+PODMAN_STAT_UID=1111 run_create user1 50G
 [ "$RC" -eq 0 ]; assert "10.16 a base already owned by the container is the normal case" $?
 
 # Under bash-invoked-as-sh as well: this script's shebang is /bin/sh, which is
@@ -905,10 +904,10 @@ PODMAN_STAT_UID=1111 run_create user1 OWN 50G
 # the project requires. Section 9 exists because of a bug that appeared only
 # under bash; the same exposure applies here.
 setup_create
-df_stub "$T/repo:$((4000 * GIB)):0" "$T/repo/OWN/user1:$((50 * GIB)):0"
+df_stub "$T/repo:$((4000 * GIB)):0" "$T/repo/user1:$((50 * GIB)):0"
 export PODMAN_LOG="$WORK/podman.log"; : > "$PODMAN_LOG"
-OUT="$(printf 'y\n' | PATH="$STUB:$DF_BIN:$PATH" "$WORK/sh" "$T/scripts/00-ssh-create-user.sh" user1 OWN 50G 2>&1)"; RC=$?
-[ "$RC" -eq 0 ] && grep -q "^podman unshare chown 1111:1111 $T/repo/OWN/user1$" "$WORK/podman.log"
+OUT="$(printf 'y\n' | PATH="$STUB:$DF_BIN:$PATH" "$WORK/sh" "$T/scripts/00-ssh-create-user.sh" user1 50G 2>&1)"; RC=$?
+[ "$RC" -eq 0 ] && grep -q "^podman unshare chown 1111:1111 $T/repo/user1$" "$WORK/podman.log"
 assert "10.17 the same run under bash-as-sh behaves identically" $?
 
 # podman missing is checked before anything is created, not halfway through.
@@ -916,11 +915,11 @@ setup_create
 NOPODMAN="$WORK/nopodman"; mkdir -p "$NOPODMAN"
 cp "$STUB/sudo" "$STUB/xfs_quota" "$STUB/lsattr" "$NOPODMAN/"
 df_stub "$T/repo:$((4000 * GIB)):0"
-OUT="$(printf 'y\n' | PATH="$NOPODMAN:$DF_BIN:/usr/bin:/bin" "$T/scripts/00-ssh-create-user.sh" user1 OWN 50G 2>&1)"; RC=$?
+OUT="$(printf 'y\n' | PATH="$NOPODMAN:$DF_BIN:/usr/bin:/bin" "$T/scripts/00-ssh-create-user.sh" user1 50G 2>&1)"; RC=$?
 [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'podman not found'
 assert "10.18 a missing podman is reported before anything is created" $?
 
-[ ! -d "$T/repo/OWN/user1" ]; assert "10.19 ... and nothing was created" $?
+[ ! -d "$T/repo/user1" ]; assert "10.19 ... and nothing was created" $?
 
 # --- the quota, before it is applied -------------------------------------
 #
@@ -929,8 +928,8 @@ assert "10.18 a missing podman is reported before anything is created" $?
 # before anything exists, and a limit that cannot be enforced is refused.
 
 setup_create
-df_stub "$T/repo:$((100 * GIB)):0" "$T/repo/OWN/user1:$((60 * GIB)):0"
-run_create user1 OWN 60G
+df_stub "$T/repo:$((100 * GIB)):0" "$T/repo/user1:$((60 * GIB)):0"
+run_create user1 60G
 printf '%s' "$OUT" | grep -q -- '--- after this change ---' \
     && printf '%s' "$OUT" | grep -qE '^ +user1 +60\.0 GiB +60% +60G +0 KiB of 60\.0 GiB'
 assert "10.20 the new quota is stated as a share of the volume" $?
@@ -946,33 +945,33 @@ assert "10.21 the current state shows the client as not existing yet" $?
 # client would then be told it may use the whole volume.
 setup_create
 df_stub "$T/repo:$((100 * GIB)):0"
-run_create user1 OWN 200G
+run_create user1 200G
 [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q '200% of the volume'
 assert "10.22 a quota larger than the volume is refused" $?
 
-[ ! -d "$T/repo/OWN/user1" ] && ! grep -q '^user1:' "$T/config/clients.conf"
+[ ! -d "$T/repo/user1" ] && ! grep -q '^user1:' "$T/config/clients.conf"
 assert "10.23 ... before anything is created" $?
 
 # A limit equal to the volume is refused for the same reason: through
 # statvfs() it is indistinguishable from having no limit at all.
 setup_create
 df_stub "$T/repo:$((100 * GIB)):0"
-run_create user1 OWN 100G
+run_create user1 100G
 [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'above 99% of the volume are refused'
 assert "10.24 a quota equal to the volume is refused too" $?
 
 setup_create
-df_stub "$T/repo:$((100 * GIB)):0" "$T/repo/OWN/user1:$((60 * GIB)):0"
+df_stub "$T/repo:$((100 * GIB)):0" "$T/repo/user1:$((60 * GIB)):0"
 # Set rather than prefixed: in bash an assignment preceding a *function* call
 # stays in effect after it returns, which would silently answer every later run
 # with "n".
 CONFIRM_INPUT="n"
-run_create user1 OWN 60G
+run_create user1 60G
 CONFIRM_INPUT="y"
 [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'Aborted'
 assert "10.25 declining the prompt exits cleanly" $?
 
-[ ! -d "$T/repo/OWN/user1" ] && ! grep -q '^user1:' "$T/config/clients.conf"
+[ ! -d "$T/repo/user1" ] && ! grep -q '^user1:' "$T/config/clients.conf"
 assert "10.26 ... and creates nothing" $?
 
 # =========================================================================
@@ -1155,11 +1154,11 @@ setup_02() {
     new_tree
     {
       clients_conf_header
-      echo 'user1:OWN:/repo/OWN/user1:10G'
-      echo 'user2:OWN:/repo/OWN/user2:20G'
+      echo 'user1:/repo/user1:10G'
+      echo 'user2:/repo/user2:20G'
     } > "$T/config/clients.conf"
-    mkdir -p "$T/repo/OWN/user1" "$T/repo/OWN/user2"
-    lsattr_stub "$T/repo/OWN/user1:1000" "$T/repo/OWN/user2:1001"
+    mkdir -p "$T/repo/user1" "$T/repo/user2"
+    lsattr_stub "$T/repo/user1:1000" "$T/repo/user2:1001"
     XFS_LOG="$WORK/xfs.log"; : > "$XFS_LOG"; export XFS_LOG
     printf '1000:%s\n1001:%s\n' "$((10 * GIB))" "$((20 * GIB))" > "$WORK/xfs.report"
     export XFS_REPORT_DATA="$WORK/xfs.report"
@@ -1175,8 +1174,8 @@ run_quota() { # run_quota <args...> — 02-change-user-quota.sh under all stubs
 
 setup_02
 df_stub "$T/repo:$((100 * GIB)):$((2 * GIB))" \
-        "$T/repo/OWN/user1:$((10 * GIB)):$((1 * GIB))" \
-        "$T/repo/OWN/user2:$((20 * GIB)):0"
+        "$T/repo/user1:$((10 * GIB)):$((1 * GIB))" \
+        "$T/repo/user2:$((20 * GIB)):0"
 CONFIRM_INPUT="n"
 run_quota user1 60G
 CONFIRM_INPUT="y"
@@ -1209,8 +1208,8 @@ assert "12.4 declining applies nothing at all" $?
 # repair it reads "ok".
 setup_02
 df_stub "$T/repo:$((100 * GIB)):0" \
-        "$T/repo/OWN/user1:$((5 * GIB)):0" \
-        "$T/repo/OWN/user2:$((20 * GIB)):0"
+        "$T/repo/user1:$((5 * GIB)):0" \
+        "$T/repo/user2:$((20 * GIB)):0"
 CONFIRM_INPUT="n"
 run_quota user1 60G
 CONFIRM_INPUT="y"
@@ -1222,8 +1221,8 @@ assert "12.5 drift is named in the current block and resolved in the other" $?
 # but it is not allowed to happen quietly either.
 setup_02
 df_stub "$T/repo:$((100 * GIB)):$((2 * GIB))" \
-        "$T/repo/OWN/user1:$((10 * GIB)):0" \
-        "$T/repo/OWN/user2:$((20 * GIB)):0"
+        "$T/repo/user1:$((10 * GIB)):0" \
+        "$T/repo/user2:$((20 * GIB)):0"
 CONFIRM_INPUT="n"
 run_quota user1 90G
 CONFIRM_INPUT="y"
@@ -1240,25 +1239,25 @@ assert "12.6 a change that overcommits the volume is marked as such" $?
 # by nothing.
 
 setup_02
-df_stub "$T/repo:$((100 * GIB)):0" "$T/repo/OWN/user1:$((10 * GIB)):0"
+df_stub "$T/repo:$((100 * GIB)):0" "$T/repo/user1:$((10 * GIB)):0"
 run_quota user1 200G
 [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q '200% of the volume'
 assert "12.7 a quota larger than the volume is refused" $?
 
-[ ! -s "$XFS_LOG" ] && grep -q '^user1:OWN:/repo/OWN/user1:10G$' "$T/config/clients.conf"
+[ ! -s "$XFS_LOG" ] && grep -q '^user1:/repo/user1:10G$' "$T/config/clients.conf"
 assert "12.8 ... without reaching xfs_quota, and clients.conf is untouched" $?
 
 # --- applying a limit that does take effect ------------------------------
 
 setup_02
 df_stub "$T/repo:$((100 * GIB)):0" \
-        "$T/repo/OWN/user1:$((60 * GIB)):0" \
-        "$T/repo/OWN/user2:$((20 * GIB)):0"
+        "$T/repo/user1:$((60 * GIB)):0" \
+        "$T/repo/user2:$((20 * GIB)):0"
 run_quota user1 60G
 [ "$RC" -eq 0 ] && grep -q 'limit -p bhard=60G 1000' "$XFS_LOG"
 assert "12.9 a confirmed change is applied to the client's project id" $?
 
-grep -q '^user1:OWN:/repo/OWN/user1:60G$' "$T/config/clients.conf"
+grep -q '^user1:/repo/user1:60G$' "$T/config/clients.conf"
 assert "12.10 ... and recorded in clients.conf once it verified" $?
 
 # --- the abort that has to mean nothing changed --------------------------
@@ -1269,14 +1268,14 @@ assert "12.10 ... and recorded in clients.conf once it verified" $?
 
 setup_02
 df_stub "$T/repo:$((100 * GIB)):0" \
-        "$T/repo/OWN/user1:$((10 * GIB)):0" \
-        "$T/repo/OWN/user2:$((20 * GIB)):0"
+        "$T/repo/user1:$((10 * GIB)):0" \
+        "$T/repo/user2:$((20 * GIB)):0"
 run_quota user1 60G
 [ "$RC" -ne 0 ] && grep -q "limit -p bhard=$((10 * GIB))k 1000" "$XFS_LOG"
 assert "12.11 a limit that does not verify is rolled back to the previous one" $?
 
 printf '%s' "$OUT" | grep -q 'Restored' \
-    && grep -q '^user1:OWN:/repo/OWN/user1:10G$' "$T/config/clients.conf"
+    && grep -q '^user1:/repo/user1:10G$' "$T/config/clients.conf"
 assert "12.12 ... and the abort reports that state truthfully" $?
 
 # The previous limit is read from xfs_quota, not from df: df reports the volume
@@ -1285,8 +1284,8 @@ assert "12.12 ... and the abort reports that state truthfully" $?
 setup_02
 : > "$WORK/xfs.report"
 df_stub "$T/repo:$((100 * GIB)):0" \
-        "$T/repo/OWN/user1:$((10 * GIB)):0" \
-        "$T/repo/OWN/user2:$((20 * GIB)):0"
+        "$T/repo/user1:$((10 * GIB)):0" \
+        "$T/repo/user2:$((20 * GIB)):0"
 run_quota user1 60G
 [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'could not be read, so it was not' \
     && ! grep -q "bhard=$((100 * GIB))k" "$XFS_LOG"
@@ -1297,8 +1296,8 @@ assert "12.13 an unreadable previous limit is reported, never guessed" $?
 # user2 can still take the rest.
 setup_02
 df_stub "$T/repo:$((100 * GIB)):0" \
-        "$T/repo/OWN/user1:$((10 * GIB)):0" \
-        "$T/repo/OWN/user2:$((100 * GIB)):0"
+        "$T/repo/user1:$((10 * GIB)):0" \
+        "$T/repo/user2:$((100 * GIB)):0"
 CONFIRM_INPUT="n"
 run_quota user1 20G
 CONFIRM_INPUT="y"
@@ -1314,8 +1313,8 @@ assert "12.14 a change made alongside an unlimited client commits the volume" $?
 # written into the test.
 setup_02
 df_stub "$T/repo:$((100 * GIB)):$((2 * GIB))" \
-        "$T/repo/OWN/user1:$((10 * GIB)):$((1 * GIB))" \
-        "$T/repo/OWN/user2:$((20 * GIB)):0"
+        "$T/repo/user1:$((10 * GIB)):$((1 * GIB))" \
+        "$T/repo/user2:$((20 * GIB)):0"
 CONFIRM_INPUT="n"
 run_quota user1 60G
 CONFIRM_INPUT="y"
@@ -1325,8 +1324,8 @@ PREVIEW_DISK=$(printf '%s\n' "$OUT" | grep -E 'Disk (usage|free):' | sed 's/^ */
 
 setup_09
 df_stub "$T/repo:$((100 * GIB)):$((2 * GIB))" \
-        "$T/repo/OWN/user1:$((10 * GIB)):$((1 * GIB))" \
-        "$T/repo/OWN/user2:$((20 * GIB)):0"
+        "$T/repo/user1:$((10 * GIB)):$((1 * GIB))" \
+        "$T/repo/user2:$((20 * GIB)):0"
 run_stubbed "$WORK/sh" "$T/scripts/09-show-all-users.sh"
 LISTING_DISK=$(printf '%s\n' "$OUT" | grep -E 'Disk (usage|free):' | sort -u)
 
@@ -1405,17 +1404,17 @@ setup_03() {
     new_tree
     {
       clients_conf_header
-      echo 'user1:OWN:/repo/OWN/user1:10G'
-      echo 'user2:OWN:/repo/OWN/user2:20G'
+      echo 'user1:/repo/user1:10G'
+      echo 'user2:/repo/user2:20G'
     } > "$T/config/clients.conf"
-    mkdir -p "$T/repo/OWN/user1" "$T/repo/OWN/user2"
-    lsattr_stub "$T/repo/OWN/user1:1000" "$T/repo/OWN/user2:1001"
+    mkdir -p "$T/repo/user1" "$T/repo/user2"
+    lsattr_stub "$T/repo/user1:1000" "$T/repo/user2:1001"
     XFS_LOG="$WORK/xfs.log"; : > "$XFS_LOG"; export XFS_LOG
     printf '1000:%s\n1001:%s\n' "$((10 * GIB))" "$((20 * GIB))" > "$WORK/xfs.report"
     export XFS_REPORT_DATA="$WORK/xfs.report"
     df_stub "$T/repo:$((100 * GIB)):$((2 * GIB))" \
-            "$T/repo/OWN/user1:$((10 * GIB)):$((1 * GIB))" \
-            "$T/repo/OWN/user2:$((20 * GIB)):0"
+            "$T/repo/user1:$((10 * GIB)):$((1 * GIB))" \
+            "$T/repo/user2:$((20 * GIB)):0"
 }
 
 run_provision() { # run_provision <args...> — 03-provision-client.sh under all stubs
@@ -1440,8 +1439,8 @@ assert "14.1 a client that was never declared is sent to 00, not created here" $
 setup_03
 printf '1000:%s\n1001:%s\n' "$((5 * GIB))" "$((20 * GIB))" > "$WORK/xfs.report"
 df_stub "$T/repo:$((100 * GIB)):$((2 * GIB))" \
-        "$T/repo/OWN/user1:$((5 * GIB)):$((1 * GIB))" \
-        "$T/repo/OWN/user2:$((20 * GIB)):0"
+        "$T/repo/user1:$((5 * GIB)):$((1 * GIB))" \
+        "$T/repo/user2:$((20 * GIB)):0"
 run_provision user1
 [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q '02-change-user-quota.sh user1 10G' \
     && [ ! -s "$XFS_LOG" ]
@@ -1457,7 +1456,7 @@ assert "14.3 a client that is already correct is reported and left alone" $?
 # --- MISSING on host: the state that had no repair ------------------------
 
 setup_03
-rm -rf "$T/repo/OWN/user1"
+rm -rf "$T/repo/user1"
 CONFIRM_INPUT="n"
 run_provision user1
 CONFIRM_INPUT="y"
@@ -1465,28 +1464,28 @@ CONFIRM_INPUT="y"
     && printf '%s' "$OUT" | grep -q 'NOT coming back'
 assert "14.4 a missing directory is named, and so is the cost of recreating it" $?
 
-[ ! -d "$T/repo/OWN/user1" ] && [ ! -s "$XFS_LOG" ]
+[ ! -d "$T/repo/user1" ] && [ ! -s "$XFS_LOG" ]
 assert "14.5 declining the prompt creates nothing at all" $?
 
 setup_03
-rm -rf "$T/repo/OWN/user1"
+rm -rf "$T/repo/user1"
 run_provision user1
-[ "$RC" -eq 0 ] && [ -d "$T/repo/OWN/user1" ]
+[ "$RC" -eq 0 ] && [ -d "$T/repo/user1" ]
 assert "14.6 a confirmed run recreates the repository directory" $?
 
 # The new id is max+1 over the directories that exist, which is 1001 here —
 # user2's — and it has to be assigned to this client's directory, not merely
 # allocated: a limit on an id that governs nothing is the failure quota_verify
 # exists to catch. The ownership goes through podman unshare, not a plain chown.
-grep -q "project -s -p $T/repo/OWN/user1 1002" "$XFS_LOG" \
-    && grep -q "unshare chown 1111:1111 $T/repo/OWN/user1" "$PODMAN_LOG"
+grep -q "project -s -p $T/repo/user1 1002" "$XFS_LOG" \
+    && grep -q "unshare chown 1111:1111 $T/repo/user1" "$PODMAN_LOG"
 assert "14.7 ... with a fresh project id and container-side ownership" $?
 
 grep -q 'limit -p bhard=10G 1002' "$XFS_LOG"
 assert "14.8 ... and the limit clients.conf records, not one that was typed" $?
 
 # The invariant that keeps this script honest: it is not an editor.
-grep -q '^user1:OWN:/repo/OWN/user1:10G$' "$T/config/clients.conf"
+grep -q '^user1:/repo/user1:10G$' "$T/config/clients.conf"
 assert "14.9 ... while clients.conf is left exactly as it was" $?
 
 # --- a directory that lost its project id ---------------------------------
@@ -1497,11 +1496,11 @@ assert "14.9 ... while clients.conf is left exactly as it was" $?
 # the case 02's "assign one manually first" was written for.
 
 setup_03
-lsattr_stub "$T/repo/OWN/user2:1001"
-: > "$T/repo/OWN/user1/some-existing-data"
+lsattr_stub "$T/repo/user2:1001"
+: > "$T/repo/user1/some-existing-data"
 df_stub "$T/repo:$((100 * GIB)):$((2 * GIB))" \
-        "$T/repo/OWN/user1:$((100 * GIB)):$((1 * GIB))" \
-        "$T/repo/OWN/user2:$((20 * GIB)):0"
+        "$T/repo/user1:$((100 * GIB)):$((1 * GIB))" \
+        "$T/repo/user2:$((20 * GIB)):0"
 run_provision user1
 # The data warning belongs to the missing-directory case alone. Negated with a
 # leading `!` rather than `grep -qv`, which asks whether ANY line fails to match
@@ -1512,7 +1511,7 @@ assert "14.10 a directory without a project id is provisioned with no data warni
 
 # Whatever was in the directory is still in it: this path creates nothing and
 # removes nothing, it only assigns an id and a limit.
-[ -f "$T/repo/OWN/user1/some-existing-data" ]
+[ -f "$T/repo/user1/some-existing-data" ]
 assert "14.11 ... and the data that was there is untouched" $?
 
 # --- summary -------------------------------------------------------------

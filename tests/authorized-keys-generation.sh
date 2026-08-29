@@ -151,10 +151,11 @@ echo
 
 new_fixture
 {
-  echo 'user1:OWN:/repo/OWN/user1:50G'
-  echo 'user2:OWN:/repo/OWN/user2:20G'
-  echo 'friend1:MIRROR:/repo/MIRROR/friend1:200G'
+  echo 'user1:/repo/user1:50G'
+  echo 'user2:/repo/user2:20G'
+  echo 'friend1:/repo/friend1:200G'
 } > "$CFG/clients.conf"
+mkdir -p "$REPOD/user1" "$REPOD/user2" "$REPOD/friend1"
 add_key user1; add_key user2; add_key friend1
 generate
 
@@ -167,10 +168,10 @@ generate
 unprefixed=$(keys_file | grep -vE '^[[:space:]]*(#|$)' | grep -cv '^command="/borg-wrapper\.sh ')
 [ "$unprefixed" -eq 0 ]; assert "1.2 no entry without the forced command prefix" $?
 
-keys_file | grep -q '^command="/borg-wrapper.sh /repo/OWN/user1",restrict ssh-ed25519 '
+keys_file | grep -q '^command="/borg-wrapper.sh /repo/user1",restrict ssh-ed25519 '
 assert "1.3 entry carries the client's own repo path and 'restrict'" $?
 
-INFO1="$INFOD/repo/OWN/user1.txt"
+INFO1="$INFOD/repo/user1.txt"
 
 # Labelled, and the label is part of the assertion: the wrapper prints a live
 # 'Used: X of Y' line right after this text, whose Y is the enforced limit. An
@@ -197,27 +198,27 @@ assert "1.7 info text reports the source repository" $?
 # The reason it lives under /run at all: `borg init` refuses a directory that
 # is not empty, so anything the server leaves in a client's repository makes
 # that client's very first command fail. This is the regression guard.
-[ -z "$(ls -A "$REPOD/OWN/user1")" ]
+[ -z "$(ls -A "$REPOD/user1")" ]
 assert "1.8 the client's repository directory is left empty for borg init" $?
 
 # Two clients, two files — no client's file is reachable from another's path.
-[ -f "$INFOD/repo/MIRROR/friend1.txt" ] && grep -q 'user: friend1' "$INFOD/repo/MIRROR/friend1.txt"
+[ -f "$INFOD/repo/friend1.txt" ] && grep -q 'user: friend1' "$INFOD/repo/friend1.txt"
 assert "1.9 each client gets its own file, mirroring its repo path" $?
 
 # Migration: a leftover from the releases that wrote into the repository is
 # removed, or it keeps blocking init for exactly the clients this bug hit.
-printf 'stale\n' > "$REPOD/OWN/user1/info.txt"
+printf 'stale\n' > "$REPOD/user1/info.txt"
 generate
-[ "$RC" -eq 0 ] && [ ! -e "$REPOD/OWN/user1/info.txt" ]
+[ "$RC" -eq 0 ] && [ ! -e "$REPOD/user1/info.txt" ]
 assert "1.10 a legacy info.txt in the repository is removed" $?
 
 # A client removed from clients.conf must not keep an info text in a live
 # container — its key is gone from authorized_keys in the same run.
 {
-  echo 'user1:OWN:/repo/OWN/user1:50G'
+  echo 'user1:/repo/user1:50G'
 } > "$CFG/clients.conf"
 generate
-[ "$RC" -eq 0 ] && [ -f "$INFO1" ] && [ ! -e "$INFOD/repo/OWN/user2.txt" ]
+[ "$RC" -eq 0 ] && [ -f "$INFO1" ] && [ ! -e "$INFOD/repo/user2.txt" ]
 assert "1.11 info text of a removed client is pruned" $?
 
 # --- 2. key-file injection ---------------------------------------------------
@@ -227,7 +228,7 @@ assert "1.11 info text of a removed client is pruned" $?
 # forced command.
 
 new_fixture
-echo 'user1:OWN:/repo/OWN/user1:50G' > "$CFG/clients.conf"
+echo 'user1:/repo/user1:50G' > "$CFG/clients.conf"
 add_key user1 "$VALID_KEY
 $VALID_KEY evil-second-entry"
 generate
@@ -237,7 +238,7 @@ generate
 assert "2.2 the injected second line is discarded" $?
 
 new_fixture
-echo 'user1:OWN:/repo/OWN/user1:50G' > "$CFG/clients.conf"
+echo 'user1:/repo/user1:50G' > "$CFG/clients.conf"
 add_key user1 "$VALID_KEY
 no-forced-command-here ssh-rsa AAAA"
 generate
@@ -258,32 +259,32 @@ check_rejected() { # check_rejected <desc> <clients.conf line>
     assert "$1" $?
 }
 
-check_rejected "3.1 name with a space rejected"        'bad name:OWN:/repo/OWN/x:50G'
-check_rejected "3.2 name with a semicolon rejected"    'bad;name:OWN:/repo/OWN/x:50G'
-check_rejected "3.3 name with a slash rejected"        '../evil:OWN:/repo/OWN/x:50G'
-check_rejected "3.4 group with metacharacter rejected" 'user1:OWN;rm:/repo/OWN/x:50G'
-check_rejected "3.5 relative repo path rejected"       'user1:OWN:repo/OWN/x:50G'
-check_rejected "3.6 repo path with space rejected"     'user1:OWN:/repo/OWN/x y:50G'
-check_rejected "3.7 quota without unit rejected"       'user1:OWN:/repo/OWN/x:50'
-check_rejected "3.8 quota in GB rejected"              'user1:OWN:/repo/OWN/x:50GB'
-check_rejected "3.9 non-numeric quota rejected"        'user1:OWN:/repo/OWN/x:abcG'
-check_rejected "3.10 missing quota field rejected"     'user1:OWN:/repo/OWN/x'
+check_rejected "3.1 name with a space rejected"        'bad name:/repo/x:50G'
+check_rejected "3.2 name with a semicolon rejected"    'bad;name:/repo/x:50G'
+check_rejected "3.3 name with a slash rejected"        '../evil:/repo/x:50G'
+check_rejected "3.4 repo field with metacharacter rejected" 'user1:/repo/x;rm:50G'
+check_rejected "3.5 relative repo path rejected"       'user1:repo/x:50G'
+check_rejected "3.6 repo path with space rejected"     'user1:/repo/x y:50G'
+check_rejected "3.7 quota without unit rejected"       'user1:/repo/x:50'
+check_rejected "3.8 quota in GB rejected"              'user1:/repo/x:50GB'
+check_rejected "3.9 non-numeric quota rejected"        'user1:/repo/x:abcG'
+check_rejected "3.10 missing quota field rejected"     'user1:/repo/x'
 
 # --- 4. key-file problems ----------------------------------------------------
 
 new_fixture
-echo 'user1:OWN:/repo/OWN/user1:50G' > "$CFG/clients.conf"
+echo 'user1:/repo/user1:50G' > "$CFG/clients.conf"
 generate
 [ "$RC" -ne 0 ] || [ "$(key_lines)" -eq 0 ]; assert "4.1 missing key file yields no entry" $?
 
 new_fixture
-echo 'user1:OWN:/repo/OWN/user1:50G' > "$CFG/clients.conf"
+echo 'user1:/repo/user1:50G' > "$CFG/clients.conf"
 : > "$CFG/keys/user1.pub"
 generate
 [ "$RC" -ne 0 ] || [ "$(key_lines)" -eq 0 ]; assert "4.2 empty key file yields no entry" $?
 
 new_fixture
-echo 'user1:OWN:/repo/OWN/user1:50G' > "$CFG/clients.conf"
+echo 'user1:/repo/user1:50G' > "$CFG/clients.conf"
 add_key user1 "this is not an ssh key"
 generate
 [ "$RC" -ne 0 ] || [ "$(key_lines)" -eq 0 ]; assert "4.3 malformed key rejected" $?
@@ -299,8 +300,8 @@ generate
 # first client existed (section 8).
 
 new_fixture
-echo 'bad name:OWN:/repo/OWN/x:50G' > "$CFG/clients.conf"
-printf '# previous file\ncommand="/borg-wrapper.sh /repo/OWN/old",restrict ssh-ed25519 AAAA old\n' \
+echo 'bad name:/repo/x:50G' > "$CFG/clients.conf"
+printf '# previous file\ncommand="/borg-wrapper.sh /repo/old",restrict ssh-ed25519 AAAA old\n' \
     > "$SSHD/authorized_keys"
 generate
 [ "$RC" -ne 0 ]; assert "5.1 no valid entries exits non-zero" $?
@@ -312,7 +313,7 @@ assert "5.2 the existing authorized_keys is preserved, not truncated" $?
 # which is what a truncated clients.conf looks like.
 new_fixture
 : > "$CFG/clients.conf"
-printf '# previous file\ncommand="/borg-wrapper.sh /repo/OWN/old",restrict ssh-ed25519 AAAA old\n' \
+printf '# previous file\ncommand="/borg-wrapper.sh /repo/old",restrict ssh-ed25519 AAAA old\n' \
     > "$SSHD/authorized_keys"
 generate
 { [ "$RC" -ne 0 ] && keys_file | grep -q 'old'; }
@@ -321,7 +322,7 @@ assert "5.4 an emptied clients.conf does not truncate an existing file" $?
 # --- 6. server_info.conf is mandatory ---------------------------------------
 
 new_fixture
-echo 'user1:OWN:/repo/OWN/user1:50G' > "$CFG/clients.conf"
+echo 'user1:/repo/user1:50G' > "$CFG/clients.conf"
 add_key user1
 printf 'name=testserver\n' > "$CFG/server_info.conf"
 generate
@@ -330,7 +331,7 @@ generate
 # --- 7. comments and blank lines --------------------------------------------
 
 new_fixture
-printf '# a comment\n\nuser1:OWN:/repo/OWN/user1:50G\n' > "$CFG/clients.conf"
+printf '# a comment\n\nuser1:/repo/user1:50G\n' > "$CFG/clients.conf"
 add_key user1
 generate
 [ "$(key_lines)" -eq 1 ]; assert "7.1 comments and blank lines are skipped" $?
@@ -377,7 +378,7 @@ assert "8.7 an empty clients.conf starts the server with no keys" $?
 # is in clients.conf, but its key file is still the empty placeholder that 00
 # creates. A restart in that window must not put the container into a loop.
 new_fixture
-echo 'user1:OWN:/repo/OWN/user1:50G' > "$CFG/clients.conf"
+echo 'user1:/repo/user1:50G' > "$CFG/clients.conf"
 : > "$CFG/keys/user1.pub"
 generate
 { [ "$RC" -eq 0 ] && [ "$(key_lines)" -eq 0 ]; }
@@ -410,11 +411,11 @@ assert "8.10 nothing is created in a /config that failed the canary check" $?
 # same incident wearing two different faults (issues #29, #30).
 
 new_fixture
-echo 'user1:OWN:/repo/OWN/user1:50G' > "$CFG/clients.conf"
+echo 'user1:/repo/user1:50G' > "$CFG/clients.conf"
 add_key user1
-rm -rf "$REPOD/OWN"
+rm -rf "$REPOD/user1"
 generate
-[ ! -d "$REPOD/OWN/user1" ]
+[ ! -d "$REPOD/user1" ]
 assert "9.1 a missing repository directory is not created by the generator" $?
 
 # Still authorized, deliberately. The wrapper answers such a connection with
@@ -429,7 +430,7 @@ assert "9.3 ... and the missing directory is reported in the log" $?
 
 # The info text lives under /run and is this script's to write, so that mkdir
 # stays: it is container-owned state, not host-owned state.
-[ -f "$INFOD/repo/OWN/user1.txt" ]
+[ -f "$INFOD/repo/user1.txt" ]
 assert "9.4 the info text is still rendered for that client" $?
 
 # --- summary ----------------------------------------------------------------

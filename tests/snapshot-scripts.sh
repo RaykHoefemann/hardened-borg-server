@@ -77,14 +77,14 @@ new_snap_tree() {
     UNIT_DIR="$T/home/.config/systemd/user"
 }
 
-mkclient() { # mkclient <group> <name> — a live client directory with content
-    mkdir -p "$HRB/$1/$2"
-    echo "payload for $2" > "$HRB/$1/$2/marker.txt"
+mkclient() { # mkclient <name> — a live client directory with content
+    mkdir -p "$HRB/$1"
+    echo "payload for $1" > "$HRB/$1/marker.txt"
 }
 
-mkgen() { # mkgen <group> <client> <timestamp> — a pre-existing snapshot generation
-    mkdir -p "$SB/$1/$2/$3"
-    echo "generation $3 of $2" > "$SB/$1/$2/$3/marker.txt"
+mkgen() { # mkgen <client> <timestamp> — a pre-existing snapshot generation
+    mkdir -p "$SB/$1/$2"
+    echo "generation $2 of $1" > "$SB/$1/$2/marker.txt"
 }
 
 # ============================================================================
@@ -404,9 +404,9 @@ run "$T/snapshots/75-list-snapshots.sh" client1 20260901T000000Z 20260101T000000
 [ "$RC" -ne 0 ]; assert "75.6 [from] later than [to] is refused" $?
 
 new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
-mkgen OWN client1 20260215T000000Z
-mkgen OWN client1 20260301T000000Z
+mkgen client1 20260101T000000Z
+mkgen client1 20260215T000000Z
+mkgen client1 20260301T000000Z
 run "$T/snapshots/75-list-snapshots.sh" client1
 { [ "$RC" -eq 0 ] \
   && [[ "$OUT" == *"20260101T000000Z"*"20260215T000000Z"*"20260301T000000Z"* ]] \
@@ -414,32 +414,27 @@ run "$T/snapshots/75-list-snapshots.sh" client1
 assert "75.7 every generation is listed, oldest first" $?
 
 new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
-mkgen OWN client1 20260215T000000Z
-mkgen OWN client1 20260301T000000Z
+mkgen client1 20260101T000000Z
+mkgen client1 20260215T000000Z
+mkgen client1 20260301T000000Z
 run "$T/snapshots/75-list-snapshots.sh" client1 20260201T000000Z 20260401T000000Z
 { [ "$RC" -eq 0 ] && [[ "$OUT" == *"20260215T000000Z"* ]] && [[ "$OUT" == *"20260301T000000Z"* ]] \
   && [[ "$OUT" != *"20260101T000000Z"* ]]; }
 assert "75.8 a [from]/[to] range only lists what falls inside it" $?
 
 new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
+mkgen client1 20260101T000000Z
 run "$T/snapshots/75-list-snapshots.sh" client1 20270101T000000Z 20270201T000000Z
 { [ "$RC" -eq 0 ] && [[ "$OUT" == *"in the given range"* ]]; }
 assert "75.9 a valid range matching nothing says so, not an error" $?
 
 new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
-mkdir -p "$SB/OWN/client1/.creating-20260215T000000Z"
+mkgen client1 20260101T000000Z
+mkdir -p "$SB/client1/.creating-20260215T000000Z"
 run "$T/snapshots/75-list-snapshots.sh" client1
 { [ "$RC" -eq 0 ] && [[ "$OUT" != *".creating"* ]] && [[ "$OUT" == *"1 generation(s) listed"* ]]; }
 assert "75.10 a stale .creating-* is silently skipped, not listed" $?
 
-new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
-mkgen MIRROR client1 20260101T000000Z
-run "$T/snapshots/75-list-snapshots.sh" client1
-[ "$RC" -ne 0 ]; assert "75.11 a client under both OWN and MIRROR is refused, not guessed" $?
 
 # ============================================================================
 # 76. 76-delete-snapshots.sh
@@ -459,79 +454,73 @@ run "$T/snapshots/76-delete-snapshots.sh" nobody
 assert "76.3 an unknown client is a no-op, never reaches the confirmation" $?
 
 new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
+mkgen client1 20260101T000000Z
 run "$T/snapshots/76-delete-snapshots.sh" client1 20270101T000000Z 20270201T000000Z
 { [ "$RC" -eq 0 ] && [[ "$OUT" == *"Nothing in scope"* ]] && [[ "$OUT" != *"Type Y"* ]] \
-  && [ -d "$SB/OWN/client1/20260101T000000Z" ]; }
+  && [ -d "$SB/client1/20260101T000000Z" ]; }
 assert "76.4 an empty range never prompts and deletes nothing" $?
 
 new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
+mkgen client1 20260101T000000Z
 run_confirm "y" "$T/snapshots/76-delete-snapshots.sh" client1
-{ [ "$RC" -eq 0 ] && [[ "$OUT" == *"Aborted"* ]] && [ -d "$SB/OWN/client1/20260101T000000Z" ]; }
+{ [ "$RC" -eq 0 ] && [[ "$OUT" == *"Aborted"* ]] && [ -d "$SB/client1/20260101T000000Z" ]; }
 assert "76.5 lowercase 'y' aborts -- only exact uppercase Y confirms" $?
 
 new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
+mkgen client1 20260101T000000Z
 run_confirm "" "$T/snapshots/76-delete-snapshots.sh" client1
-{ [ "$RC" -eq 0 ] && [[ "$OUT" == *"Aborted"* ]] && [ -d "$SB/OWN/client1/20260101T000000Z" ]; }
+{ [ "$RC" -eq 0 ] && [[ "$OUT" == *"Aborted"* ]] && [ -d "$SB/client1/20260101T000000Z" ]; }
 assert "76.6 empty input aborts" $?
 
 new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
+mkgen client1 20260101T000000Z
 run_confirm "Y" "$T/snapshots/76-delete-snapshots.sh" client1
-{ [ "$RC" -eq 0 ] && [ ! -e "$SB/OWN/client1/20260101T000000Z" ] \
+{ [ "$RC" -eq 0 ] && [ ! -e "$SB/client1/20260101T000000Z" ] \
   && [[ "$OUT" == *"1/1 generation(s) deleted"* ]]; }
 assert "76.7 exact 'Y' deletes the generation" $?
 
 new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
-mkgen OWN client1 20260215T000000Z
+mkgen client1 20260101T000000Z
+mkgen client1 20260215T000000Z
 run_confirm "Y" "$T/snapshots/76-delete-snapshots.sh" client1
-{ [ "$RC" -eq 0 ] && [ ! -e "$SB/OWN/client1/20260101T000000Z" ] \
-  && [ ! -e "$SB/OWN/client1/20260215T000000Z" ]; }
+{ [ "$RC" -eq 0 ] && [ ! -e "$SB/client1/20260101T000000Z" ] \
+  && [ ! -e "$SB/client1/20260215T000000Z" ]; }
 assert "76.8 omitting [from]/[to] deletes the entire history" $?
 
 new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
-mkgen OWN client1 20260215T000000Z
-mkgen OWN client1 20260301T000000Z
+mkgen client1 20260101T000000Z
+mkgen client1 20260215T000000Z
+mkgen client1 20260301T000000Z
 run_confirm "Y" "$T/snapshots/76-delete-snapshots.sh" client1 20260201T000000Z 20260228T000000Z
-{ [ "$RC" -eq 0 ] && [ -d "$SB/OWN/client1/20260101T000000Z" ] \
-  && [ ! -e "$SB/OWN/client1/20260215T000000Z" ] && [ -d "$SB/OWN/client1/20260301T000000Z" ]; }
+{ [ "$RC" -eq 0 ] && [ -d "$SB/client1/20260101T000000Z" ] \
+  && [ ! -e "$SB/client1/20260215T000000Z" ] && [ -d "$SB/client1/20260301T000000Z" ]; }
 assert "76.9 a [from]/[to] range deletes only what falls inside it" $?
 
-new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
-mkgen MIRROR client1 20260101T000000Z
-run_confirm "Y" "$T/snapshots/76-delete-snapshots.sh" client1
-{ [ "$RC" -ne 0 ] && [ -d "$SB/OWN/client1/20260101T000000Z" ] && [ -d "$SB/MIRROR/client1/20260101T000000Z" ]; }
-assert "76.10 a client under both groups is refused, nothing deleted" $?
 
 new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
-echo "$SB/OWN/client1/20260101T000000Z" > "$CHATTR_STATE"   # mark it "immutable"
+mkgen client1 20260101T000000Z
+echo "$SB/client1/20260101T000000Z" > "$CHATTR_STATE"   # mark it "immutable"
 run_confirm "Y" "$T/snapshots/76-delete-snapshots.sh" client1
-{ [ "$RC" -eq 0 ] && [ ! -e "$SB/OWN/client1/20260101T000000Z" ] \
-  && ! grep -qF "$SB/OWN/client1/20260101T000000Z" "$CHATTR_STATE"; }
+{ [ "$RC" -eq 0 ] && [ ! -e "$SB/client1/20260101T000000Z" ] \
+  && ! grep -qF "$SB/client1/20260101T000000Z" "$CHATTR_STATE"; }
 assert "76.11 an immutable generation is cleared first, then actually deleted" $?
 
 new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
+mkgen client1 20260101T000000Z
 ext="$WORK/external-target$RANDOM"; mkdir -p "$ext"; echo keep > "$ext/marker"
-rm -rf "$SB/OWN/client1/20260101T000000Z"
-ln -s "$ext" "$SB/OWN/client1/20260101T000000Z"
+rm -rf "$SB/client1/20260101T000000Z"
+ln -s "$ext" "$SB/client1/20260101T000000Z"
 run_confirm "Y" "$T/snapshots/76-delete-snapshots.sh" client1
 { [ "$RC" -ne 0 ] && [[ "$OUT" == *"does not resolve inside SNAPSHOT_BASE"* ]] \
   && [ -f "$ext/marker" ]; }
 assert "76.12 a generation symlinked outside SNAPSHOT_BASE is refused, target untouched" $?
 
 new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
-mkgen OWN client2 20260101T000000Z
-echo "$SB/OWN/client1/20260101T000000Z" > "$CHATTR_STATE"
+mkgen client1 20260101T000000Z
+mkgen client2 20260101T000000Z
+echo "$SB/client1/20260101T000000Z" > "$CHATTR_STATE"
 run_confirm "Y" "$T/snapshots/76-delete-snapshots.sh" client1
-{ [ "$RC" -eq 0 ] && [ -d "$SB/OWN/client2/20260101T000000Z" ]; }
+{ [ "$RC" -eq 0 ] && [ -d "$SB/client2/20260101T000000Z" ]; }
 assert "76.13 deleting one client never touches another client's history" $?
 
 # ============================================================================
@@ -548,41 +537,41 @@ run "$T/snapshots/70-create-snapshot.sh"
 [ "$RC" -ne 0 ]; assert "70.2 a missing HOST_REPO_BASE is refused, not silently created" $?
 
 new_snap_tree; reset_env
-mkclient OWN client1
+mkclient client1
 export XFS_INFO_NO_REFLINK=1
 run "$T/snapshots/70-create-snapshot.sh"
-{ [ "$RC" -ne 0 ] && [[ "$OUT" == *"reflink"* ]] && [ ! -d "$SB/OWN" ]; }
+{ [ "$RC" -ne 0 ] && [[ "$OUT" == *"reflink"* ]] && [ ! -d "$SB/client1" ]; }
 assert "70.3 a filesystem without reflink support is refused up front" $?
 unset XFS_INFO_NO_REFLINK
 
 new_snap_tree; reset_env
-mkclient OWN client1
-mkclient OWN client2
+mkclient client1
+mkclient client2
 run "$T/snapshots/70-create-snapshot.sh"
-GEN1="$(find "$SB/OWN/client1" -mindepth 1 -maxdepth 1 -type d)"
-GEN2="$(find "$SB/OWN/client2" -mindepth 1 -maxdepth 1 -type d)"
+GEN1="$(find "$SB/client1" -mindepth 1 -maxdepth 1 -type d)"
+GEN2="$(find "$SB/client2" -mindepth 1 -maxdepth 1 -type d)"
 { [ "$RC" -eq 0 ] && [ -f "$GEN1/marker.txt" ] && [ -f "$GEN2/marker.txt" ] \
   && [[ "$OUT" == *"2/2 client(s) snapshotted successfully"* ]]; }
 assert "70.4 every client under HOST_REPO_BASE gets a generation, with its content" $?
 
 new_snap_tree; reset_env
-mkclient OWN client1
+mkclient client1
 run "$T/snapshots/70-create-snapshot.sh"
-GEN="$(find "$SB/OWN/client1" -mindepth 1 -maxdepth 1 -type d | head -1)"
+GEN="$(find "$SB/client1" -mindepth 1 -maxdepth 1 -type d | head -1)"
 run sudo rm -rf "$GEN"
 { [ "$RC" -ne 0 ] && [ -d "$GEN" ]; }
 assert "70.5 the completed generation genuinely resists deletion (mirrors VERIFICATION 11A)" $?
 
 new_snap_tree; reset_env
-mkclient OWN client1
-mkclient OWN 'bad name'
+mkclient client1
+mkclient 'bad name'
 run "$T/snapshots/70-create-snapshot.sh"
 { [ "$RC" -ne 0 ] && [[ "$OUT" == *"1/2 client(s)"* || "$OUT" == *"1/2"* ]] \
-  && [ -d "$SB/OWN/client1" ] && [ ! -d "$SB/OWN/bad name" ]; }
+  && [ -d "$SB/client1" ] && [ ! -d "$SB/bad name" ]; }
 assert "70.6 one client's invalid name does not stop the others" $?
 
 new_snap_tree; reset_env
-mkclient OWN client1
+mkclient client1
 export CP_FAIL=1
 run "$T/snapshots/70-create-snapshot.sh"
 { [ "$RC" -ne 0 ] && [[ "$OUT" == *"reflink copy failed"* ]]; }
@@ -590,7 +579,7 @@ assert "70.7 a failed copy is reported and that client is skipped" $?
 unset CP_FAIL
 
 new_snap_tree; reset_env
-mkclient OWN client1
+mkclient client1
 export CHATTR_FAIL=1
 run "$T/snapshots/70-create-snapshot.sh"
 { [ "$RC" -ne 0 ] && [[ "$OUT" == *"chattr +i failed"* ]]; }
@@ -598,7 +587,7 @@ assert "70.8 a failing chattr is reported, not silently accepted" $?
 unset CHATTR_FAIL
 
 new_snap_tree; reset_env
-mkclient OWN client1
+mkclient client1
 export CHATTR_LIE=1
 run "$T/snapshots/70-create-snapshot.sh"
 { [ "$RC" -ne 0 ] && [[ "$OUT" == *"NOT showing the immutable flag on read-back"* ]]; }
@@ -606,12 +595,12 @@ assert "70.9 chattr claiming success is not trusted without a read-back match" $
 unset CHATTR_LIE
 
 new_snap_tree; reset_env
-mkclient OWN client1
-mkdir -p "$SB/OWN/client1/.creating-20200101T000000Z/data"
-echo stale > "$SB/OWN/client1/.creating-20200101T000000Z/data/leftover"
+mkclient client1
+mkdir -p "$SB/client1/.creating-20200101T000000Z/data"
+echo stale > "$SB/client1/.creating-20200101T000000Z/data/leftover"
 run "$T/snapshots/70-create-snapshot.sh"
 { [ "$RC" -eq 0 ] && [[ "$OUT" == *"removing stale incomplete snapshot"* ]] \
-  && [ ! -e "$SB/OWN/client1/.creating-20200101T000000Z" ]; }
+  && [ ! -e "$SB/client1/.creating-20200101T000000Z" ]; }
 assert "70.10 a leftover .creating-* from an interrupted run is cleaned up" $?
 
 new_snap_tree; reset_env
@@ -619,7 +608,7 @@ LOCK_HELD="$T/storage/.snapshots/repo"
 mkdir -p "$LOCK_HELD"
 exec 8>"$LOCK_HELD/.lock"
 flock -n 8
-mkclient OWN client1
+mkclient client1
 run "$T/snapshots/70-create-snapshot.sh"
 { [ "$RC" -ne 0 ] && [[ "$OUT" == *"still in progress"* ]]; }
 assert "70.11 a concurrent run is refused via the lock, not silently interleaved" $?
@@ -639,7 +628,7 @@ run "$T/snapshots/77-restore-last-snapshot.sh" nobody
 assert "77.2 no snapshot history at all is refused before any prompt, exit 1" $?
 
 new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
+mkgen client1 20260101T000000Z
 run "$T/snapshots/77-restore-last-snapshot.sh" client1
 { [ "$RC" -ne 0 ] && [[ "$OUT" == *"no existing repository directory found"* ]] \
   && [[ "$OUT" == *"00-ssh-create-user.sh"* ]] && [[ "$OUT" == *"04-reattach-client.sh"* ]] \
@@ -647,78 +636,60 @@ run "$T/snapshots/77-restore-last-snapshot.sh" client1
 assert "77.3 a live directory that is entirely gone is refused, points at 00- not 04-" $?
 
 new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
-mkgen MIRROR client1 20260101T000000Z
-mkclient OWN client1
-lsattr_pdata "$HRB/OWN/client1:1011"
-df_stub "$HRB/OWN/client1:1048576:0"
-run "$T/snapshots/77-restore-last-snapshot.sh" client1
-[ "$RC" -ne 0 ]; assert "77.4 a client with snapshots under both groups is refused" $?
-
-new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
-mkclient OWN client1
-mkclient MIRROR client1
-lsattr_pdata "$HRB/OWN/client1:1011"
-df_stub "$HRB/OWN/client1:1048576:0"
-run "$T/snapshots/77-restore-last-snapshot.sh" client1
-[ "$RC" -ne 0 ]; assert "77.5 a live directory under both groups is refused" $?
-
-new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
-mkgen OWN client1 20260215T000000Z
-mkclient OWN client1
-lsattr_pdata "$HRB/OWN/client1:1011"
-df_stub "$HRB/OWN/client1:1048576:0"
+mkgen client1 20260101T000000Z
+mkgen client1 20260215T000000Z
+mkclient client1
+lsattr_pdata "$HRB/client1:1011"
+df_stub "$HRB/client1:1048576:0"
 run_confirm "N" "$T/snapshots/77-restore-last-snapshot.sh" client1
 { [ "$RC" -eq 0 ] && [[ "$OUT" == *"20260215T000000Z"* ]] && [[ "$OUT" != *"20260101T000000Z "* ]]; }
 assert "77.6 the display picks the newest generation, not just any" $?
 
 new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
-mkclient OWN client1
-lsattr_pdata "$HRB/OWN/client1:1011"
-df_stub "$HRB/OWN/client1:1048576:0"
+mkgen client1 20260101T000000Z
+mkclient client1
+lsattr_pdata "$HRB/client1:1011"
+df_stub "$HRB/client1:1048576:0"
 run_confirm "n" "$T/snapshots/77-restore-last-snapshot.sh" client1
-{ [ "$RC" -eq 0 ] && [[ "$OUT" == *"Aborted"* ]] && [ -f "$HRB/OWN/client1/marker.txt" ]; }
+{ [ "$RC" -eq 0 ] && [[ "$OUT" == *"Aborted"* ]] && [ -f "$HRB/client1/marker.txt" ]; }
 assert "77.7 lowercase 'n' (or anything but Y) aborts, live repo untouched" $?
 
 new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
-echo "restored payload" > "$SB/OWN/client1/20260101T000000Z/marker.txt"
-mkclient OWN client1
-echo "drift, added after the snapshot" > "$HRB/OWN/client1/drift.txt"
-lsattr_pdata "$HRB/OWN/client1:1011"
-df_stub "$HRB/OWN/client1:1048576:0"
+mkgen client1 20260101T000000Z
+echo "restored payload" > "$SB/client1/20260101T000000Z/marker.txt"
+mkclient client1
+echo "drift, added after the snapshot" > "$HRB/client1/drift.txt"
+lsattr_pdata "$HRB/client1:1011"
+df_stub "$HRB/client1:1048576:0"
 run_confirm "Y" "$T/snapshots/77-restore-last-snapshot.sh" client1
 { [ "$RC" -eq 0 ] && [[ "$OUT" == *"quota identity matches"* ]] \
-  && [ ! -e "$HRB/OWN/client1/drift.txt" ] \
-  && [ "$(cat "$HRB/OWN/client1/marker.txt")" = "restored payload" ]; }
+  && [ ! -e "$HRB/client1/drift.txt" ] \
+  && [ "$(cat "$HRB/client1/marker.txt")" = "restored payload" ]; }
 assert "77.8 a clean restore replaces drifted content with the snapshot's own" $?
 
 new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
-mkclient OWN client1
-lsattr_pdata "$HRB/OWN/client1:1011"
+mkgen client1 20260101T000000Z
+mkclient client1
+lsattr_pdata "$HRB/client1:1011"
 export DF_CALL_COUNTER="$WORK/df.calls"; : > "$DF_CALL_COUNTER"
-df_stub "$HRB/OWN/client1:1048576:0"
+df_stub "$HRB/client1:1048576:0"
 export DF_STUB_DATA_AFTER="$WORK/df.after"
-printf '%s\n' "$HRB/OWN/client1:2097152:0" > "$DF_STUB_DATA_AFTER"
+printf '%s\n' "$HRB/client1:2097152:0" > "$DF_STUB_DATA_AFTER"
 export DF_STUB_SWITCH_AT=2   # df calls: #1 repo_xfs_mount, #2 OLD kib, #3 NEW kib -- only #3 sees the new value
 run_confirm "Y" "$T/snapshots/77-restore-last-snapshot.sh" client1
 { [ "$RC" -ne 0 ] && [[ "$OUT" == *"is NOT"*"correctly quota-protected"* ]] \
-  && [ ! -e "$HRB/OWN/client1/marker.txt" ]; }
+  && [ ! -e "$HRB/client1/marker.txt" ]; }
 assert "77.9 a quota mismatch after re-applying the project id aborts, restores nothing" $?
 unset DF_STUB_DATA_AFTER DF_STUB_SWITCH_AT DF_CALL_COUNTER
 
 new_snap_tree; reset_env
-mkgen OWN client1 20260101T000000Z
-echo "restored payload" > "$SB/OWN/client1/20260101T000000Z/marker.txt"
-mkclient OWN client1
-lsattr_pdata "$HRB/OWN/client1:1011"
-df_stub "$HRB/OWN/client1:1048576:0"
+mkgen client1 20260101T000000Z
+echo "restored payload" > "$SB/client1/20260101T000000Z/marker.txt"
+mkclient client1
+lsattr_pdata "$HRB/client1:1011"
+df_stub "$HRB/client1:1048576:0"
 run_confirm "Y" "$T/snapshots/77-restore-last-snapshot.sh" client1
-grep -qF "project -s -p ${HRB}/OWN/client1 1011" "$XFS_LOG"
+grep -qF "project -s -p ${HRB}/client1 1011" "$XFS_LOG"
 assert "77.10 the SAME project id read before deletion is re-applied, not a fresh one" $?
 
 # ============================================================================
