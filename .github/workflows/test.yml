@@ -150,4 +150,5 @@ jobs:
             entrypoint.sh \
             build_authorized_keys.sh \
             scripts/*.sh \
+            snapshots/*.sh \
             tests/*.sh
