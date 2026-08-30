@@ -113,13 +113,45 @@ Plumbing note: `info` is rendered once at container start (`build_authorized_key
 
 ### A self-balancing "check the oldest first" scheduler (follow-up)
 
-The shipped `20-check-repos.sh` sweeps every repository per run. On a slow store or with many repositories an operator splits that across the week by hand — a wrapper that feeds `20-` a different slice of the roster each day ([Operations](docs/OPERATIONS.md) Chapter 9.13). A plain slice is fixed and count-based: it does not adapt to uneven repository sizes, and it does not notice a repository that has quietly gone unchecked because it kept landing on a day whose run failed.
+The shipped `20-check-repos.sh` sweeps every repository in one run. That is fine while the whole sweep fits a quiet window (100 GB on a USB spinning disk is ~20 min). When the total genuinely outgrows a weekly window, an operator splits it across the week by hand ([Operations](docs/OPERATIONS.md) Chapter 9.13). This is the automatic version of that split, and it should be built only when a real deployment needs it.
 
-The self-balancing version: the check records a per-repository **"last full check passed"** timestamp, and each run works through the repositories oldest-first until a time or count budget (`CHECK_BUDGET`, say) is spent. This handles uneven sizes, clients that come and go, and a run that fails partway — the repositories it did not reach are simply the oldest next time. It also produces exactly the per-repository timestamp the client-facing "last checked" line above needs, so the two follow-ups share their state.
+**State — one append-only log.** `HOST_LOG_BASE/check-repos.log`, one line per check event:
 
-Open questions: where the timestamps live (a file per repository under a host-side state dir, versus one JSON map); whether the budget is wall-clock (needs `borg check` to be interruptible cleanly at a repository boundary — it is, between repositories) or a repository count; and whether "oldest first" should be strict or bucketed so the same repository is not always last.
+```
+<iso-date>  <repo>  <du-bytes>  <duration-s>  <ok|fail>
+```
 
-Practical considerations: `borg check` is I/O-intensive, so scheduling must avoid colliding with active backup windows, and each per-repository check should run under the same isolation the rest of the server uses.
+A repository's state is its last `ok` line (its `du` and the date). No `ok` line ever = never checked. `duration-s` is for the operator to eyeball whether the budget maps to an acceptable wall time — the algorithm does not read it.
+
+**Driven by a daily timer** (`OnCalendar=*-*-* 05:00:00`), a mode of `20-check-repos.sh`. Per run:
+
+```
+enumerate repos on disk; du -s data/ each  -> du(repo), total_du
+limit     = total_du / CHECK_CYCLE_DIVISOR          # default 6
+order     = [ never-checked, by name ]
+         ++ [ checked, by last-ok date ascending, then name ]
+remaining = limit
+first     = true
+for repo in order:
+    if not first and (remaining <= 0 or elapsed >= CHECK_MAX_RUNTIME): break
+    if not first and du(repo) > remaining: continue    # skip, try the next that fits
+    borg check -v --repository-only <repo>              # 20-check-repos.sh's existing per-repo check
+    append log line; on ok -> repo's new "last ok"; on fail -> "last ok" unchanged
+    remaining -= du(repo)
+    first = false
+```
+
+`order[0]` is checked **unconditionally** — the progress guarantee. So nothing starves: a repository larger than `limit` is simply always the first repo of some run (never a "fits the remaining budget" pick), and its check interval stays ~`CHECK_CYCLE_DIVISOR` days like everything else. A failed check leaves the repository at the front of `order` for the next run.
+
+**Knobs:** `CHECK_CYCLE_DIVISOR` (default 6 — a daily timer then has ~1 run/week of slack), `CHECK_MAX_RUNTIME` (default 60m, the hard per-run ceiling). Optional `CHECK_MIN_AGE_DAYS` to keep a run from re-checking very fresh repositories when the budget has slack.
+
+**What it guarantees, and what it does not.** No repository is ever dropped from `order`; the oldest (or a never-checked one) is always next. Per-run work is bounded by `max(limit + one repo, CHECK_MAX_RUNTIME)`. With `7 × limit ≥ total_du` per week the cycle settles at ~`CHECK_CYCLE_DIVISOR` days and the oldest repository stays within ~a day of that. There is **no hard deadline**: a sustained run of failures, a long power-off (systemd runs only one `Persistent=true` catch-up, not one per missed day), or a genuine I/O deficit can stretch the oldest age further. That drift is the operator's signal, surfaced by the status report — `29-check-timer-status.sh` reports `total_du`, `limit`, the oldest age, a count over `CHECK_STALE_DAYS` (a warning, not a scheduling override), the estimated cycle length, and any repository whose last `duration-s` exceeded `CHECK_MAX_RUNTIME` (which cannot be checked in one run on this store — the operator uses `--max-duration` for that one repository, or a snapshot-based check, Chapter 9.13). The run exits non-zero if any check failed or any repository is over `CHECK_STALE_DAYS`.
+
+The per-repository "last ok" date this keeps is the same value the client-facing "last checked" line above needs, so the two follow-ups share their state.
+
+**Considered and dropped:** a fixed *day × client* map (brittle — a client added to `clients.conf` but forgotten in the map is never checked, and a day whose run always fails silently skips that day's clients); and a measured-throughput / growth-forecasting model (near-zero payoff — repository size enters only through the `du` budget, recomputed each run, and ordering by age needs no forecast at all).
+
+Practical considerations: `borg check` is I/O-intensive, so scheduling must avoid colliding with active backup windows, and each per-repository check runs under the same isolation the rest of the server uses.
 
 ## 11.6. Executable Verification Checks
 
