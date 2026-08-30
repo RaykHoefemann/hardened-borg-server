@@ -98,15 +98,14 @@ case "${SSH_ORIGINAL_COMMAND:-}" in
         # overridable only for the test harness and cannot be set by a client
         # (sshd passes no client environment). Absent -> no scheduled check has
         # recorded this repository yet, and the line is simply omitted (no
-        # claim rather than a false one). A failing check shows a neutral
-        # pointer to the operator, never borg's error text.
+        # claim rather than a false one). The line is the exact timestamp from
+        # check-repos.history plus that run's result token in parentheses --
+        # never borg's error text.
         cs_file="${CHECK_STATE_DIR:-/log/check-state}/$(basename "$REPO")"
         if [ -f "$cs_file" ]; then
-            IFS="$(printf '\t')" read -r cs_res cs_when cs_lastok < "$cs_file" || cs_res=""
+            IFS="$(printf '\t')" read -r cs_res cs_when cs_rest < "$cs_file" || cs_res=""
             case "$cs_res" in
-                ok)      echo "Repository check: last passed ${cs_when} (repository structure only -- verify archive contents yourself, CLIENTUSE.md ch. 8)" ;;
-                partial) echo "Repository check: structure checked ${cs_when}; last full check ${cs_lastok}" ;;
-                fail)    echo "Repository check: the last check did not pass (${cs_when}) -- contact the operator. Last full pass: ${cs_lastok}" ;;
+                ok|partial|fail) echo "Last Repo Structure Check: ${cs_when} (${cs_res})" ;;
             esac
         fi
         exit 0

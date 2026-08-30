@@ -80,9 +80,9 @@ Open, to settle at implementation:
 > (append-only `check-repos.history`, oldest-first within a `total /
 > CHECK_CYCLE_DIVISOR` budget, `29-`'s coverage report). Both exercised on the
 > FCOS bench 2026-08-30 against borg 1.2.8 and 1.4.0 ([Verification](docs/VERIFICATION.md)
-> section 13), including the one conservative `Repository check:` line the
-> client `info` channel now carries about the client's own repository (Chapter
-> 2.4). Design and operation: [Design](docs/DESIGN.md) Chapter 3.3,
+> section 13), including the one conservative `Last Repo Structure Check:` line
+> the client `info` channel now carries about the client's own repository
+> (Chapter 2.4). Design and operation: [Design](docs/DESIGN.md) Chapter 3.3,
 > [Operations](docs/OPERATIONS.md) Chapter 9.13. **11.3 is complete**; the text
 > below is kept as the design record.
 
@@ -100,11 +100,11 @@ Two existing guarantees must be preserved when this lands:
 
 ### The client-facing "last checked" line
 
-Shipped: `borg-wrapper.sh` adds a `Repository check: last passed <date> …` line to the `info` output, read live from a **per-client** file (`check-state/<client>`, written by `20-check-repos.sh`) so nothing cross-client enters a client session (Chapter 2.2). The three constraints it was built to respect:
+Shipped: `borg-wrapper.sh` adds a `Last Repo Structure Check: <timestamp> (<result>)` line to the `info` output, read live from a **per-client** file (`check-state/<client>`, written by `20-check-repos.sh`) so nothing cross-client enters a client session (Chapter 2.2). The `<timestamp>` is verbatim from `check-repos.history`; `<result>` is `ok`, `partial`, or `fail`. The three constraints it was built to respect:
 
-- **No over-claim.** The line says "repository structure only" and points at the client's own `borg check --verify-data`. `--repository-only` validates structure, never archive contents.
-- **Partial passes.** A `--max-duration` partial shows `structure checked <date>; last full check <date>` — the last *full* pass, not the slice.
-- **A failing check does not dump server problems on the client.** It shows `did not pass … contact the operator`, never borg's error text — a structural fault is the operator's to triage first (`OnFailure=`). The line is omitted entirely until a scheduled check has recorded the repository.
+- **No over-claim.** The label says "structure" and [Client Usage](docs/CLIENTUSE.md) Chapter 8 points at the client's own `borg check --verify-data`. `--repository-only` validates structure, never archive contents.
+- **Partial passes.** A `--max-duration` partial is shown as `(partial)`, distinct from `(ok)`; `check-state` still records the last *full* pass in its third field.
+- **A failing check does not dump server problems on the client.** It shows `(fail)` with the timestamp only, never borg's error text — a structural fault is the operator's to triage first (`OnFailure=`). The line is omitted entirely until a scheduled check has recorded the repository.
 
 Verification: [Verification](docs/VERIFICATION.md) section 13 (13E); the `info` channel is also tested by 0.5A and 5.5B.
 

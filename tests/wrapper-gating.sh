@@ -239,22 +239,22 @@ TAB="$(printf '\t')"
 rm -f "$CHECK_STATE_DIR"/*
 
 run "$WORK/keyfile_blake2" "info"
-assert_ok_lacks "C6 no check-state file -> no 'Repository check:' line, no false claim" "Repository check:"
+assert_ok_lacks "C6 no check-state file -> no 'Last Repo Structure Check' line, no false claim" "Last Repo Structure Check"
 
-printf 'ok%s2026-08-30%s2026-08-30\n' "$TAB" "$TAB" > "$CHECK_STATE_DIR/keyfile_blake2"
+printf 'ok%s2026-08-30T05:00:04Z%s2026-08-30T05:00:04Z\n' "$TAB" "$TAB" > "$CHECK_STATE_DIR/keyfile_blake2"
 run "$WORK/keyfile_blake2" "info"
-assert_ok_contains "C7 an 'ok' check-state -> last-passed line, scoped to structure" \
-    "Repository check: last passed 2026-08-30 (repository structure only"
+assert_ok_contains "C7 an 'ok' check-state -> the exact timestamp with (ok)" \
+    "Last Repo Structure Check: 2026-08-30T05:00:04Z (ok)"
 
-printf 'partial%s2026-08-30%s2026-08-24\n' "$TAB" "$TAB" > "$CHECK_STATE_DIR/keyfile_blake2"
+printf 'partial%s2026-08-30T05:00:02Z%s2026-08-24T05:00:11Z\n' "$TAB" "$TAB" > "$CHECK_STATE_DIR/keyfile_blake2"
 run "$WORK/keyfile_blake2" "info"
-assert_ok_contains "C8 a 'partial' check-state -> names the last FULL check, not the slice" \
-    "structure checked 2026-08-30; last full check 2026-08-24"
+assert_ok_contains "C8 a 'partial' check-state -> the partial run's timestamp with (partial)" \
+    "Last Repo Structure Check: 2026-08-30T05:00:02Z (partial)"
 
-printf 'fail%s2026-08-30%s2026-08-24\n' "$TAB" "$TAB" > "$CHECK_STATE_DIR/keyfile_blake2"
+printf 'fail%s2026-08-30T05:00:01Z%s2026-08-24T05:00:11Z\n' "$TAB" "$TAB" > "$CHECK_STATE_DIR/keyfile_blake2"
 run "$WORK/keyfile_blake2" "info"
-assert_ok_contains "C9 a 'fail' check-state -> neutral pointer to the operator" \
-    "did not pass (2026-08-30) -- contact the operator"
+assert_ok_contains "C9 a 'fail' check-state -> the failing run's timestamp with (fail)" \
+    "Last Repo Structure Check: 2026-08-30T05:00:01Z (fail)"
 run "$WORK/keyfile_blake2" "info"
 assert_ok_lacks "C9b a 'fail' check-state never leaks borg's own error text" "integrity error"
 rm -f "$CHECK_STATE_DIR"/*

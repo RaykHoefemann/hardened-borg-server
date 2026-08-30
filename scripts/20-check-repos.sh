@@ -292,19 +292,21 @@ check_and_time() {
     # Per-client status for the info channel (DESIGN 2.4): one file per client,
     # containing ONLY this client, so borg-wrapper.sh can read it in the
     # client's own session without touching the multi-client history. Three
-    # tab-separated fields: <last-result> <last-check-date> <last-full-pass-date>.
-    _cat_day="${_cat_now%%T*}"
+    # tab-separated fields: <last-result> <last-check-timestamp>
+    # <last-full-pass-timestamp>, the timestamps verbatim from check-repos.history
+    # field 2 (ISO-8601 UTC). borg-wrapper.sh shows field 2 with field 1 in
+    # parentheses; field 3 is kept as a record but not displayed.
     if [ "$_cat_tok" = "ok" ]; then
-        _cat_lastok="$_cat_day"
+        _cat_lastok="$_cat_now"
     else
         _cat_lastok="$(awk -F"$TAB" -v c="$_cat_user" \
             '$3 == c && $6 == "ok" && $1 + 0 > e { e = $1 + 0; d = $2 }
-             END { sub(/T.*/, "", d); print d }' \
+             END { print d }' \
             "$CHECK_HISTORY" 2>/dev/null)"
         [ -n "$_cat_lastok" ] || _cat_lastok="-"
     fi
     mkdir -p "${HOST_LOG_BASE}/check-state"
-    printf '%s\t%s\t%s\n' "$_cat_tok" "$_cat_day" "$_cat_lastok" \
+    printf '%s\t%s\t%s\n' "$_cat_tok" "$_cat_now" "$_cat_lastok" \
         > "${HOST_LOG_BASE}/check-state/${_cat_user}"
 }
 

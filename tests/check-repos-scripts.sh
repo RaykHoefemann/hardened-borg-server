@@ -248,7 +248,6 @@ seed_hist() {  # seed_hist <days-ago> <client> <du-KiB> <ok|partial|fail>
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$ep" "$(date -u -d "@$ep" +%Y-%m-%dT%H:%M:%SZ)" "$2" "$3" 0 "$4" - >> "$LOGDIR/check-repos.history"
 }
-seed_days_ago() { date -u -d "@$(( $(date +%s) - $1 * 86400 ))" +%Y-%m-%d; }
 checked_order() { grep -oE '/repo/[A-Za-z0-9_-]+' "$PODMAN_LOG" | sed 's|/repo/||'; }
 
 reset_env() {
@@ -481,18 +480,22 @@ CS="$LOGDIR/check-state/c1"
 { [ -f "$CS" ] \
   && [ "$(awk -F'\t' '{print NF}' "$CS")" -eq 3 ] \
   && [ "$(cut -f1 "$CS")" = "ok" ] \
-  && printf '%s' "$(cut -f2 "$CS")" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' \
-  && [ "$(cut -f2 "$CS")" = "$(cut -f3 "$CS")" ]; }
-assert "20.24 a check writes a per-client check-state/<client> file: result, date, last-full-pass date" $?
+  && printf '%s' "$(cut -f2 "$CS")" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' \
+  && [ "$(cut -f2 "$CS")" = "$(cut -f3 "$CS")" ] \
+  && [ "$(cut -f2 "$CS")" = "$(awk -F'\t' 'END{print $2}' "$LOGDIR/check-repos.history")" ]; }
+assert "20.24 check-state holds result, the exact history timestamp, and last-full-pass timestamp" $?
 
 new_check_tree; reset_env
 mkclient c1; set_borg c1 partial
 CHECK_CYCLE_DIVISOR=1 CHECK_MAX_DURATION=3600 run "$T/scripts/20-check-repos.sh"
 seed_hist 6 c1 1 ok      # a prior full pass, older than this partial
 CHECK_CYCLE_DIVISOR=1 CHECK_MAX_DURATION=3600 run "$T/scripts/20-check-repos.sh"
+EXP_FULL="$(awk -F'\t' '$3=="c1" && $6=="ok"{print $2}' "$LOGDIR/check-repos.history")"
 { [ "$(cut -f1 "$LOGDIR/check-state/c1")" = "partial" ] \
-  && [ "$(cut -f3 "$LOGDIR/check-state/c1")" = "$(seed_days_ago 6)" ]; }
-assert "20.25 after a partial check, check-state keeps the last FULL pass date, not the partial's" $?
+  && [ -n "$EXP_FULL" ] \
+  && [ "$(cut -f3 "$LOGDIR/check-state/c1")" = "$EXP_FULL" ] \
+  && [ "$(cut -f2 "$LOGDIR/check-state/c1")" != "$EXP_FULL" ]; }
+assert "20.25 after a partial check, check-state keeps the last FULL pass timestamp, not the partial's" $?
 unset CHECK_MAX_DURATION
 
 new_check_tree; reset_env
