@@ -270,6 +270,7 @@ The read-only `info` command (see Chapter 8) intentionally exposes only the mini
 - **Server:** name, location, contact
 - **Software:** the release version of the running image, and the URL of the source repository it was built from
 - **Client:** the requesting client's own username, quota, and current storage usage against that quota
+- **Repository check:** when this client's own repository last passed a server-side `borg check` and whether it passed — *structure only*: `--repository-only` never reads the client's archives, and the line says so and points the client at its own `borg check --verify-data` (3.3, [Client Usage](CLIENTUSE.md) Chapter 8). Omitted entirely until a scheduled check has recorded this repository. A failing check shows a neutral "contact the operator", never borg's error output — a structural fault is the operator's to triage first (1.2.6). The line is read live from a **per-client** status file (`check-state/<client>`, written by `scripts/20-check-repos.sh`), so the client's session still never touches a file describing any other client (2.2).
 
 The usage figure is the client's own consumption only, derived from its own repository (see Chapter 8). No information about other clients, server internals, or storage contents is ever exposed through this channel.
 
@@ -317,7 +318,7 @@ It is bounded by the same trust split as privacy:
 Two properties from Chapters 1 and 2 constrain how it runs, and both hold:
 
 - **Append-only is preserved (Chapter 1.2.4).** `borg check` has a `--repair` mode that *modifies* the repository. The scheduled check never passes it — it is strictly read-only. Repair is a separate, deliberate, sometimes two-party operator action, off any schedule and unreachable from a client connection ([Operations](OPERATIONS.md) Chapter 9.14).
-- **Observability is host-side only (Chapter 1.2.6).** Results are a log and an exit status on the host (`29-check-timer-status.sh`, which `99-container-status.sh` also calls); the client `info` channel is unchanged. Whether a conservative "last checked" line is later added there is a deliberate, still-open decision ([Roadmap](../ROADMAP.md) 11.3).
+- **Observability is host-side only (Chapter 1.2.6).** Full results — every repository, per-run — are a log and an exit status on the host (`29-check-timer-status.sh`, which `99-container-status.sh` also calls). The client `info` channel carries only one conservative line about the client's *own* repository (Chapter 2.4): when its last check passed, structure only. A failing check surfaces there as "contact the operator", not borg's output.
 
 ## 3.4. Integrity of Server-Side Control Files
 

@@ -143,6 +143,7 @@ source: https://github.com/RaykHoefemann/hardened-borg-server
 user: user1-os1-pc1
 quota (configured): 50G
 Used: 0 KiB of 50.0 GiB (0%)
+Repository check: last passed 2026-08-28 (repository structure only -- verify archive contents yourself, CLIENTUSE.md ch. 8)
 ```
 
 This works before your repository exists and confirms three things at once:
@@ -150,6 +151,15 @@ your key is installed, the forced command is in effect, and your quota is
 enforced at the filesystem level. If `Used:` reports the size of a whole disk
 rather than your quota, tell your operator — per-client limits are not active
 (see [Verification](VERIFICATION.md), check 5.5B).
+
+The `Repository check:` line, when present, is when the server last ran
+`borg check --repository-only` against your repository and whether it passed.
+It checks the repository's **structure** — segment checksums and the index —
+not your archives' contents, which need your key and are yours to check
+(Chapter 8). Treat "last passed" as "the on-disk repository was intact as of
+that date", not as a substitute for your own `borg check --verify-data`. A
+`did not pass` line means contact your operator; the line is absent if your
+operator does not run scheduled checks.
 
 The last two lines name a limit each, and they are not the same statement.
 `quota (configured):` is what your operator recorded for you; the total in the

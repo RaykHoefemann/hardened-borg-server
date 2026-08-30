@@ -2324,7 +2324,7 @@ ls /var/mnt/extern1/.snapshots/BorgTestB/
 
 **Why it matters** — this is the server's half of the integrity model. If the check could write to a repository, a scheduled job would be a standing risk to the thing it exists to protect. If it needed a key, running it at all would break the privacy guarantee. If one corrupt repository aborted the sweep, a single damaged client would blind the operator to the state of every other.
 
-Four checks, staged on the FCOS bench 2026-08-30 against two disposable clients — `bc1` populated from a **borg 1.2.8** client (Linux Mint), `bc2` from a **borg 1.4.0** client (Debian), the server image's own borg being 1.4.0. 13A: the check completes with no key on the server. 13B: a run leaves a healthy repository's stored data byte-for-byte unchanged. 13C: a deliberately corrupted segment is reported *and* the sweep still finishes. 13D: the borg process runs as the unprivileged container user.
+Five checks, staged on the FCOS bench 2026-08-30 against two disposable clients — `bc1` populated from a **borg 1.2.8** client (Linux Mint), `bc2` from a **borg 1.4.0** client (Debian), the server image's own borg being 1.4.0. 13A: the check completes with no key on the server. 13B: a run leaves a healthy repository's stored data byte-for-byte unchanged. 13C: a deliberately corrupted segment is reported *and* the sweep still finishes. 13D: the borg process runs as the unprivileged container user. 13E: the `info` channel's `Repository check:` line is scoped to structure, isolated per-client, and shows a failing check as "contact the operator" — never borg's error.
 
 `20-check-repos.sh` runs `borg check -v --repository-only`. The `-v` is load-bearing: without it borg 1.2.8 and 1.4.0 both print **nothing** on a clean check, so a `--max-duration` partial run would be indistinguishable from a full pass. With `-v`, borg ends on `Finished full repository check, …` (segment checksums **and** the repository index checked) or `Finished partial repository check, …` (segments only — `--max-duration` skips the index check, which is why `CHECK_MAX_DURATION` defaults to off; [Operations](OPERATIONS.md) Chapter 9.13).
 
@@ -2410,6 +2410,26 @@ sudo stat -c '%u:%g' /var/mnt/extern1/borg-server/<client>/config  # the repo's 
 
 **What this does not show** — that the operator user itself is unprivileged (test 4C) or that the container is rootless (4A/4B). This is only that the check does not run borg as a different, more privileged identity than the repository's own.
 
+### 13E — the `info` channel's "last checked" line is scoped and isolated ✅
+
+**Claim** — [Design](DESIGN.md) Chapter 2.4: the client `info` output carries one `Repository check:` line about the client's *own* repository — read live from a per-client `check-state/<client>` file, never the multi-client `check-repos.history` — that claims repository structure only, shows the last *full* pass for a partial, and never puts borg's error text in front of a client.
+
+**Why it matters** — the line is a checkability signal (like the version), but a `--repository-only` "pass" is not an archive-content guarantee; a client that reads it as one skips its own `borg check --verify-data`. And a line read from a file describing every client is a cross-visibility regression ([Design](DESIGN.md) Chapter 2.2), which the per-client file is there to prevent.
+
+**Run** — from the client, after the scheduler has run at least once:
+
+```bash
+ssh borgserver info
+```
+
+**Pass** — an `ok` state produces `Repository check: last passed <date> (repository structure only -- verify archive contents yourself, CLIENTUSE.md ch. 8)`. A `partial` produces `structure checked <date>; last full check <date>` (the full date, not the slice). A `fail` produces `the last check did not pass (<date>) -- contact the operator …` with **no** borg output. With no scheduled check yet, the line is **absent** — not a placeholder claim. On the host, `HOST_LOG_BASE/check-state/` holds one file per current client and nothing else.
+
+**Fail** — the line claims more than structure; a partial shows the slice date as if it were a full pass; borg's `Data integrity error …` reaches the client; or the line appears when no check has run.
+
+**Negative test** — staged 2026-08-30: with `check-state/<client>` set to `fail␉<date>␉<date>`, `ssh … info` returned the neutral "contact the operator" line and the deliberately corrupted repository's borg error (`Segment entry checksum mismatch`) did **not** appear. `tests/wrapper-gating.sh` C6–C9b exercise the four states and the "no error text on fail" property with a fake `check-state` file.
+
+**What this does not show** — that the check itself discriminates (13A–13D) or that the date is accurate (it is whatever `20-check-repos.sh` last wrote). This is only that the line is correctly scoped, isolated, and conservative.
+
 ---
 
 ## Summary checklist
@@ -2464,6 +2484,7 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 | 13B | A run does not modify a healthy repository | ✅ | ☐ |
 | 13C | A corrupted segment is reported, and the sweep still completes | ✅ | ☐ |
 | 13D | borg runs as the unprivileged container user | ✅ | ☐ |
+| 13E | The `info` "last checked" line is scoped, isolated and conservative | ✅ | ☐ |
 
 Thirty-eight ✅ and two `(✅)` out of the forty checks in tests 0–12 — every one
 of those has had both directions demonstrated against a live deployment except

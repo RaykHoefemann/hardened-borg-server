@@ -712,6 +712,8 @@ A repository not reached this run is simply the oldest next run, so a failed run
 
 A `<client>` run is different: it checks that repository **unconditionally** — regardless of age, not bounded by the budget or `CHECK_MAX_RUNTIME` — and still appends its `check-repos.history` line, so a manual check counts and the next sweep will not immediately re-check it. Use it by hand and after Chapter 9.14.
 
+Every check also writes `HOST_LOG_BASE/check-state/<client>` — one file per client (`<last-result>  <last-check-date>  <last-full-pass-date>`), overwritten each time. `borg-wrapper.sh` reads that file in the client's own `info` session to add a `Repository check: last passed …` line ([Design](DESIGN.md) Chapter 2.4). It is a per-client file, never `check-repos.history`, so nothing cross-client enters a client session. So installing the timer is also what makes that `info` line appear for clients; a deployment that does not run scheduled checks simply has no such line. A no-argument sweep removes `check-state/` files for repositories no longer on disk.
+
 **Tuning knobs** — environment overrides, not `config.sh` entries (so that file stays short enough to diff on upgrade):
 
 | Variable | Default | Effect |
