@@ -1079,8 +1079,10 @@ commands to no output; the positive direction is the same run's provisioned
 clients, whose on-disk directory set matched the roster exactly.
 
 **What this does not show** — that each directory *contains* a valid Borg
-repository (the client's `borg check`; [Design](DESIGN.md) Chapter 2.1, Roadmap
-11.3), or that its quota is the configured one (check 5.5A).
+repository: the client's `borg check --verify-data` for archive contents
+([Design](DESIGN.md) Chapter 2.1), and test 13 for the server-side
+repository-structure check. Nor that its quota is the configured one (check
+5.5A).
 
 ---
 
@@ -2316,6 +2318,92 @@ ls /var/mnt/extern1/.snapshots/BorgTestB/
 
 ---
 
+## 13. Repository integrity checking is read-only and catches corruption
+
+**Claim** — [Design](DESIGN.md) Chapter 3.3 / [Roadmap](../ROADMAP.md) 11.3: `scripts/20-check-repos.sh` runs `borg check --repository-only` against each hosted repository — for one client or all, by hand or on the weekly timer — so that on-disk corruption (bit rot, a truncated segment, an inconsistent index) is found here rather than by a client at restore time. It needs no encryption key and the server holds none ([Design](DESIGN.md) Chapter 2.1); it never passes `--repair`, on any code path, so a run cannot modify a repository; and one repository failing does not stop the sweep — the exit status is `1` if any repository did not come back clean.
+
+**Why it matters** — this is the server's half of the integrity model. If the check could write to a repository, a scheduled job would be a standing risk to the thing it exists to protect. If it needed a key, running it at all would break the privacy guarantee. If one corrupt repository aborted the sweep, a single damaged client would blind the operator to the state of every other.
+
+Four checks, all against a disposable client from [Test Environment](TESTENV.md), with at least one other client present. 13A confirms the check completes with no key on the server; 13B confirms a run leaves a healthy repository's stored data byte-for-byte unchanged; 13C is the negative test — a deliberately corrupted segment, and whether the check reports it *and* still finishes the sweep; 13D confirms the borg process runs as the unprivileged container user.
+
+The weekly systemd timer that drives it unattended (`scripts/21-check-timer-install.sh`, `scripts/check-repos.timer`) is not exercised by any check here — the same way test 11 verifies the snapshot scripts but not `snapshots/71-`'s timer.
+
+### 13A — the check runs and passes with no key on the server ⚠️
+
+**Run**
+
+```bash
+# no BORG_PASSPHRASE set anywhere, and the server holds no keyfile (test 6)
+./scripts/20-check-repos.sh <client>
+```
+
+**Pass** — the client's line reads `FULL pass, no problems found` (or `PARTIAL pass … next run resumes`, if `CHECK_MAX_DURATION` was reached), the summary reads `1/1 repositories came back clean`, and the script exits `0`. borg was never prompted for a passphrase.
+
+**Fail** — a passphrase prompt, a hang, or an error naming a missing key means `--repository-only` is reaching key-bound archive metadata it should not touch. A non-zero exit with no corruption present means the check cannot pass against a correct deployment.
+
+**Negative test** — not yet staged, and likely *cappable* rather than stageable: the failing direction is a borg whose `--repository-only` path consults the key, which the shipped borg cannot be made to do.
+
+**What this does not show** — that the check would *notice* corruption; that is 13C. A pass here only means it ran and read the repository clean.
+
+### 13B — a run does not modify a healthy repository ⚠️
+
+**Run**
+
+```bash
+sudo sh -c 'cd /var/mnt/extern1/borg-server/<client> && find data -type f -exec sha256sum {} + | sort' > /tmp/before.sums
+./scripts/20-check-repos.sh <client>
+sudo sh -c 'cd /var/mnt/extern1/borg-server/<client> && find data -type f -exec sha256sum {} + | sort' > /tmp/after.sums
+diff /tmp/before.sums /tmp/after.sums
+```
+
+**Pass** — `diff` is empty: no segment file under `data/` was added, removed or rewritten, because `borg check` without `--repair` changes nothing. Any `lock.exclusive` borg held during the run is gone by the time the script returns. (Files *outside* `data/` — `index.N`, `hints.N`, `integrity.N` — are borg's own derived cache and a check may legitimately refresh them; the claim is about stored data.)
+
+**Fail** — any difference in the `data/` segment hashes means the check is writing to the repository. Re-read `scripts/20-check-repos.sh` for a stray `--repair`.
+
+**Negative test** — not yet staged. The failing direction is the same run with `--repair` added; it has not been shown that this check's `diff` would then be non-empty on a real deployment.
+
+**What this does not show** — that a *needed* repair is ever performed. It is not, by design — repair stays a deliberate manual operator action ([Operations](OPERATIONS.md)).
+
+### 13C — a corrupted segment is reported, and the sweep still completes ⚠️
+
+**This check has a stake in it.** It deliberately corrupts a repository. Run it only against a disposable client from [Test Environment](TESTENV.md) whose loss you can afford, never one holding backups you rely on.
+
+**Run** — intended procedure (see **Negative test**):
+
+```bash
+SEG=$(sudo find /var/mnt/extern1/borg-server/<client>/data -type f | sort | tail -1)
+sudo dd if=/dev/urandom of="$SEG" bs=1 count=16 seek=1024 conv=notrunc   # flip 16 bytes mid-segment
+./scripts/20-check-repos.sh                                              # full sweep, every client
+```
+
+**Pass** — the corrupted client's line reads `failed`, borg's own error (naming the bad segment / a chunk-integrity or index mismatch) is shown indented beneath it, the sweep continues to every *other* client — each reading `ok` — and the script exits `1` with `… repositories need attention`.
+
+**Fail** — the corrupted client reads `ok` (the check did not notice the damage), **or** the sweep stops at the corrupted client and never reaches the others (one bad repository blinds the operator to the rest).
+
+**Negative test** — this check *is* the feature's negative test, and it is **not yet staged**: no run has corrupted a real segment on a real deployment and confirmed `20-check-repos.sh` both reports it and finishes the sweep. The `dd` line above is the proposed way to stage it, not a recipe that has been executed. Until it has, read a clean sweep as "the check ran", not "the check discriminates".
+
+**What this does not show** — that the damage is *recoverable*. Detection is this project's job; a second copy that makes detected corruption also recoverable is the operator's storage design and a client-side offsite copy ([Design](DESIGN.md) Chapter 3.5).
+
+### 13D — borg runs as the unprivileged container user ⚠️
+
+**Run**
+
+```bash
+grep -n 'podman exec' scripts/20-check-repos.sh          # must carry --user borg
+# then, while a run is in progress, from another shell:
+sudo ls -lan /var/mnt/extern1/borg-server/<client>/lock.exclusive 2>/dev/null
+```
+
+**Pass** — the script invokes `podman exec --user borg`, and any `lock.exclusive` present mid-run is owned by the same uid as the repository's own segment files (the mapped `borg` subuid), not by the host operator's uid or the container's root map.
+
+**Fail** — `--user borg` absent, or a lock/temporary file owned by a uid that differs from the rest of the repository: borg is running with the wrong identity and can leave files the container itself cannot manage.
+
+**Negative test** — not yet staged. The failing direction is `podman exec` without `--user`; the ownership difference it produces has not been observed on a real deployment.
+
+**What this does not show** — that the operator user itself is unprivileged (test 4C) or that the container is rootless (4A/4B). This is only that the check does not run borg as a different, more privileged identity than the repository's own.
+
+---
+
 ## Summary checklist
 
 One row per check, not per test: a test with lettered checks is only complete
@@ -2364,9 +2452,14 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 | 12E | A client cannot name a path that resolves into the other instance | ✅ | ☐ |
 | 12F | Each instance's snapshot tree contains only its own clients | ✅ | ☐ |
 | 12G | The per-instance operator scripts act only on their own instance | ✅ | ☐ |
+| 13A | The check runs and passes with no key on the server | ⚠️ | ☐ |
+| 13B | A run does not modify a healthy repository | ⚠️ | ☐ |
+| 13C | A corrupted segment is reported, and the sweep still completes | ⚠️ | ☐ |
+| 13D | borg runs as the unprivileged container user | ⚠️ | ☐ |
 
-Thirty-eight ✅ and two `(✅)` out of forty — every check has had both
-directions demonstrated against a live deployment except the two *capped* ones,
+Thirty-eight ✅ and two `(✅)` out of the forty checks in tests 0–12 — every one
+of those has had both directions demonstrated against a live deployment except
+the two *capped* ones,
 `(✅)` rather than plain ✅ because their counter-example cannot be produced at
 all — not because nobody has tried (see "How to read a test"). **0A**'s failing
 direction would be a forged or absent provenance attestation that still
@@ -2377,6 +2470,14 @@ plain ✅ later. That does not make the page complete — see
 [What this document does not cover](#what-this-document-does-not-cover)
 below, and 5.5A's own note on the one sub-case (`unreadable`) no recipe has
 reached.
+
+**Test 13 is not in that count.** Its four checks are ⚠️ — written from
+`scripts/20-check-repos.sh` ([Roadmap](../ROADMAP.md) 11.3) ahead of its first
+verification run, and its negative test (13C, a deliberately corrupted segment)
+is **not yet staged**. A clean test-13 sweep today means the check ran, not that
+it has been shown to catch a bad segment; a deployment cannot yet "fail" test 13
+in the demonstrated sense. This entry moves to ✅ when both directions have been
+exercised against a live deployment.
 
 A deployment that fails **0A** has not been verified at all — the remaining
 results describe an artifact of unknown origin, and **0B** is what keeps that
