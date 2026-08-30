@@ -111,6 +111,14 @@ Three things that wording has to get right, and the reason this is a separate de
 
 Plumbing note: `info` is rendered once at container start (`build_authorized_keys.sh` → `/run/borg-info/…`). A changing timestamp means either the check pokes the container to re-render, or the wrapper reads a small live `last-check` file per request — an architecture choice this feature does not otherwise force. When it lands it needs its own [Verification](docs/VERIFICATION.md) check (the `info` channel is already tested — 0.5A, 5.5B) and a [Design](docs/DESIGN.md) Chapter 2.4 update.
 
+### A self-balancing "check the oldest first" scheduler (follow-up)
+
+The shipped `20-check-repos.sh` sweeps every repository per run. On a slow store or with many repositories an operator splits that across the week by hand — a wrapper that feeds `20-` a different slice of the roster each day ([Operations](docs/OPERATIONS.md) Chapter 9.13). A plain slice is fixed and count-based: it does not adapt to uneven repository sizes, and it does not notice a repository that has quietly gone unchecked because it kept landing on a day whose run failed.
+
+The self-balancing version: the check records a per-repository **"last full check passed"** timestamp, and each run works through the repositories oldest-first until a time or count budget (`CHECK_BUDGET`, say) is spent. This handles uneven sizes, clients that come and go, and a run that fails partway — the repositories it did not reach are simply the oldest next time. It also produces exactly the per-repository timestamp the client-facing "last checked" line above needs, so the two follow-ups share their state.
+
+Open questions: where the timestamps live (a file per repository under a host-side state dir, versus one JSON map); whether the budget is wall-clock (needs `borg check` to be interruptible cleanly at a repository boundary — it is, between repositories) or a repository count; and whether "oldest first" should be strict or bucketed so the same repository is not always last.
+
 Practical considerations: `borg check` is I/O-intensive, so scheduling must avoid colliding with active backup windows, and each per-repository check should run under the same isolation the rest of the server uses.
 
 ## 11.6. Executable Verification Checks

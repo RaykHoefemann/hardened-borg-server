@@ -721,6 +721,32 @@ systemctl --user start check-repos_<CONTAINER>.service   # run one sweep now, of
 
 `29-check-timer-status.sh` mirrors `snapshots/79-` — timer scheduled, last service `Result`, and (in place of 79-'s unattended-sudo section) whether the container is up. `99-container-status.sh` calls it at the end of its own report, so one `./scripts/99-container-status.sh` covers the container and the check schedule together. `22-` does not refuse while a run is in progress: `borg check --repository-only` is read-only and releases its lock on exit, so an interrupted sweep leaves nothing half-made.
 
+### Splitting the sweep across the week — for many repos or a slow store
+
+The single Sunday sweep is fine when the whole run fits the quiet window. On a slow backing store (a USB spinning disk reads ~100 MB/s at best, so ~100 GB is ~20 min ungestört, longer under contention or without UASP) or with many clients, spread the work: check a **subset each day** instead of everything once. Each daily run is still a *full* check (segments + index) of its repos — no `--max-duration` trade-off — and over seven days everything is covered, keeping the weekly guarantee. A short daily run also has a smaller collision window with backups and loses less if a run is interrupted (only that day's repos miss the cycle).
+
+Two ways, both without changing `20-check-repos.sh`:
+
+- **One daily timer, a wrapper that picks today's slice.** Keep the units from `21-check-timer-install.sh`, set `check-repos.timer` to `OnCalendar=*-*-* 05:00:00`, and point the rendered service's `ExecStart` at a small wrapper of your own that hands `20-check-repos.sh` the clients whose turn it is — e.g. every client whose position in the roster is congruent to today's `date +%u` modulo 7 (sketch; `clients_lines` in `scripts/lib.sh` is the roster parser the other scripts use):
+
+  ```sh
+  #!/bin/sh
+  cd "$(dirname "$0")/.."          # repo root
+  DOW=$(date +%u); n=0; rc=0
+  for c in $(awk 'NF && $1 !~ /^#/ {print $1}' config/clients.conf); do
+      n=$((n + 1))
+      [ "$(( (n - 1) % 7 + 1 ))" -eq "$DOW" ] || continue
+      ./scripts/20-check-repos.sh "$c" || rc=1
+  done
+  exit "$rc"
+  ```
+
+- **Seven day-specific timer units.** `check-repos_<CONTAINER>-mon.timer` (`OnCalendar=Mon *-*-* 05:00:00`) … each triggering a service that runs `20-check-repos.sh` with a fixed client list for that day. More unit files, no wrapper logic; pick this if you want the day→client mapping written out explicitly rather than computed.
+
+**The limit:** this splits across *repositories*, one whole repo at a time. A single repository too large to check in one run cannot be broken up this way — only `borg check --max-duration` can do that, with the index-check cost above. And a plain round-robin by count gives uneven daily runtimes when repo sizes differ a lot; bin-pack by size, or accept that the day the biggest repo lands on is the long one.
+
+A self-balancing version of this — the check keeps a per-repository "last full check" timestamp and each daily run takes the oldest until a time or count budget is hit — is a [Roadmap](../ROADMAP.md) 11.3 follow-up.
+
 ### Run it by hand after anything that changes a repository
 
 The weekly sweep covers steady-state bit rot. Run `20-check-repos.sh <client>` yourself right after any privileged, mutating operation on a repository — `borg check --repair` (Chapter 9.14), a snapshot restore ([Snapshots](SNAPSHOTS.md)), or manual reclamation — and around an offline export ([Roadmap](../ROADMAP.md) 11.2, once built). Those are the ways a repository changes between scheduled runs.
