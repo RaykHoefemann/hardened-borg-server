@@ -995,6 +995,14 @@ mkdir -p "$STATUS_STUB"
 cat > "$STATUS_STUB/systemctl" <<'STUB'
 #!/bin/sh
 case "$*" in
+    *check-repos*)
+        # 99-container-status.sh now ends by calling 29-check-timer-status.sh.
+        # In this fixture that timer is not installed; answer the way systemd
+        # does for a unit it has never heard of, so 29- prints its short
+        # "not installed" blurb and nothing here bleeds into the assertions
+        # about the container's own state above.
+        case "$*" in *show*) echo "LoadState=not-found" ;; *) exit 3 ;; esac
+        ;;
     *show*)
         cat "$UNIT_PROPS_DATA"
         ;;
@@ -1034,7 +1042,13 @@ esac
 STUB
 cat > "$STATUS_STUB/journalctl" <<'STUB'
 #!/bin/sh
-echo "Aug 15 16:00:13 host borg-server[5243]: Server listening on 0.0.0.0 port 22."
+# 29-check-timer-status.sh (called at the end of 99-) asks for the
+# check-repos service's journal; it has none in this fixture, and its lines
+# must not be counted as the container's own (assertion 11.3).
+case "$*" in
+    *check-repos*) echo "-- No entries --" ;;
+    *) echo "Aug 15 16:00:13 host borg-server[5243]: Server listening on 0.0.0.0 port 22." ;;
+esac
 STUB
 chmod +x "$STATUS_STUB"/*
 

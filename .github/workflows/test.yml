@@ -99,6 +99,23 @@ jobs:
       - name: snapshots/ scripts
         run: tests/snapshot-scripts.sh
 
+  check-repos-scripts:
+    name: scripts/ repository check (20, 21, 22, 29)
+    runs-on: ubuntu-latest
+    # Not a substitute for VERIFICATION.md section 13, which is measured
+    # against a real container, a real borg and a genuinely corrupted
+    # segment. This job fakes podman (standing in for `borg check`) and
+    # systemctl the same way the snapshot-scripts job above fakes them for
+    # 71-/72-/79-, so the logic around the borg call -- client discovery, the
+    # lock, the container guard, and the FULL/PARTIAL/lock/damage/exec-fail
+    # classification -- is checked on every push.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: scripts/ repository-check tooling
+        run: tests/check-repos-scripts.sh
+
   release-consistency:
     name: release identifiers agree
     runs-on: ubuntu-latest
