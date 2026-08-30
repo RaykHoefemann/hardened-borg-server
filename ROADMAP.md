@@ -85,7 +85,24 @@ The privacy model (Chapter 2.1) directly shapes what this feature can and cannot
 Two existing guarantees must be preserved when this lands:
 
 - **Append-only (Chapter 1.2.4):** `borg check` has a `--repair` mode that *modifies* the repository. Repair must never be reachable from a client connection and must be a distinct, deliberate operator-side action. The scheduled check itself runs strictly read-only; repair stays manual.
-- **Host-side-only observability (Chapter 1.2.6):** results surface to the operator on the host (log output and exit status, e.g. driven by a systemd timer), not through a new client-facing interface or port. Whether a "last checked" timestamp is later surfaced to clients through the existing `info` channel (Chapter 8) is a separate, deliberate decision — doing so would widen what that channel reports and is intentionally out of scope for the first iteration.
+- **Host-side-only observability (Chapter 1.2.6):** results surface to the operator on the host (log output and exit status, driven by a systemd timer), not through a new client-facing interface or port. The **first shipped iteration puts nothing in the `info` channel** — host-side `29-check-timer-status.sh` and `99-container-status.sh` are the whole reporting surface.
+
+### Surfacing a "last checked" line to clients (deliberate follow-up, not the first iteration)
+
+A client relying on this server has the same legitimate interest in *whether integrity checks run, and when one last passed* that justifies disclosing the software version (Chapter 2.4) — it is a checkability signal about the client's own repository, not about other clients or server internals. So a later iteration may add **one conservative line** to the `info` channel, worded to claim exactly what was checked and no more:
+
+```
+Repository check: last passed 2026-08-28 (structure of the repository only;
+archive contents are yours to verify — CLIENTUSE.md Chapter 9)
+```
+
+Three things that wording has to get right, and the reason this is a separate decision rather than part of the first cut:
+
+- **No over-claim.** `--repository-only` validates structure, never archive contents. The line must not let a client read "clean" as a reason to skip its own `borg check --verify-data`.
+- **Partial passes.** With `--max-duration` a repository is often mid-sweep ("last full pass three weeks ago, a slice since"). A single date lies by simplification; the line shows *last full pass*, and staleness against it, not the last slice.
+- **A failing check must not dump server problems on the client.** A structural fault is the operator's to triage first (the timer's `OnFailure=`), and the `info` channel gives the client no way to follow up. A currently-failing repository shows something neutral ("check in progress — contact the operator"), never borg's error text.
+
+Plumbing note: `info` is rendered once at container start (`build_authorized_keys.sh` → `/run/borg-info/…`). A changing timestamp means either the check pokes the container to re-render, or the wrapper reads a small live `last-check` file per request — an architecture choice this feature does not otherwise force. When it lands it needs its own [Verification](docs/VERIFICATION.md) check (the `info` channel is already tested — 0.5A, 5.5B) and a [Design](docs/DESIGN.md) Chapter 2.4 update.
 
 Practical considerations: `borg check` is I/O-intensive, so scheduling must avoid colliding with active backup windows, and each per-repository check should run under the same isolation the rest of the server uses.
 
