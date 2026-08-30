@@ -131,6 +131,25 @@ echo "-- no journal entries in this fixture --"
 exit 0
 EOF
 
+# `df -kP <path>` -- the fixture is on tmpfs, so real df reports the same size
+# for every repo. This stub answers per-path from $DF_DATA (path<TAB>col2<TAB>col3,
+# where col2 is the "1024-blocks" / quota-limit column lib.sh's
+# quota_enforced_kib reads and col3 the "Used" column quota_used_kib reads).
+# Unlisted path -> "1 1" (tiny). set_size/set_noquota below write the lines.
+cat > "$STUB/df" <<'EOF'
+#!/bin/sh
+p=""
+for a in "$@"; do case "$a" in -*) ;; *) p="$a" ;; esac; done
+c2=1; c3=1
+if [ -f "${DF_DATA:-/nonexistent}" ]; then
+    while IFS="$(printf '\t')" read -r dp d2 d3; do
+        [ "$dp" = "$p" ] && { c2="$d2"; c3="$d3"; }
+    done < "$DF_DATA"
+fi
+echo "Filesystem 1024-blocks Used Available Capacity Mounted-on"
+echo "/dev/stub $c2 $c3 $((c2 - c3)) 1% /stub"
+EOF
+
 # The exact subset of "systemctl --user ..." 20-/21-/22-/29- use. Copied from
 # tests/snapshot-scripts.sh -- state lives in $SYSTEMCTL_STATE/<unit>, one
 # KEY=VALUE per line; a unit with no file behaves like one systemd never
@@ -216,12 +235,27 @@ seed_unit() { # seed_unit <unit> <KEY=value>...
 }
 set_borg() { printf '%s\n' "$2" > "$BORG_STATE_DIR/$1"; }   # set_borg <client> <state>
 
+TAB="$(printf '\t')"
+set_size()    { printf '%s\t%s\t%s\n' "$HRB/$1" 1 "$2" >> "$DF_DATA"; }              # <client> <used-KiB>
+set_noquota() { printf '%s\t%s\t%s\n' "$HRB/$1" 1000000000 500 >> "$DF_DATA"; }      # col2 == volume col2 -> "no project quota"
+CHECKLOG="";  # set per new_check_tree
+seed_log() {  # seed_log <days-ago> <client> <du-KiB> <ok|partial|fail>
+    mkdir -p "$LOGDIR"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$(( $(date +%s) - $1 * 86400 ))" seed "$2" "$3" 0 "$4" >> "$LOGDIR/check-repos.log"
+}
+checked_order() { grep -oE '/repo/[A-Za-z0-9_-]+' "$PODMAN_LOG" | sed 's|/repo/||'; }
+
 reset_env() {
-    unset BORG_RESULT CHECK_MAX_DURATION CHECK_LOCK_WAIT CHECK_NICE
+    unset BORG_RESULT CHECK_MAX_DURATION CHECK_LOCK_WAIT CHECK_NICE \
+          CHECK_CYCLE_DIVISOR CHECK_MAX_RUNTIME CHECK_STALE_DAYS CHECK_MIN_AGE_DAYS
     export BORG_STATE_DIR="$WORK/borgstate"; rm -rf "$BORG_STATE_DIR"; mkdir -p "$BORG_STATE_DIR"
     export PODMAN_LOG="$WORK/podman.log"; : > "$PODMAN_LOG"
     export SYSTEMCTL_STATE="$T/systemctl-state"; rm -rf "$SYSTEMCTL_STATE"; mkdir -p "$SYSTEMCTL_STATE"
     export HOME="$T/home"
+    export DF_DATA="$WORK/df.data"; : > "$DF_DATA"
+    printf '%s\t%s\t%s\n' "$HRB" 1000000000 1 >> "$DF_DATA"   # the volume
+    rm -f "$LOGDIR/check-repos.log"
     # The container is up unless a test says otherwise.
     seed_unit "$CONTAINER_UNIT" "LoadState=loaded" "ActiveState=active" "SubState=running"
 }
@@ -254,24 +288,25 @@ run "$T/scripts/20-check-repos.sh"
 assert "20.4 no client directories at all is a clean no-op" $?
 
 new_check_tree; reset_env
-mkclient client1
-mkclient client2
-run "$T/scripts/20-check-repos.sh"
+mkclient client1; mkclient client2
+CHECK_CYCLE_DIVISOR=1 run "$T/scripts/20-check-repos.sh"
 { [ "$RC" -eq 0 ] \
   && [[ "$OUT" == *"client1: FULL pass"* ]] && [[ "$OUT" == *"client2: FULL pass"* ]] \
-  && [[ "$OUT" == *"2/2 repositories came back clean"* ]]; }
-assert "20.5 every client on disk is checked; all clean exits 0" $?
+  && [[ "$OUT" == *"this run: 2/2 checked clean"* ]] \
+  && [ "$(grep -c "	ok$" "$LOGDIR/check-repos.log")" -eq 2 ]; }
+assert "20.5 a no-arg run checks the repos within budget; all clean exits 0; logs each" $?
 
 new_check_tree; reset_env
-mkclient client1
-mkclient client2
+mkclient client1; mkclient client2
 set_borg client1 damage
-run "$T/scripts/20-check-repos.sh"
+seed_log 3 client1 1 ok        # make client1 the older one so it is checked first
+CHECK_CYCLE_DIVISOR=1 run "$T/scripts/20-check-repos.sh"
 { [ "$RC" -ne 0 ] \
   && [[ "$OUT" == *"client1: failed"* ]] && [[ "$OUT" == *"problem with the repository structure"* ]] \
   && [[ "$OUT" == *"client2: ok"* ]] \
-  && [[ "$OUT" == *"repositories need attention"* ]]; }
-assert "20.6 a damaged repository is reported, the sweep still checks the rest, exit 1" $?
+  && [[ "$OUT" == *"did NOT come back clean"* ]] \
+  && grep -q "	fail$" "$LOGDIR/check-repos.log"; }
+assert "20.6 a damaged repository is reported, the sweep still checks the rest, exit 1, logs fail" $?
 
 new_check_tree; reset_env
 mkclient client1
@@ -292,16 +327,18 @@ mkclient client1
 set_borg client1 partial
 export CHECK_MAX_DURATION=3600
 run "$T/scripts/20-check-repos.sh"
-{ [ "$RC" -eq 0 ] && [[ "$OUT" == *"client1: PARTIAL pass"* ]] && [[ "$OUT" == *"1/1 repositories came back clean"* ]]; }
-assert "20.9 with --max-duration on, a partial check counts as clean and is labelled PARTIAL" $?
+{ [ "$RC" -eq 0 ] && [[ "$OUT" == *"client1: PARTIAL pass"* ]] && [[ "$OUT" == *"this run: 1/1 checked clean"* ]] \
+  && grep -q "	partial$" "$LOGDIR/check-repos.log"; }
+assert "20.9 with --max-duration on, a partial check counts as clean, is labelled PARTIAL and logged 'partial'" $?
 unset CHECK_MAX_DURATION
 
 new_check_tree; reset_env
 mkclient client1
 mkclient client2
 run "$T/scripts/20-check-repos.sh" client1
-{ [ "$RC" -eq 0 ] && grep -q "/repo/client1" "$PODMAN_LOG" && ! grep -q "/repo/client2" "$PODMAN_LOG"; }
-assert "20.10 a single-client run checks only that client" $?
+{ [ "$RC" -eq 0 ] && grep -q "/repo/client1" "$PODMAN_LOG" && ! grep -q "/repo/client2" "$PODMAN_LOG" \
+  && [ "$(grep -c 'client1' "$LOGDIR/check-repos.log")" -eq 1 ]; }
+assert "20.10 a single-client run checks only that client, and logs it" $?
 
 new_check_tree; reset_env
 mkclient client1
@@ -337,6 +374,83 @@ run "$T/scripts/20-check-repos.sh"
 { [ "$RC" -eq 0 ] && ! grep -q -- "--max-duration" "$PODMAN_LOG"; }
 assert "20.12 CHECK_MAX_DURATION=0 drops --max-duration entirely" $?
 unset CHECK_MAX_DURATION
+
+# --- the self-balancing scheduler (no-argument mode) -----------------------
+
+new_check_tree; reset_env
+mkclient c1; mkclient c2; mkclient c3
+seed_log 8 c1 1 ok ; seed_log 2 c2 1 ok ; seed_log 5 c3 1 ok
+CHECK_CYCLE_DIVISOR=1 run "$T/scripts/20-check-repos.sh"
+{ [ "$RC" -eq 0 ] && [ "$(checked_order | tr '\n' ' ')" = "c1 c3 c2 " ]; }
+assert "20.15 no-arg: repos are checked oldest-last-check first" $?
+
+new_check_tree; reset_env
+mkclient c1; mkclient c2
+seed_log 1 c1 1 ok                     # c2 has no log line at all -> never checked
+run "$T/scripts/20-check-repos.sh"
+{ [ "$RC" -eq 0 ] && [ "$(checked_order | head -1)" = "c2" ]; }
+assert "20.16 no-arg: a never-checked repo goes first" $?
+
+new_check_tree; reset_env
+mkclient c1; mkclient c2; mkclient c3
+set_size c1 10240 ; set_size c2 10240 ; set_size c3 10240      # 10 MiB each, total 30, budget/6 = 5 MiB
+seed_log 9 c1 1 ok ; seed_log 8 c2 1 ok ; seed_log 7 c3 1 ok
+run "$T/scripts/20-check-repos.sh"
+{ [ "$(checked_order | wc -l | tr -d ' ')" -eq 1 ] && [ "$(checked_order)" = "c1" ]; }
+assert "20.17 no-arg: the oldest is checked unconditionally even though it alone exceeds the budget; the run then stops" $?
+
+new_check_tree; reset_env
+mkclient small1; mkclient big; mkclient small2
+set_size small1 1024 ; set_size big 102400 ; set_size small2 1024   # total ~104 MiB, budget/6 ~17 MiB
+seed_log 9 small1 1 ok ; seed_log 8 big 1 ok ; seed_log 7 small2 1 ok
+run "$T/scripts/20-check-repos.sh"
+{ [ "$(checked_order | tr '\n' ' ')" = "small1 small2 " ] && [[ "$OUT" == *"big: skipped this run"* ]]; }
+assert "20.18 no-arg: an entry too big for the remaining budget is skipped, the run continues to one that fits" $?
+
+new_check_tree; reset_env
+mkclient c1; mkclient c2
+seed_log 12 c1 1 ok ; seed_log 12 c2 1 ok
+export CHECK_MAX_RUNTIME=0 CHECK_CYCLE_DIVISOR=1
+run "$T/scripts/20-check-repos.sh"
+{ [ "$RC" -ne 0 ] \
+  && [ "$(checked_order | wc -l | tr -d ' ')" -eq 1 ] \
+  && [[ "$OUT" == *"CHECK_MAX_RUNTIME"* ]] \
+  && [[ "$OUT" == *"WARNING"* ]] && [[ "$OUT" == *"falling behind"* ]]; }
+assert "20.19 no-arg: CHECK_MAX_RUNTIME stops the run; a repo left over CHECK_STALE_DAYS warns and exits non-zero" $?
+unset CHECK_MAX_RUNTIME CHECK_CYCLE_DIVISOR
+
+new_check_tree; reset_env
+mkclient c1; mkclient c2
+seed_log 10 c1 1 ok ; seed_log 1 c2 1 ok
+export CHECK_MIN_AGE_DAYS=3
+run "$T/scripts/20-check-repos.sh"
+{ [ "$RC" -eq 0 ] && [ "$(checked_order | tr '\n' ' ')" = "c1 " ]; }
+assert "20.20 no-arg: CHECK_MIN_AGE_DAYS keeps a fresh repo out of the run (the oldest is still checked)" $?
+unset CHECK_MIN_AGE_DAYS
+
+new_check_tree; reset_env
+mkclient c1
+seed_log 1 c1 1 ok
+export CHECK_MIN_AGE_DAYS=5
+run "$T/scripts/20-check-repos.sh" c1
+{ [ "$RC" -eq 0 ] && grep -q "/repo/c1" "$PODMAN_LOG"; }
+assert "20.21 a <client> run is unconditional -- it checks even a repo well inside CHECK_MIN_AGE_DAYS" $?
+unset CHECK_MIN_AGE_DAYS
+
+new_check_tree; reset_env
+mkclient c1
+run "$T/scripts/20-check-repos.sh"
+LINE="$(tail -1 "$LOGDIR/check-repos.log")"
+{ [ "$(printf '%s' "$LINE" | awk -F'\t' '{print NF}')" -eq 6 ] \
+  && printf '%s' "$LINE" | awk -F'\t' '$1 ~ /^[0-9]+$/ && $6 == "ok" {ok=1} END{exit !ok}'; }
+assert "20.22 the log line is 6 tab-separated fields: numeric epoch ... result" $?
+
+new_check_tree; reset_env
+mkclient c1
+set_noquota c1
+run "$T/scripts/20-check-repos.sh"
+{ [ "$RC" -eq 0 ] && grep -q "/repo/c1" "$PODMAN_LOG" && [[ "$OUT" == *"no project quota"* ]]; }
+assert "20.23 a repo with no project quota is treated as size 0, still checked, and flagged" $?
 
 new_check_tree; reset_env
 mkclient client1
@@ -438,9 +552,21 @@ TRIGGERED='LastTriggerUSec=1756900000000000'
 new_check_tree; reset_env
 seed_unit "$TIMER_NAME" "LoadState=loaded" "UnitFileState=alias" "ActiveState=active" "SubState=waiting" "$TRIGGERED"
 seed_unit "$SERVICE_NAME" "LoadState=loaded" "ActiveState=inactive" "SubState=dead" "Result=success" "ExecMainStatus=0" "ExecMainStartTimestamp=Sat 2026-08-30"
+mkclient c1; seed_log 1 c1 100 ok        # a recent full check -> coverage current
 run "$T/scripts/29-check-timer-status.sh"
-{ [ "$RC" -eq 0 ] && [[ "$OUT" == *"Functional: scheduled, last run came back clean, container is up."* ]]; }
-assert "29.2 scheduled + last run clean + container up -- fully functional" $?
+{ [ "$RC" -eq 0 ] && [[ "$OUT" == *"Functional: scheduled, last run came back clean, container up, coverage current."* ]]; }
+assert "29.2 scheduled + last run clean + container up + coverage current -- fully functional" $?
+
+new_check_tree; reset_env
+seed_unit "$TIMER_NAME" "LoadState=loaded" "UnitFileState=alias" "ActiveState=active" "SubState=waiting" "$TRIGGERED"
+seed_unit "$SERVICE_NAME" "LoadState=loaded" "Result=success" "ExecMainStartTimestamp=Sat 2026-08-30"
+mkclient c1; mkclient c2
+seed_log 20 c1 100 ok ; seed_log 1 c2 100 ok     # c1's last full check is way over CHECK_STALE_DAYS
+run "$T/scripts/29-check-timer-status.sh"
+{ [[ "$OUT" == *"Oldest full check: 'c1', 20 day(s) ago"* ]] \
+  && [[ "$OUT" == *"falling behind"* ]] \
+  && [[ "$OUT" == *"NOT fully functional"* ]]; }
+assert "29.8 the coverage section flags a repo whose last full check is over CHECK_STALE_DAYS" $?
 
 new_check_tree; reset_env
 seed_unit "$TIMER_NAME" "LoadState=loaded" "UnitFileState=alias" "ActiveState=active" "SubState=waiting"

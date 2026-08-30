@@ -1,19 +1,20 @@
 [Unit]
-Description=Weekly borg check --repository-only of all client repositories (docs/OPERATIONS.md)
+Description=Daily self-balancing borg check --repository-only sweep (docs/OPERATIONS.md 9.13)
 
 [Timer]
-# Sunday, early morning, offset from snapshot-create.timer's daily 03:00 so a
-# check never starts into a snapshot run. Weekly, not daily: a full check reads
-# about half of each repository (20-check-repos.sh header), and on-disk
-# corruption is slow. A repository that CHECK_MAX_DURATION cut short is resumed
-# by the next weekly firing, not left unchecked.
-OnCalendar=Sun *-*-* 05:00:00
+# Daily, early morning, offset from snapshot-create.timer's 03:00 so a check
+# never starts into a snapshot run. 20-check-repos.sh (no argument) is
+# self-balancing: each run checks the repositories longest without a check,
+# oldest first, until a size budget (total / CHECK_CYCLE_DIVISOR, default 6) is
+# spent. A daily firing with the default divisor gets through everything about
+# every 6 days, with ~1 run/week of slack.
+OnCalendar=*-*-* 05:00:00
 
 # If the machine was off or this user's systemd instance wasn't running at the
-# scheduled time (maintenance window, reboot), run the missed check once as
-# soon as it is back -- a silently skipped week widens the window in which
-# corruption goes unnoticed, which is the whole thing this timer exists to
-# shrink.
+# scheduled time (maintenance window, reboot), run one missed sweep on the next
+# boot. systemd runs only ONE catch-up, not one per missed day -- the sweep
+# self-corrects over the following runs (the repositories not reached are simply
+# the oldest next time), and 29-check-timer-status.sh reports the oldest age.
 Persistent=true
 
 [Install]
