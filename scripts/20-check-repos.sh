@@ -29,10 +29,15 @@
 #       repositories not reached this run are simply the oldest next run.
 #
 # STATE -- one append-only history file, HOST_LOG_BASE/check-repos.history, tab-separated:
-#       <epoch>  <iso8601-utc>  <client>  <du-KiB>  <duration-s>  <ok|partial|fail>
+#       <epoch>  <iso8601-utc>  <client>  <du-KiB>  <duration-s>  <ok|partial|fail>  <days-since-prev>
+#   Field 7 is this client's gap to its own previous check, in whole days,
+#   rounded to nearest ((now - prev + 43200) / 86400); `-` on the client's first
+#   ever check. It is written for the eye only -- nothing reads it back.
 #   A repository's "last checked" for ordering is its most recent `ok` OR
 #   `partial` line; its "last full check" (for the CHECK_STALE_DAYS warning) is
 #   its most recent `ok` line. No line ever = never checked = first in line.
+#   Lines written before this field existed have 6 fields; readers key on field
+#   number, so the mixed width is harmless and no migration is needed.
 #
 #   Plus one file per client, HOST_LOG_BASE/check-state/<client>, overwritten
 #   each check: `<last-result>  <last-check-date>  <last-full-pass-date>`. It
@@ -267,9 +272,22 @@ check_and_time() {
         *)            _cat_tok=fail ;;
     esac
     _cat_now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+
+    # Field 7: whole days since this client's previous check (any verdict),
+    # rounded to nearest. `-` if this is its first line. Computed before the
+    # append so the scan sees only prior runs.
+    _cat_prevage="-"
+    if [ -f "$CHECK_HISTORY" ]; then
+        _cat_prevage="$(awk -F"$TAB" -v c="$_cat_user" -v now="$_cat_end" \
+            '$3 == c && $1 + 0 > e { e = $1 + 0 }
+             END { if (e) print int((now - e + 43200) / 86400); else print "-" }' \
+            "$CHECK_HISTORY" 2>/dev/null)"
+        [ -n "$_cat_prevage" ] || _cat_prevage="-"
+    fi
+
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$_cat_end" "$_cat_now" "$_cat_user" \
-        "$_cat_dukib" "$_cat_dur" "$_cat_tok" >> "$CHECK_HISTORY"
+        "$_cat_dukib" "$_cat_dur" "$_cat_tok" "$_cat_prevage" >> "$CHECK_HISTORY"
 
     # Per-client status for the info channel (DESIGN 2.4): one file per client,
     # containing ONLY this client, so borg-wrapper.sh can read it in the
@@ -323,7 +341,7 @@ repo_epochs() {
     _re_any=0
     _re_full=0
     if [ -f "$CHECK_HISTORY" ]; then
-        while IFS="$TAB" read -r _re_ep _re_iso _re_cl _re_du _re_dur _re_res; do
+        while IFS="$TAB" read -r _re_ep _re_iso _re_cl _re_du _re_dur _re_res _re_rest; do
             [ "$_re_cl" = "$_re_u" ] || continue
             case "$_re_ep" in ''|*[!0-9]*) continue ;; esac
             case "$_re_res" in

@@ -242,8 +242,11 @@ CHECKLOG="";  # set per new_check_tree
 seed_hist() {  # seed_hist <days-ago> <client> <du-KiB> <ok|partial|fail>
     mkdir -p "$LOGDIR"
     local ep; ep="$(( $(date +%s) - $1 * 86400 ))"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$ep" "$(date -u -d "@$ep" +%Y-%m-%dT%H:%M:%SZ)" "$2" "$3" 0 "$4" >> "$LOGDIR/check-repos.history"
+    # Field 7 (days-since-prev) is written for the eye only and nothing reads it
+    # back, so seeded lines carry a literal "-"; the real value is asserted
+    # against lines the script itself appends.
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$ep" "$(date -u -d "@$ep" +%Y-%m-%dT%H:%M:%SZ)" "$2" "$3" 0 "$4" - >> "$LOGDIR/check-repos.history"
 }
 seed_days_ago() { date -u -d "@$(( $(date +%s) - $1 * 86400 ))" +%Y-%m-%d; }
 checked_order() { grep -oE '/repo/[A-Za-z0-9_-]+' "$PODMAN_LOG" | sed 's|/repo/||'; }
@@ -295,7 +298,7 @@ CHECK_CYCLE_DIVISOR=1 run "$T/scripts/20-check-repos.sh"
 { [ "$RC" -eq 0 ] \
   && [[ "$OUT" == *"client1: FULL pass"* ]] && [[ "$OUT" == *"client2: FULL pass"* ]] \
   && [[ "$OUT" == *"this run: 2/2 checked clean"* ]] \
-  && [ "$(grep -c "	ok$" "$LOGDIR/check-repos.history")" -eq 2 ]; }
+  && [ "$(grep -c "	ok	" "$LOGDIR/check-repos.history")" -eq 2 ]; }
 assert "20.5 a no-arg run checks the repos within budget; all clean exits 0; logs each" $?
 
 new_check_tree; reset_env
@@ -307,7 +310,7 @@ CHECK_CYCLE_DIVISOR=1 run "$T/scripts/20-check-repos.sh"
   && [[ "$OUT" == *"client1: failed"* ]] && [[ "$OUT" == *"problem with the repository structure"* ]] \
   && [[ "$OUT" == *"client2: ok"* ]] \
   && [[ "$OUT" == *"did NOT come back clean"* ]] \
-  && grep -q "	fail$" "$LOGDIR/check-repos.history"; }
+  && grep -q "	fail	" "$LOGDIR/check-repos.history"; }
 assert "20.6 a damaged repository is reported, the sweep still checks the rest, exit 1, logs fail" $?
 
 new_check_tree; reset_env
@@ -330,7 +333,7 @@ set_borg client1 partial
 export CHECK_MAX_DURATION=3600
 run "$T/scripts/20-check-repos.sh"
 { [ "$RC" -eq 0 ] && [[ "$OUT" == *"client1: PARTIAL pass"* ]] && [[ "$OUT" == *"this run: 1/1 checked clean"* ]] \
-  && grep -q "	partial$" "$LOGDIR/check-repos.history"; }
+  && grep -q "	partial	" "$LOGDIR/check-repos.history"; }
 assert "20.9 with --max-duration on, a partial check counts as clean, is labelled PARTIAL and logged 'partial'" $?
 unset CHECK_MAX_DURATION
 
@@ -443,9 +446,26 @@ new_check_tree; reset_env
 mkclient c1
 run "$T/scripts/20-check-repos.sh"
 LINE="$(tail -1 "$LOGDIR/check-repos.history")"
-{ [ "$(printf '%s' "$LINE" | awk -F'\t' '{print NF}')" -eq 6 ] \
-  && printf '%s' "$LINE" | awk -F'\t' '$1 ~ /^[0-9]+$/ && $6 == "ok" {ok=1} END{exit !ok}'; }
-assert "20.22 the log line is 6 tab-separated fields: numeric epoch ... result" $?
+{ [ "$(printf '%s' "$LINE" | awk -F'\t' '{print NF}')" -eq 7 ] \
+  && printf '%s' "$LINE" | awk -F'\t' '$1 ~ /^[0-9]+$/ && $6 == "ok" && $7 == "-" {ok=1} END{exit !ok}'; }
+assert "20.22 the log line is 7 tab-separated fields: numeric epoch ... result, days-since-prev '-' on a first check" $?
+
+new_check_tree; reset_env
+mkclient c1
+seed_hist 3 c1 1 ok                       # c1's previous check: exactly 3 days ago
+run "$T/scripts/20-check-repos.sh" c1
+{ [ "$(tail -1 "$LOGDIR/check-repos.history" | cut -f7)" = "3" ]; }
+assert "20.22b field 7 is whole days since this client's previous check" $?
+
+new_check_tree; reset_env
+mkclient c1
+# previous check 2 days 23 h ago -> +12 h rounding pushes it to 3, not 2
+ep="$(( $(date +%s) - (2 * 86400 + 23 * 3600) ))"
+mkdir -p "$LOGDIR"
+printf '%s\t%s\tc1\t1\t0\tok\t-\n' "$ep" "$(date -u -d "@$ep" +%Y-%m-%dT%H:%M:%SZ)" >> "$LOGDIR/check-repos.history"
+run "$T/scripts/20-check-repos.sh" c1
+{ [ "$(tail -1 "$LOGDIR/check-repos.history" | cut -f7)" = "3" ]; }
+assert "20.22c field 7 rounds to nearest day (2d23h -> 3)" $?
 
 new_check_tree; reset_env
 mkclient c1
