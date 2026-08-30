@@ -2328,7 +2328,20 @@ Five checks, staged on the FCOS bench 2026-08-30 against two disposable clients 
 
 `20-check-repos.sh` runs `borg check -v --repository-only`. The `-v` is load-bearing: without it borg 1.2.8 and 1.4.0 both print **nothing** on a clean check, so a `--max-duration` partial run would be indistinguishable from a full pass. With `-v`, borg ends on `Finished full repository check, …` (segment checksums **and** the repository index checked) or `Finished partial repository check, …` (segments only — `--max-duration` skips the index check, which is why `CHECK_MAX_DURATION` defaults to off; [Operations](OPERATIONS.md) Chapter 9.13).
 
-The **self-balancing scheduler** (the no-argument mode: `check-repos.history`, the `total / CHECK_CYCLE_DIVISOR` budget, oldest-first, unconditional first repo, skip-oversized) and the daily timer (`21-`/`22-`/`29-`) are covered by `tests/check-repos-scripts.sh` in CI, not by a check here — the same way test 11 verifies the snapshot scripts but not `snapshots/71-`'s timer. Both were also exercised on the FCOS bench 2026-08-30 against `bc1` (6 MiB) and `bc2` (15.8 GiB): a first sweep checked `bc1` and reported `bc2` skipped (`15.8 GiB does not fit the 2.6 GiB left in the budget`); the next sweep checked `bc2` as the now-oldest; seeding an old date for one repository moved it back to the front; a repository left over `CHECK_STALE_DAYS` made the sweep exit non-zero and `29-check-timer-status.sh`'s Coverage section report `NOT fully functional`; the daily timer installed, ran once, and uninstalled cleanly.
+The **self-balancing scheduler** (the no-argument mode: `check-repos.history`, the `total / CHECK_CYCLE_DIVISOR` budget, oldest-first, unconditional first repo, skip-oversized) and the daily timer (`21-`/`22-`/`29-`) are covered by `tests/check-repos-scripts.sh` in CI, not by a check here — the same way test 11 verifies the snapshot scripts but not `snapshots/71-`'s timer. Both were also exercised on the FCOS bench 2026-08-30 against `bc1` (6 MiB) and `bc2` (15.8 GiB): a first sweep checked `bc1` and reported `bc2` skipped (`15.8 GiB does not fit the 2.6 GiB left in the budget`); the next sweep checked `bc2` as the now-oldest; seeding an old date for one repository moved it back to the front; a repository left over `CHECK_STALE_DAYS` made the sweep exit non-zero and `29-check-timer-status.sh`'s Coverage section report `NOT fully functional`; the daily timer installed, ran once, and uninstalled cleanly. A full simulated year (18 clients from 1, data 20 MiB → 9.1 GiB, 876 checks) held the guarantee: every new repository checked on the first sweep after its first backup, largest gap between two checks of any repository 8 days (< `CHECK_STALE_DAYS` 9), no `partial`/`fail` (`testlab/Pruefbericht-jahreslauf-2026.md`).
+
+`tests/check-repos-scripts.sh` additionally pins the format seams around `check-repos.history` and `check-state/<client>`:
+
+| Case | Invariant |
+|---|---|
+| 20.22 / 20.22b / 20.22c | history field 7 (`days-since-prev`) is `-` on a client's first check, else whole days to its own previous check, **rounded to nearest** (`2d23h` → `3`). |
+| 20.30 / 20.30b | a pre-upgrade **6-field** history line still drives the `CHECK_STALE_DAYS` warning, and field 7 is still computed when the client's previous line has only 6 fields (no migration step). |
+| 20.31 | a recent `partial` counts for scheduling **order** (the repository is no longer "oldest") but not for the `CHECK_STALE_DAYS` clock — that stays measured from the last *full* pass. |
+| 20.32 / 20.33 | field 7 counts the client's previous line whatever its verdict (`fail` included), and is computed **per client**, not against the file's previous line. |
+| 20.34 | a failing check with no prior full pass writes `check-state` field 3 (`last-full-pass`) as `-`. |
+| 20.35 | a never-checked repository left unreached is reported "awaiting first check", **not** stale — the sweep exit stays `0`. |
+| 20.29 | end-to-end: the exact `<timestamp> (<token>)` `borg-wrapper.sh` renders in `info` is read back byte-for-byte from the `check-state` file `20-check-repos.sh` wrote — no format drift between the two. |
+| `wrapper-gating.sh` C10 / C10b / C10c | a malformed, empty, or unrecognised-token `check-state` file yields **no** `info` line and no error. |
 
 ### 13A — the check runs and passes with no key on the server (✅)
 

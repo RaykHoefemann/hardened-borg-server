@@ -257,6 +257,19 @@ assert_ok_contains "C9 a 'fail' check-state -> the failing run's timestamp with 
     "Last Repo Structure Check: 2026-08-30T05:00:01Z (fail)"
 run "$WORK/keyfile_blake2" "info"
 assert_ok_lacks "C9b a 'fail' check-state never leaks borg's own error text" "integrity error"
+
+printf 'garbage without tabs\n' > "$CHECK_STATE_DIR/keyfile_blake2"
+run "$WORK/keyfile_blake2" "info"
+assert_ok_lacks "C10 a malformed check-state file yields no line and no error" "Last Repo Structure Check"
+
+: > "$CHECK_STATE_DIR/keyfile_blake2"
+run "$WORK/keyfile_blake2" "info"
+assert_ok_lacks "C10b an empty check-state file yields no line and no error" "Last Repo Structure Check"
+
+printf 'weird%s2026-08-30T05:00:04Z%s-\n' "$TAB" "$TAB" > "$CHECK_STATE_DIR/keyfile_blake2"
+run "$WORK/keyfile_blake2" "info"
+assert_ok_lacks "C10c an unrecognised result token yields no line" "Last Repo Structure Check"
+
 rm -f "$CHECK_STATE_DIR"/*
 
 # --- D. repository state ----------------------------------------------------

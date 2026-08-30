@@ -541,6 +541,127 @@ run "$T/scripts/20-check-repos.sh"
 assert "20.14 a concurrent run is refused via the lock, nothing checked" $?
 flock -u 8; exec 8>&-
 
+# ----------------------------------------------------------------------------
+# 20.29-20.35 -- the history-format seam, the days-since-prev column,
+# check-state fallbacks, and the never-checked-vs-stale distinction.
+# ----------------------------------------------------------------------------
+
+# A. End-to-end: the check-state file 20- writes is read back by borg-wrapper.sh
+# with no format drift. borg-wrapper.sh validates its repo-path argument against
+# [a-zA-Z0-9/_-], so it needs a dot-free directory -- mktemp's default has one.
+new_check_tree; reset_env
+mkclient c1
+CHECK_CYCLE_DIVISOR=1 run "$T/scripts/20-check-repos.sh"
+HTS="$(awk -F'\t' 'END{print $2}' "$LOGDIR/check-repos.history")"
+WD="$(mktemp -d "${TMPDIR:-/tmp}/crse2e_XXXXXX")"
+mkdir -p "$WD/repo/c1" "$WD/cs"
+cp "$LOGDIR/check-state/c1" "$WD/cs/c1"
+OUT="$(PATH="$STUB:$PATH" CHECK_STATE_DIR="$WD/cs" SSH_ORIGINAL_COMMAND=info \
+       bash "$ROOT/borg-wrapper.sh" "$WD/repo/c1" 2>&1)"; RC=$?
+rm -rf "$WD"
+{ [ "$RC" -eq 0 ] \
+  && printf '%s\n' "$OUT" | grep -qF "Last Repo Structure Check: ${HTS} (ok)"; }
+assert "20.29 borg-wrapper.sh reads back the exact timestamp/token 20- wrote to check-state" $?
+
+# B. A pre-upgrade 6-field history line (no days-since-prev) still parses.
+# B1: its staleness is read (c1 is too big to be re-checked this run, so the
+# 20-day-old legacy line is what drives coverage).
+new_check_tree; reset_env
+mkclient c1; mkclient c2
+set_size c1 100000
+set_size c2 1
+mkdir -p "$LOGDIR"
+ep=$(( $(date +%s) - 20 * 86400 ))
+printf '%s\t%s\tc1\t100000\t0\tok\n' "$ep" "$(date -u -d "@$ep" +%Y-%m-%dT%H:%M:%SZ)" \
+    >> "$LOGDIR/check-repos.history"
+CHECK_CYCLE_DIVISOR=100 run "$T/scripts/20-check-repos.sh"
+{ [ "$RC" -eq 1 ] \
+  && ! grep -q "/repo/c1" "$PODMAN_LOG" \
+  && [[ "$OUT" == *"coverage: oldest full check is 'c1', 20 day(s) ago"* ]] \
+  && [[ "$OUT" == *"WARNING"*"CHECK_STALE_DAYS"* ]]; }
+assert "20.30 a legacy 6-field history line still drives the CHECK_STALE_DAYS warning" $?
+
+# B2: the line 20- appends computes field 7 against a 6-field predecessor.
+new_check_tree; reset_env
+mkclient c1
+mkdir -p "$LOGDIR"
+ep=$(( $(date +%s) - 4 * 86400 ))
+printf '%s\t%s\tc1\t100\t0\tok\n' "$ep" "$(date -u -d "@$ep" +%Y-%m-%dT%H:%M:%SZ)" \
+    >> "$LOGDIR/check-repos.history"
+run "$T/scripts/20-check-repos.sh" c1
+NEW="$(tail -1 "$LOGDIR/check-repos.history")"
+{ [ "$(printf '%s' "$NEW" | awk -F'\t' '{print NF}')" -eq 7 ] \
+  && [ "$(printf '%s' "$NEW" | cut -f7)" = "4" ]; }
+assert "20.30b field 7 is computed even when the client's previous line has only 6 fields" $?
+
+# C. A recent partial counts for ORDER (c1 no longer the oldest, so it is not
+# force-checked) but NOT for the CHECK_STALE_DAYS clock (still measured from the
+# 15-day-old full pass).
+new_check_tree; reset_env
+mkclient c1; mkclient c3
+set_size c1 100000
+set_size c3 1
+mkdir -p "$LOGDIR"
+e15=$(( $(date +%s) - 15 * 86400 )); e5=$(( $(date +%s) - 5 * 86400 )); e1=$(( $(date +%s) - 86400 ))
+printf '%s\t%s\tc1\t100000\t0\tok\t-\n'        "$e15" "$(date -u -d "@$e15" +%Y-%m-%dT%H:%M:%SZ)" >> "$LOGDIR/check-repos.history"
+printf '%s\t%s\tc1\t100000\t0\tpartial\t10\n'  "$e1"  "$(date -u -d "@$e1"  +%Y-%m-%dT%H:%M:%SZ)" >> "$LOGDIR/check-repos.history"
+printf '%s\t%s\tc3\t1\t0\tok\t-\n'             "$e5"  "$(date -u -d "@$e5"  +%Y-%m-%dT%H:%M:%SZ)" >> "$LOGDIR/check-repos.history"
+CHECK_CYCLE_DIVISOR=100 run "$T/scripts/20-check-repos.sh"
+{ [ "$RC" -eq 1 ] \
+  && [ "$(checked_order | head -1)" = "c3" ] \
+  && [[ "$OUT" == *"c1: skipped this run"* ]] \
+  && [[ "$OUT" == *"coverage: oldest full check is 'c1', 15 day(s) ago"* ]] \
+  && [[ "$OUT" == *"WARNING"*"CHECK_STALE_DAYS"* ]]; }
+assert "20.31 a recent partial counts for ordering but not for the CHECK_STALE_DAYS clock" $?
+
+# D. Field 7 is the gap to the client's PREVIOUS line whatever its verdict.
+new_check_tree; reset_env
+mkclient c1
+mkdir -p "$LOGDIR"
+ep=$(( $(date +%s) - 4 * 86400 ))
+printf '%s\t%s\tc1\t1\t0\tfail\t-\n' "$ep" "$(date -u -d "@$ep" +%Y-%m-%dT%H:%M:%SZ)" \
+    >> "$LOGDIR/check-repos.history"
+run "$T/scripts/20-check-repos.sh" c1
+{ [ "$(tail -1 "$LOGDIR/check-repos.history" | cut -f7)" = "4" ]; }
+assert "20.32 field 7 counts the client's previous line regardless of verdict (prev was 'fail')" $?
+
+# E. Field 7 is computed per client, not against the file's previous line.
+new_check_tree; reset_env
+mkclient c1; mkclient c2
+mkdir -p "$LOGDIR"
+e5=$(( $(date +%s) - 5 * 86400 )); e2=$(( $(date +%s) - 2 * 86400 ))
+printf '%s\t%s\tc1\t1\t0\tok\t-\n' "$e5" "$(date -u -d "@$e5" +%Y-%m-%dT%H:%M:%SZ)" >> "$LOGDIR/check-repos.history"
+printf '%s\t%s\tc2\t1\t0\tok\t-\n' "$e2" "$(date -u -d "@$e2" +%Y-%m-%dT%H:%M:%SZ)" >> "$LOGDIR/check-repos.history"
+CHECK_CYCLE_DIVISOR=1 run "$T/scripts/20-check-repos.sh"
+a1="$(awk -F'\t' '$3=="c1"{v=$7} END{print v}' "$LOGDIR/check-repos.history")"
+a2="$(awk -F'\t' '$3=="c2"{v=$7} END{print v}' "$LOGDIR/check-repos.history")"
+{ [ "$a1" = "5" ] && [ "$a2" = "2" ]; }
+assert "20.33 field 7 is per-client (c1 -> 5, c2 -> 2 in the same sweep)" $?
+
+# F. A failing check with no prior full pass writes check-state field 3 as '-'.
+new_check_tree; reset_env
+mkclient c1
+set_borg c1 damage
+CHECK_CYCLE_DIVISOR=1 run "$T/scripts/20-check-repos.sh"
+CS="$LOGDIR/check-state/c1"
+{ [ "$(cut -f1 "$CS")" = "fail" ] \
+  && [ "$(cut -f3 "$CS")" = "-" ] \
+  && [ "$(cut -f2 "$CS")" = "$(awk -F'\t' 'END{print $2}' "$LOGDIR/check-repos.history")" ]; }
+assert "20.34 a failing check with no prior full pass writes check-state field 3 as '-'" $?
+
+# G. A never-checked repo left unreached is 'awaiting first check', not stale.
+new_check_tree; reset_env
+mkclient c1; mkclient c2
+set_size c1 1
+set_size c2 100000
+CHECK_CYCLE_DIVISOR=100 run "$T/scripts/20-check-repos.sh"
+{ [ "$RC" -eq 0 ] \
+  && grep -q "/repo/c1" "$PODMAN_LOG" && ! grep -q "/repo/c2" "$PODMAN_LOG" \
+  && [[ "$OUT" == *"c2: skipped this run"* ]] \
+  && [[ "$OUT" == *"awaiting their first full check"* ]] \
+  && [[ "$OUT" != *"WARNING"* ]]; }
+assert "20.35 a never-checked repo left unreached is 'awaiting first check', not stale (exit stays 0)" $?
+
 # ============================================================================
 # 21. 21-check-timer-install.sh
 # ============================================================================
