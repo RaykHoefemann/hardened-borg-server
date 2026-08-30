@@ -21,7 +21,7 @@ volume) and **11.8** (negative-test coverage for the verification checks)
 ## 11.2. Manual Offline Export to Removable Media
 
 A host-side script that copies the hosted repositories — `HOST_REPO_BASE/` — onto
-a mounted block device (`rsync -a --delete`), for an air-gapped copy the operator
+a mounted block device with host-side `rsync`, for an air-gapped copy the operator
 physically disconnects and can store elsewhere. This stays inside the project's
 trust boundary — the operator's own disk, in the operator's hands — so the
 append-only problem that ruled out server-side mirroring ([Design](docs/DESIGN.md)
@@ -36,8 +36,42 @@ Scope and constraints:
 - **Manual and attended.** No timer, no schedule, no client-facing surface — the category of `99-container-status.sh`. Nothing about it is reachable from a client connection (Chapter 1.2.6).
 - **The copy is ciphertext.** A keyfile-mode repository copied this way cannot be restored without the client's exported key and passphrase (Chapter 2.1.1), which exist only on the client. The helper produces half of a usable offline backup; the client-side key archive ([Best Practices](docs/BEST_PRACTICES.md) Chapter 2.1) is the other half. The server cannot hold that half without becoming the key escrow the same chapter rules out.
 - **Not against a live repository.** Run it in an idle window, or from a storage snapshot ([Snapshots](docs/SNAPSHOTS.md)). Borg repositories are transactional — a copy taken mid-commit rolls back to the last committed transaction on next access rather than tearing — but a coordinated quiet window is cleaner still.
-- **`borg check --repository-only` on the copy** validates it structurally without a key, exactly as for the primary (11.3).
+- **The source is verified before, the copy after.** `borg check --repository-only` on the source (11.3, or work from a storage snapshot) keeps a known-bad repository from being propagated; the same check on the finished copy catches damage the transfer or the medium introduced. Neither is a hard gate — a structurally broken repository may still hold recoverable archives — but a failed check on the copy must stop it from replacing the last good one (see the layout below).
 - **Destination-agnostic, but only removable media is supported.** The same `rsync` invocation can point anywhere the operator can write. Doing so is the operator's own decision and carries every caveat above; it is not a mirroring feature and is not documented as one.
+
+### Crash-safe layout on the medium (sketch — revisit at implementation)
+
+A plain in-place `rsync -a --delete` over the previous copy is **not** crash-safe: mid-run the destination is a mix of old and new, and an interruption — power loss, a full medium, a source that turns out to be corrupt — leaves no intact copy behind. The offline copy should be written with the same all-or-nothing discipline the server applies to its control files ([Design](docs/DESIGN.md) Chapter 3.4), and never by mutating the last good copy in place.
+
+The intended shape mirrors `70-create-snapshot.sh`: **dated, independent, immutable generation directories** on the medium with manual retention, not a single mirrored tree.
+
+**Protection target: a completed generation should be no easier to damage than a storage snapshot.** The offline copy already beats a snapshot on the threats that matter most — once unplugged it is outside the host's fate entirely (host compromise, ransomware reaching the host, array failure, a bug in the server's own privileged tooling), and it can be stored off-site. It reaches parity on tampering via `chattr -R +i` on finished generations, exactly as `70-` does. Two places it is *weaker* unless the helper closes them: it is read-write on the host for the duration of the export (keep that window minimal — mount, export, verify, `+i`, unmount — and do not leave the medium attached between runs; the generational layout already confines in-window damage to `.incoming-*`), and a fresh medium's files are operator-owned rather than mapped-subuid, so on a filesystem without `chattr +i` nothing stops an unprivileged `rm` (hence the ext4/xfs requirement below, with read-only-except-during-export as the fallback).
+
+```
+<medium>/borg-export/
+    2026-08-28T0300/     immutable, verified
+    2026-08-29T0300/     immutable, verified
+    2026-08-30T0300/     new this run
+    latest -> 2026-08-30T0300
+```
+
+Per run:
+
+1. `rsync -a --link-dest=../latest <source>/ <medium>/borg-export/.incoming-<ts>/` — `--link-dest` hard-links every unchanged file against the previous generation. Because the repositories are append-only, almost every segment file is byte-identical between runs, so only the new segments cost space, not a full second copy.
+2. rsync exits 0 → `mv .incoming-<ts> <ts>` (atomic within the filesystem).
+3. `borg check --repository-only --bypass-lock <ts>` on the fresh generation.
+4. Pass → `chattr -R +i <ts>`, then repoint `latest` atomically.
+5. Fail, or an earlier step aborted → the partial `.incoming-<ts>` or the unverified `<ts>` is left for inspection, `latest` still points at the previous generation, and no existing generation was touched.
+
+Every failure mode this must survive: a crash mid-transfer (the partial directory is never named `latest`), a corrupt source (the pre-run check aborts before anything is written), a copy that transfer or media damaged (the post-run check keeps it from becoming `latest`). In none of them is an existing verified generation modified. Retention is a `76-`-style manual operation that refuses to remove `latest` or the last remaining generation.
+
+Open, to settle at implementation:
+
+- **Full generation history vs. two alternating directories (`A`/`B`).** History gives an offline point-in-time series almost for free (via `--link-dest`); `A`/`B` is less space and no history. Leaning toward history, for consistency with the snapshot model.
+- **Medium filesystem.** Hard-links and `chattr +i` need ext4/xfs; exFAT/FAT provide neither. The helper must detect this and either fall back to full independent copies or refuse with a clear message — the same "bring your own POSIX filesystem" line `70-` already draws for XFS.
+- **`chattr +i` on the medium** hardens completed generations against a later run or a fat-fingered `rm`, but is bypassed by mounting the medium read-write elsewhere — a convenience, not a security boundary.
+- **Mount discipline.** Whether the helper mounts and unmounts the medium itself (minimising the read-write window, and able to keep it read-only between the transfer and the `chattr` step) or leaves mounting to the operator. The tighter the helper controls this, the closer the medium's exposure gets to a snapshot's.
+- **Beyond a snapshot (optional).** Rotating several media so no single medium failure loses history, and a detached `sha256` manifest of each generation kept on the host so medium-side tampering or rot is detectable on re-attach without a key — machinery the snapshots deliberately skipped because they sit inside the append-only boundary and the medium does not.
 
 ## 11.3. Automated Integrity Verification (`borg check`)
 
