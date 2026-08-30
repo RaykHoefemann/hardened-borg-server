@@ -290,6 +290,14 @@ check_and_time() {
         > "${HOST_LOG_BASE}/check-state/${_cat_user}"
 }
 
+# repo_is_initialized <client>
+#
+# True once the client has run `borg init` -- borg writes `config` into the
+# repository directory before it asks for a passphrase. A directory that
+# 00-ssh-create-user.sh provisioned but the client has not initialized yet is
+# not a repository to check; skipping it is not a failure.
+repo_is_initialized() { [ -f "${HOST_REPO_BASE}/$1/config" ]; }
+
 # repo_used_kib <client>
 #
 # On-disk size in KiB from the enforcing XFS project quota. 0 if the repository
@@ -350,6 +358,10 @@ run_scheduler() {
                 continue
                 ;;
         esac
+        if ! repo_is_initialized "$_u"; then
+            echo "[check] ${_u}: no repository yet (provisioned, awaiting first 'borg init') -- skipped."
+            continue
+        fi
         _sz="$(repo_used_kib "$_u")"
         if [ "$_sz" -eq 0 ]; then
             echo "[check] note: ${_u} reports no project quota (check 5.5A) -- size unknown, counted as 0 (always fits the budget)."
@@ -516,6 +528,10 @@ if [ "$#" -eq 1 ]; then
         echo "       Clients are discovered on disk; check the name with" >&2
         echo "           ./scripts/09-show-all-users.sh" >&2
         exit 1
+    fi
+    if ! repo_is_initialized "$ONE"; then
+        echo "[check] ${ONE}: no repository yet (provisioned, awaiting first 'borg init') -- nothing to check."
+        exit 0
     fi
     check_and_time "${HOST_REPO_BASE}/${ONE}"
     echo ""

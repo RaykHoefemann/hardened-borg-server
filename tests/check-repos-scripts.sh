@@ -485,6 +485,22 @@ CHECK_CYCLE_DIVISOR=1 run "$T/scripts/20-check-repos.sh"
 assert "20.26 a no-arg run removes check-state for a repository no longer on disk" $?
 
 new_check_tree; reset_env
+mkclient real
+mkdir -p "$HRB/fresh"          # provisioned by 00- but no `config` -> not a borg repo yet
+CHECK_CYCLE_DIVISOR=1 run "$T/scripts/20-check-repos.sh"
+{ [ "$RC" -eq 0 ] \
+  && [[ "$OUT" == *"fresh: no repository yet"* ]] \
+  && grep -q "/repo/real" "$PODMAN_LOG" && ! grep -q "/repo/fresh" "$PODMAN_LOG" \
+  && [ ! -e "$LOGDIR/check-state/fresh" ]; }
+assert "20.27 a provisioned-but-uninitialised repo is skipped, not failed, not logged" $?
+
+new_check_tree; reset_env
+mkdir -p "$HRB/fresh"
+run "$T/scripts/20-check-repos.sh" fresh
+{ [ "$RC" -eq 0 ] && [[ "$OUT" == *"no repository yet"* ]] && [ ! -s "$PODMAN_LOG" ]; }
+assert "20.28 a <client> run on an uninitialised repo says so and exits 0" $?
+
+new_check_tree; reset_env
 mkclient client1
 export CHECK_MAX_DURATION=abc
 run "$T/scripts/20-check-repos.sh"
