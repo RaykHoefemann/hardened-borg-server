@@ -81,6 +81,11 @@ mkdir -p "$SHIM"
 printf '#!/bin/sh\necho "EXEC: borg $*"\n' > "$SHIM/borg"
 chmod +x "$SHIM/borg"
 
+# The 'info' channel's live "last check" line reads $CHECK_STATE_DIR/<client>
+# (fixed at /log/check-state in the image; overridable here, never by a client).
+export CHECK_STATE_DIR="$WORK/checkstate"
+mkdir -p "$CHECK_STATE_DIR"
+
 pass=0 fail=0
 OUT=""; ERR=""; RC=0
 
@@ -137,6 +142,10 @@ assert_deny() { # <desc> <substring expected on stderr>
 
 assert_ok_contains() { # <desc> <substring expected on stdout>
     if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qF -- "$2"; then ok "$1"; else bad "$1"; fi
+}
+
+assert_ok_lacks() { # <desc> <substring that must NOT appear on stdout>
+    if [ "$RC" -eq 0 ] && ! printf '%s' "$OUT" | grep -qF -- "$2"; then ok "$1"; else bad "$1"; fi
 }
 
 # Strongest form: the exec line must be EXACTLY our own invocation. Any client
@@ -223,6 +232,32 @@ assert_ok_contains "C4 'info' returns the client's rendered info text" "name: te
 # client is told to run first.
 run "$WORK/emptydir" "info"
 assert_ok_contains "C5 'info' still answers when no text is rendered" "Used:"
+
+# --- C6-C9. the live 'last check' line (from $CHECK_STATE_DIR/<client>) -----
+
+TAB="$(printf '\t')"
+rm -f "$CHECK_STATE_DIR"/*
+
+run "$WORK/keyfile_blake2" "info"
+assert_ok_lacks "C6 no check-state file -> no 'Repository check:' line, no false claim" "Repository check:"
+
+printf 'ok%s2026-08-30%s2026-08-30\n' "$TAB" "$TAB" > "$CHECK_STATE_DIR/keyfile_blake2"
+run "$WORK/keyfile_blake2" "info"
+assert_ok_contains "C7 an 'ok' check-state -> last-passed line, scoped to structure" \
+    "Repository check: last passed 2026-08-30 (repository structure only"
+
+printf 'partial%s2026-08-30%s2026-08-24\n' "$TAB" "$TAB" > "$CHECK_STATE_DIR/keyfile_blake2"
+run "$WORK/keyfile_blake2" "info"
+assert_ok_contains "C8 a 'partial' check-state -> names the last FULL check, not the slice" \
+    "structure checked 2026-08-30; last full check 2026-08-24"
+
+printf 'fail%s2026-08-30%s2026-08-24\n' "$TAB" "$TAB" > "$CHECK_STATE_DIR/keyfile_blake2"
+run "$WORK/keyfile_blake2" "info"
+assert_ok_contains "C9 a 'fail' check-state -> neutral pointer to the operator" \
+    "did not pass (2026-08-30) -- contact the operator"
+run "$WORK/keyfile_blake2" "info"
+assert_ok_lacks "C9b a 'fail' check-state never leaks borg's own error text" "integrity error"
+rm -f "$CHECK_STATE_DIR"/*
 
 # --- D. repository state ----------------------------------------------------
 

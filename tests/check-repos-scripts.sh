@@ -241,9 +241,11 @@ set_noquota() { printf '%s\t%s\t%s\n' "$HRB/$1" 1000000000 500 >> "$DF_DATA"; } 
 CHECKLOG="";  # set per new_check_tree
 seed_hist() {  # seed_hist <days-ago> <client> <du-KiB> <ok|partial|fail>
     mkdir -p "$LOGDIR"
+    local ep; ep="$(( $(date +%s) - $1 * 86400 ))"
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$(( $(date +%s) - $1 * 86400 ))" seed "$2" "$3" 0 "$4" >> "$LOGDIR/check-repos.history"
+        "$ep" "$(date -u -d "@$ep" +%Y-%m-%dT%H:%M:%SZ)" "$2" "$3" 0 "$4" >> "$LOGDIR/check-repos.history"
 }
+seed_days_ago() { date -u -d "@$(( $(date +%s) - $1 * 86400 ))" +%Y-%m-%d; }
 checked_order() { grep -oE '/repo/[A-Za-z0-9_-]+' "$PODMAN_LOG" | sed 's|/repo/||'; }
 
 reset_env() {
@@ -451,6 +453,36 @@ set_noquota c1
 run "$T/scripts/20-check-repos.sh"
 { [ "$RC" -eq 0 ] && grep -q "/repo/c1" "$PODMAN_LOG" && [[ "$OUT" == *"no project quota"* ]]; }
 assert "20.23 a repo with no project quota is treated as size 0, still checked, and flagged" $?
+
+new_check_tree; reset_env
+mkclient c1
+CHECK_CYCLE_DIVISOR=1 run "$T/scripts/20-check-repos.sh"
+CS="$LOGDIR/check-state/c1"
+{ [ -f "$CS" ] \
+  && [ "$(awk -F'\t' '{print NF}' "$CS")" -eq 3 ] \
+  && [ "$(cut -f1 "$CS")" = "ok" ] \
+  && printf '%s' "$(cut -f2 "$CS")" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' \
+  && [ "$(cut -f2 "$CS")" = "$(cut -f3 "$CS")" ]; }
+assert "20.24 a check writes a per-client check-state/<client> file: result, date, last-full-pass date" $?
+
+new_check_tree; reset_env
+mkclient c1; set_borg c1 partial
+CHECK_CYCLE_DIVISOR=1 CHECK_MAX_DURATION=3600 run "$T/scripts/20-check-repos.sh"
+seed_hist 6 c1 1 ok      # a prior full pass, older than this partial
+CHECK_CYCLE_DIVISOR=1 CHECK_MAX_DURATION=3600 run "$T/scripts/20-check-repos.sh"
+{ [ "$(cut -f1 "$LOGDIR/check-state/c1")" = "partial" ] \
+  && [ "$(cut -f3 "$LOGDIR/check-state/c1")" = "$(seed_days_ago 6)" ]; }
+assert "20.25 after a partial check, check-state keeps the last FULL pass date, not the partial's" $?
+unset CHECK_MAX_DURATION
+
+new_check_tree; reset_env
+mkclient keep; mkclient gone
+CHECK_CYCLE_DIVISOR=1 run "$T/scripts/20-check-repos.sh" >/dev/null
+rm -rf "$HRB/gone"
+CHECK_CYCLE_DIVISOR=1 run "$T/scripts/20-check-repos.sh"
+{ [ -f "$LOGDIR/check-state/keep" ] && [ ! -e "$LOGDIR/check-state/gone" ] \
+  && [[ "$OUT" == *"removed stale check-state for 'gone'"* ]]; }
+assert "20.26 a no-arg run removes check-state for a repository no longer on disk" $?
 
 new_check_tree; reset_env
 mkclient client1

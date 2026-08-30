@@ -89,6 +89,26 @@ case "${SSH_ORIGINAL_COMMAND:-}" in
                                else return sprintf("%d KiB", k) }
                 NR==2 { printf "Used: %s of %s (%s)\n", h($3), h($2), $5 }'
         fi
+        # Live 'last check' line (DESIGN 2.4), same idea as 'Used:' above. Read
+        # this client's OWN one-line status file, written on the host by
+        # scripts/20-check-repos.sh and visible here at
+        # $CHECK_STATE_DIR/<client>. It is a per-client file, never the
+        # multi-client check-repos.history, so nothing cross-client enters this
+        # session (DESIGN 2.2). CHECK_STATE_DIR is fixed in the image; it is
+        # overridable only for the test harness and cannot be set by a client
+        # (sshd passes no client environment). Absent -> no scheduled check has
+        # recorded this repository yet, and the line is simply omitted (no
+        # claim rather than a false one). A failing check shows a neutral
+        # pointer to the operator, never borg's error text.
+        cs_file="${CHECK_STATE_DIR:-/log/check-state}/$(basename "$REPO")"
+        if [ -f "$cs_file" ]; then
+            IFS="$(printf '\t')" read -r cs_res cs_when cs_lastok < "$cs_file" || cs_res=""
+            case "$cs_res" in
+                ok)      echo "Repository check: last passed ${cs_when} (repository structure only -- verify archive contents yourself, CLIENTUSE.md ch. 8)" ;;
+                partial) echo "Repository check: structure checked ${cs_when}; last full check ${cs_lastok}" ;;
+                fail)    echo "Repository check: the last check did not pass (${cs_when}) -- contact the operator. Last full pass: ${cs_lastok}" ;;
+            esac
+        fi
         exit 0
         ;;
     "borg serve"|"borg serve "*)

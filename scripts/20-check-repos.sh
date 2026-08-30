@@ -34,6 +34,13 @@
 #   `partial` line; its "last full check" (for the CHECK_STALE_DAYS warning) is
 #   its most recent `ok` line. No line ever = never checked = first in line.
 #
+#   Plus one file per client, HOST_LOG_BASE/check-state/<client>, overwritten
+#   each check: `<last-result>  <last-check-date>  <last-full-pass-date>`. It
+#   holds only that client, so borg-wrapper.sh can surface a "last checked" line
+#   in the client's own `info` session without touching the multi-client history
+#   (DESIGN 2.2 / 2.4). A no-argument run also removes check-state files whose
+#   repository no longer exists on disk.
+#
 # WHAT IS CHECKED. `--repository-only`: segment checksums and the repository
 #   index -- no key, no passphrase, nothing decrypted. Deep archive-content
 #   verification (`borg check --verify-data`) needs the client's key and stays
@@ -259,9 +266,28 @@ check_and_time() {
         partial)      _cat_tok=partial ;;
         *)            _cat_tok=fail ;;
     esac
+    _cat_now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$_cat_end" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_cat_user" \
+        "$_cat_end" "$_cat_now" "$_cat_user" \
         "$_cat_dukib" "$_cat_dur" "$_cat_tok" >> "$CHECK_HISTORY"
+
+    # Per-client status for the info channel (DESIGN 2.4): one file per client,
+    # containing ONLY this client, so borg-wrapper.sh can read it in the
+    # client's own session without touching the multi-client history. Three
+    # tab-separated fields: <last-result> <last-check-date> <last-full-pass-date>.
+    _cat_day="${_cat_now%%T*}"
+    if [ "$_cat_tok" = "ok" ]; then
+        _cat_lastok="$_cat_day"
+    else
+        _cat_lastok="$(awk -F"$TAB" -v c="$_cat_user" \
+            '$3 == c && $6 == "ok" && $1 + 0 > e { e = $1 + 0; d = $2 }
+             END { sub(/T.*/, "", d); print d }' \
+            "$CHECK_HISTORY" 2>/dev/null)"
+        [ -n "$_cat_lastok" ] || _cat_lastok="-"
+    fi
+    mkdir -p "${HOST_LOG_BASE}/check-state"
+    printf '%s\t%s\t%s\n' "$_cat_tok" "$_cat_day" "$_cat_lastok" \
+        > "${HOST_LOG_BASE}/check-state/${_cat_user}"
 }
 
 # repo_used_kib <client>
@@ -333,6 +359,18 @@ run_scheduler() {
         printf '%s\t%s\t%s\t%s\n' "$1" "$_u" "$_sz" "$2" >> "$ORDER_FILE"
         _total=$((_total + _sz))
     done
+
+    # Drop check-state files for repositories that no longer exist on disk
+    # (deprovisioned client) -- mirrors build_authorized_keys.sh's cleanup of a
+    # departed client's /run/borg-info text.
+    if [ -d "${HOST_LOG_BASE}/check-state" ]; then
+        for _sf in "${HOST_LOG_BASE}/check-state"/*; do
+            [ -e "$_sf" ] || continue
+            [ -d "${HOST_REPO_BASE}/$(basename "$_sf")" ] && continue
+            rm -f "$_sf"
+            echo "[check] removed stale check-state for '$(basename "$_sf")' (no repository directory)."
+        done
+    fi
 
     if [ ! -s "$ORDER_FILE" ]; then
         echo "[check] No client repositories found under $HOST_REPO_BASE. Nothing to do."
