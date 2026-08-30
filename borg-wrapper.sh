@@ -103,7 +103,7 @@ case "${SSH_ORIGINAL_COMMAND:-}" in
         # never borg's error text.
         cs_file="${CHECK_STATE_DIR:-/log/check-state}/$(basename "$REPO")"
         if [ -f "$cs_file" ]; then
-            IFS="$(printf '\t')" read -r cs_res cs_when cs_rest < "$cs_file" || cs_res=""
+            IFS="$(printf '\t')" read -r cs_res cs_when _ < "$cs_file" || cs_res=""
             case "$cs_res" in
                 ok|partial|fail) echo "Last Repo Structure Check: ${cs_when} (${cs_res})" ;;
             esac

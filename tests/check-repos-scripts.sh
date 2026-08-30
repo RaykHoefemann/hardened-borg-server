@@ -235,10 +235,8 @@ seed_unit() { # seed_unit <unit> <KEY=value>...
 }
 set_borg() { printf '%s\n' "$2" > "$BORG_STATE_DIR/$1"; }   # set_borg <client> <state>
 
-TAB="$(printf '\t')"
 set_size()    { printf '%s\t%s\t%s\n' "$HRB/$1" 1 "$2" >> "$DF_DATA"; }              # <client> <used-KiB>
 set_noquota() { printf '%s\t%s\t%s\n' "$HRB/$1" 1000000000 500 >> "$DF_DATA"; }      # col2 == volume col2 -> "no project quota"
-CHECKLOG="";  # set per new_check_tree
 # lib.sh quota_short, mirrored so seeded lines carry field 4 in the same shape
 # the script writes (human-readable, space-free). Nothing reads field 4 back.
 _qshort() { awk -v k="$1" 'BEGIN{
