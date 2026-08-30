@@ -75,12 +75,12 @@ Open, to settle at implementation:
 
 ## 11.3. Automated Integrity Verification (`borg check`)
 
-> **Shipped.** `scripts/20-check-repos.sh` — the read-only `borg check
-> --repository-only` sweep, verified on the FCOS bench 2026-08-30 against borg
-> 1.2.8 and 1.4.0 ([Verification](docs/VERIFICATION.md) section 13) — and its
-> daily **self-balancing scheduler** (append-only `check-repos.log`,
-> oldest-first within a `total / CHECK_CYCLE_DIVISOR` budget, `29-`'s coverage
-> report). Design and operation: [Design](docs/DESIGN.md) Chapter 3.3,
+> **Shipped and verified.** `scripts/20-check-repos.sh` — the read-only `borg
+> check --repository-only` sweep and its daily **self-balancing scheduler**
+> (append-only `check-repos.log`, oldest-first within a `total /
+> CHECK_CYCLE_DIVISOR` budget, `29-`'s coverage report). Both exercised on the
+> FCOS bench 2026-08-30 against borg 1.2.8 and 1.4.0 ([Verification](docs/VERIFICATION.md)
+> section 13). Design and operation: [Design](docs/DESIGN.md) Chapter 3.3,
 > [Operations](docs/OPERATIONS.md) Chapter 9.13. What remains open here is the
 > client-facing "last checked" line below — a deliberate follow-up that reuses
 > the scheduler's per-repository "last full check" state.
@@ -125,8 +125,9 @@ work down the order checking whatever fits `total_size / CHECK_CYCLE_DIVISOR`
 (default 6), skipping oversized entries; `29-check-timer-status.sh` reports the
 coverage (oldest full-check age vs `CHECK_STALE_DAYS`, awaiting-first-check
 count, per-repo overruns of `CHECK_MAX_RUNTIME`). A `<client>` argument still
-checks that one repository unconditionally and still writes the log line. Not
-yet exercised on a VM at the time of writing.
+checks that one repository unconditionally and still writes the log line.
+Exercised on the FCOS bench 2026-08-30 ([Verification](docs/VERIFICATION.md)
+section 13).
 
 **Considered and dropped:** a fixed *day × client* map (brittle — a client
 added to `clients.conf` but forgotten in the map is never checked, and a day
