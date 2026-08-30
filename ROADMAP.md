@@ -10,13 +10,17 @@ This chapter tracks work that is **planned but not yet built**. A feature that
 ships is not kept here — it moves into the documents that describe it, and its
 design history stays in git. Timelines are not committed.
 
-Section numbers are historical and are not resequenced. Four have left this page:
+Section numbers are historical and are not resequenced. Five have left this page:
 **11.1** (automated archive pruning) and server-side mirroring were **dropped** —
 the reasoning is now in [Design](docs/DESIGN.md) Chapter 4.6 — and **11.4**
 (migration to a Podman Quadlet), **11.5** (point-in-time snapshots of the storage
 volume) and **11.8** (negative-test coverage for the verification checks)
 **shipped in 1.0.0**, documented in [Deployment](docs/DEPLOYMENT.md) Chapter 6.2,
-[Snapshots](docs/SNAPSHOTS.md) and [Verification](docs/VERIFICATION.md).
+[Snapshots](docs/SNAPSHOTS.md) and [Verification](docs/VERIFICATION.md). **11.3**
+(automated `borg check --repository-only` integrity verification and its daily
+self-balancing scheduler) **shipped in 1.1.0**, documented in
+[Design](docs/DESIGN.md) Chapter 3.3, [Operations](docs/OPERATIONS.md)
+Chapter 9.13 and [Verification](docs/VERIFICATION.md) section 13.
 
 ## 11.2. Manual Offline Export to Removable Media
 
@@ -36,7 +40,7 @@ Scope and constraints:
 - **Manual and attended.** No timer, no schedule, no client-facing surface — the category of `99-container-status.sh`. Nothing about it is reachable from a client connection (Chapter 1.2.6).
 - **The copy is ciphertext.** A keyfile-mode repository copied this way cannot be restored without the client's exported key and passphrase (Chapter 2.1.1), which exist only on the client. The helper produces half of a usable offline backup; the client-side key archive ([Best Practices](docs/BEST_PRACTICES.md) Chapter 2.1) is the other half. The server cannot hold that half without becoming the key escrow the same chapter rules out.
 - **Not against a live repository.** Run it in an idle window, or from a storage snapshot ([Snapshots](docs/SNAPSHOTS.md)). Borg repositories are transactional — a copy taken mid-commit rolls back to the last committed transaction on next access rather than tearing — but a coordinated quiet window is cleaner still.
-- **The source is verified before, the copy after.** `borg check --repository-only` on the source (11.3, or work from a storage snapshot) keeps a known-bad repository from being propagated; the same check on the finished copy catches damage the transfer or the medium introduced. Neither is a hard gate — a structurally broken repository may still hold recoverable archives — but a failed check on the copy must stop it from replacing the last good one (see the layout below).
+- **The source is verified before, the copy after.** `borg check --repository-only` on the source (`20-check-repos.sh`, [Operations](docs/OPERATIONS.md) Chapter 9.13, or work from a storage snapshot) keeps a known-bad repository from being propagated; the same check on the finished copy catches damage the transfer or the medium introduced. Neither is a hard gate — a structurally broken repository may still hold recoverable archives — but a failed check on the copy must stop it from replacing the last good one (see the layout below).
 - **Destination-agnostic, but only removable media is supported.** The same `rsync` invocation can point anywhere the operator can write. Doing so is the operator's own decision and carries every caveat above; it is not a mirroring feature and is not documented as one.
 
 ### Crash-safe layout on the medium (sketch — revisit at implementation)
@@ -72,65 +76,6 @@ Open, to settle at implementation:
 - **`chattr +i` on the medium** hardens completed generations against a later run or a fat-fingered `rm`, but is bypassed by mounting the medium read-write elsewhere — a convenience, not a security boundary.
 - **Mount discipline.** Whether the helper mounts and unmounts the medium itself (minimising the read-write window, and able to keep it read-only between the transfer and the `chattr` step) or leaves mounting to the operator. The tighter the helper controls this, the closer the medium's exposure gets to a snapshot's.
 - **Beyond a snapshot (optional).** Rotating several media so no single medium failure loses history, and a detached `sha256` manifest of each generation kept on the host so medium-side tampering or rot is detectable on re-attach without a key — machinery the snapshots deliberately skipped because they sit inside the append-only boundary and the medium does not.
-
-## 11.3. Automated Integrity Verification (`borg check`)
-
-> **Shipped and verified.** `scripts/20-check-repos.sh` — the read-only `borg
-> check --repository-only` sweep and its daily **self-balancing scheduler**
-> (append-only `check-repos.history`, oldest-first within a `total /
-> CHECK_CYCLE_DIVISOR` budget, `29-`'s coverage report). Both exercised on the
-> FCOS bench 2026-08-30 against borg 1.2.8 and 1.4.0 ([Verification](docs/VERIFICATION.md)
-> section 13), including the one conservative `Last Repo Structure Check:` line
-> the client `info` channel now carries about the client's own repository
-> (Chapter 2.4). Design and operation: [Design](docs/DESIGN.md) Chapter 3.3,
-> [Operations](docs/OPERATIONS.md) Chapter 9.13. **11.3 is complete**; the text
-> below is kept as the design record.
-
-Scheduled, operator-side integrity checking of the hosted repositories via `borg check`, so that silent on-disk corruption (bit rot, a truncated segment, an inconsistent index) is detected proactively rather than discovered at restore time.
-
-The privacy model (Chapter 2.1) directly shapes what this feature can and cannot do — this is the central design constraint, not an afterthought:
-
-- **Repository-level checks (`borg check --repository-only`) are possible server-side.** They validate the repository's own structures — segment files, hashes, index/manifest consistency — without decrypting any archive contents, and therefore need no encryption key. This is exactly the class of damage the server is in a position to detect, and where automated server-side checking genuinely adds value.
-- **Archive-data verification (`borg check --verify-data`, and the archive-consistency portion of a full check) is *not* possible server-side.** Reading archive metadata and re-verifying chunk contents requires the repository key, which by design never exists on the server (Chapter 2.1). Deep, content-level verification therefore remains a **client-side responsibility**, carried out by whoever holds the key — the server cannot, and must not be able to, perform it.
-
-Two existing guarantees must be preserved when this lands:
-
-- **Append-only (Chapter 1.2.4):** `borg check` has a `--repair` mode that *modifies* the repository. Repair must never be reachable from a client connection and must be a distinct, deliberate operator-side action. The scheduled check itself runs strictly read-only; repair stays manual.
-- **Host-side-only observability (Chapter 1.2.6):** full results — every repository, per run — surface to the operator on the host (`29-check-timer-status.sh`, `99-container-status.sh`), not through a new port or interface. The client `info` channel carries only **one conservative line** about the client's *own* repository (Chapter 2.4).
-
-### The client-facing "last checked" line
-
-Shipped: `borg-wrapper.sh` adds a `Last Repo Structure Check: <timestamp> (<result>)` line to the `info` output, read live from a **per-client** file (`check-state/<client>`, written by `20-check-repos.sh`) so nothing cross-client enters a client session (Chapter 2.2). The `<timestamp>` is verbatim from `check-repos.history`; `<result>` is `ok`, `partial`, or `fail`. The three constraints it was built to respect:
-
-- **No over-claim.** The label says "structure" and [Client Usage](docs/CLIENTUSE.md) Chapter 8 points at the client's own `borg check --verify-data`. `--repository-only` validates structure, never archive contents.
-- **Partial passes.** A `--max-duration` partial is shown as `(partial)`, distinct from `(ok)`; `check-state` still records the last *full* pass in its third field.
-- **A failing check does not dump server problems on the client.** It shows `(fail)` with the timestamp only, never borg's error text — a structural fault is the operator's to triage first (`OnFailure=`). The line is omitted entirely until a scheduled check has recorded the repository.
-
-Verification: [Verification](docs/VERIFICATION.md) section 13 (13E); the `info` channel is also tested by 0.5A and 5.5B.
-
-### The self-balancing scheduler — shipped
-
-The scheduler is built (`b13221d`), tested (`tests/check-repos-scripts.sh`), and
-documented in [Operations](docs/OPERATIONS.md) Chapter 9.13. In brief: an
-append-only `HOST_LOG_BASE/check-repos.history` (`<epoch> <iso> <client> <repo-size>
-<duration-s> <ok|partial|fail> <days-since-prev>`); a daily timer; per run, order the
-repositories never-checked-then-oldest, check the first unconditionally, then
-work down the order checking whatever fits `total_size / CHECK_CYCLE_DIVISOR`
-(default 6), skipping oversized entries; `29-check-timer-status.sh` reports the
-coverage (oldest full-check age vs `CHECK_STALE_DAYS`, awaiting-first-check
-count, per-repo overruns of `CHECK_MAX_RUNTIME`). A `<client>` argument still
-checks that one repository unconditionally and still appends its history line.
-Exercised on the FCOS bench 2026-08-30 ([Verification](docs/VERIFICATION.md)
-section 13).
-
-**Considered and dropped:** a fixed *day × client* map (brittle — a client
-added to `clients.conf` but forgotten in the map is never checked, and a day
-whose run always fails silently skips that day's clients); and a
-measured-throughput / growth-forecasting model (near-zero payoff — repository
-size enters only through the budget, recomputed each run, and ordering by age
-needs no forecast at all).
-
-Practical considerations: `borg check` is I/O-intensive, so scheduling must avoid colliding with active backup windows, and each per-repository check runs under the same isolation the rest of the server uses.
 
 ## 11.6. Executable Verification Checks
 
