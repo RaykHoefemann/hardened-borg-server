@@ -78,6 +78,18 @@ QUADLET_SOURCE_NAME="borg-server.container"
 # second install silently overwrite the first. Default
 # (CONTAINER=borg-server): borg-server.service.
 SERVICE="${CONTAINER}.service"
+
+# Base name for the repository-check timer/service pair (scripts/20-check-repos.sh,
+# installed by scripts/21-check-timer-install.sh). Namespaced by CONTAINER for
+# the same reason SERVICE and SNAPSHOT_TIMER_NAME (snapshots/config.sh) are: a
+# host running more than one instance of this project installs every instance's
+# units as symlinks into the SAME shared ~/.config/systemd/user/ directory, and
+# a fixed name would let a second install silently overwrite the first
+# instance's timer. 21-/22-/29- use this for both the .timer and the .service
+# symlink -- systemd pairs a timer with the service of the same base name by
+# default. Default (CONTAINER=borg-server): check-repos_borg-server.
+CHECK_TIMER_NAME="check-repos_${CONTAINER}"
+
 # Derived from VERSION above, so a checkout of a release tag already points at
 # the image built from that same commit — no editing needed to get a working
 # pull. This used to default to ":latest", which does not exist for pre-release

@@ -1,0 +1,20 @@
+[Unit]
+Description=Weekly borg check --repository-only of all client repositories (docs/OPERATIONS.md)
+
+[Timer]
+# Sunday, early morning, offset from snapshot-create.timer's daily 03:00 so a
+# check never starts into a snapshot run. Weekly, not daily: a full check reads
+# about half of each repository (20-check-repos.sh header), and on-disk
+# corruption is slow. A repository that CHECK_MAX_DURATION cut short is resumed
+# by the next weekly firing, not left unchecked.
+OnCalendar=Sun *-*-* 05:00:00
+
+# If the machine was off or this user's systemd instance wasn't running at the
+# scheduled time (maintenance window, reboot), run the missed check once as
+# soon as it is back -- a silently skipped week widens the window in which
+# corruption goes unnoticed, which is the whole thing this timer exists to
+# shrink.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

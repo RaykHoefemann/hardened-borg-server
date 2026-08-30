@@ -25,19 +25,16 @@ config/keys/
 
 # --- Generated systemd artifacts ---------------------------------------------
 #
-# snapshots/71-timer-install.sh renders snapshot-create.service from its
-# template with this checkout's own REPO_ROOT baked into ExecStart — valid on
-# exactly one machine.
+# snapshots/71-timer-install.sh and scripts/21-check-timer-install.sh render
+# their .service unit from a template with this checkout's own REPO_ROOT baked
+# into ExecStart — valid on exactly one machine.
 #
 # (The Borg container's own unit no longer renders anything: it is a Podman
 # Quadlet, installed by 50-service-install.sh under
 # ~/.config/containers/systemd/ with a generated 10-deployment.conf drop-in —
 # both outside the checkout, so there is nothing here to ignore for it.)
 snapshots/*.rendered
-# rendered from snapshot-create.service.rendered's template with this
-# checkout's own REPO_ROOT baked into ExecStart — valid on exactly one
-# machine, same as the systemd/ case above.
-snapshots/*.rendered
+scripts/*.rendered
 
 # --- Runtime logs ------------------------------------------------------------
 log/

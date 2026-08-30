@@ -201,5 +201,14 @@ echo "------------------------------------------------------------"
 journalctl --user -u "$SERVICE" -n 20 --no-pager
 
 echo
+echo "============================================================"
+echo "[status] Repository-check timer (29-check-timer-status.sh)"
+echo "============================================================"
+# The weekly `borg check --repository-only` schedule is part of "is this
+# deployment healthy". Run its own status report inline rather than restating
+# it here -- informational, so a non-zero from it never aborts this report.
+"$(dirname "$0")/29-check-timer-status.sh" || true
+
+echo
 echo "[status] Done."
 echo "------------------------------------------------------------"
