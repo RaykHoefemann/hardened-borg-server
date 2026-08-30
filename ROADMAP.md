@@ -75,12 +75,12 @@ Open, to settle at implementation:
 
 ## 11.3. Automated Integrity Verification (`borg check`)
 
-> **The core has shipped** — `scripts/20-check-repos.sh` and its weekly timer
-> ([Design](docs/DESIGN.md) Chapter 3.3, [Operations](docs/OPERATIONS.md)
-> Chapter 9.13). What remains here: the [Verification](docs/VERIFICATION.md)
-> section 13 checks are still ⚠️ pending their first run on a real deployment,
-> and the client-facing "last checked" line below is a deliberate, still-open
-> follow-up. This section collapses to a pointer once section 13 is verified.
+> **The core has shipped and is verified** — `scripts/20-check-repos.sh` and its
+> weekly timer ([Design](docs/DESIGN.md) Chapter 3.3, [Operations](docs/OPERATIONS.md)
+> Chapter 9.13; [Verification](docs/VERIFICATION.md) section 13, staged on the
+> FCOS bench 2026-08-30 against borg 1.2.8 and 1.4.0). What remains open here is
+> only the client-facing "last checked" line below — a deliberate follow-up.
+> This section can collapse to a pointer with that follow-up spelled out.
 
 Scheduled, operator-side integrity checking of the hosted repositories via `borg check`, so that silent on-disk corruption (bit rot, a truncated segment, an inconsistent index) is detected proactively rather than discovered at restore time.
 
