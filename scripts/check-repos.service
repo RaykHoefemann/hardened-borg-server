@@ -10,7 +10,7 @@ ExecStart=@@SCRIPT@@
 
 # Deprioritise the wrapper. The borg process itself is niced inside the
 # `podman exec` by 20-check-repos.sh (CHECK_NICE); this covers the script and
-# podman client around it. A weekly, off-peak OnCalendar is the real answer to
+# podman client around it. A daily, off-peak OnCalendar is the real answer to
 # not colliding with backup windows -- see check-repos.timer and
 # 20-check-repos.sh's header.
 Nice=19

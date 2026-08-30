@@ -2,9 +2,8 @@
 #
 # 21-check-timer-install.sh
 # -------------------------
-# Installs and enables the systemd timer that runs 20-check-repos.sh once a
-# week -- Sunday 05:00 -- so that `borg check --repository-only` runs against
-# every hosted repository on a schedule (docs/OPERATIONS.md). The mechanism
+# Installs and enables the systemd timer that runs the self-balancing sweep
+# once a day at 05:00 (docs/OPERATIONS.md 9.13). The mechanism
 # scripts/50-service-install.sh and snapshots/71-timer-install.sh already use:
 # this checkout's own REPO_ROOT is rendered into the service unit's ExecStart
 # (the only value that varies between installations -- 20-check-repos.sh takes
@@ -87,7 +86,7 @@ echo "  $SERVICE_DIR/$SERVICE_NAME -> $RENDERED_SERVICE"
 systemctl --user daemon-reload
 systemctl --user enable --now "$TIMER_NAME"
 
-echo "[install] Timer enabled: weekly repository check (Sunday 05:00) for CONTAINER=${CONTAINER}."
+echo "[install] Timer enabled: daily self-balancing sweep (05:00) for CONTAINER=${CONTAINER}."
 echo "→ Check schedule:  systemctl --user list-timers $TIMER_NAME"
 echo "→ Check last run:  journalctl --user -u $SERVICE_NAME"
 echo "→ Functional check: ./scripts/29-check-timer-status.sh"

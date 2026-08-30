@@ -307,7 +307,7 @@ Integrity is not only about individual bytes being correct, but about history be
 
 ## 3.3. Proactive Verification (`borg check`)
 
-Cryptographic tags (3.1) catch corruption *when data is read*. To catch on-disk corruption (bit rot, a truncated segment, an inconsistent index) *before* a client meets it at restore time, the server runs scheduled, operator-side verification: `scripts/20-check-repos.sh`, driven by a weekly systemd timer, runs `borg check --repository-only` against every hosted repository ([Operations](OPERATIONS.md) Chapter 9.13).
+Cryptographic tags (3.1) catch corruption *when data is read*. To catch on-disk corruption (bit rot, a truncated segment, an inconsistent index) *before* a client meets it at restore time, the server runs scheduled, operator-side verification: `scripts/20-check-repos.sh` runs `borg check --repository-only` against the hosted repositories, driven by a daily systemd timer that works through them oldest-first within a size budget so a large or slow deployment is covered over a cycle rather than all at once ([Operations](OPERATIONS.md) Chapter 9.13).
 
 It is bounded by the same trust split as privacy:
 

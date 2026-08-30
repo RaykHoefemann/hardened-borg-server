@@ -680,72 +680,64 @@ Runs `borg check --repository-only` against each hosted repository, so that on-d
 **It reaches borg through the running container.** `20-check-repos.sh` does `podman exec --user borg <container> borg check --repository-only /repo/<client>`. It therefore runs **on the host**, as the operator (no `sudo` — unlike the snapshot tooling), and needs the container to be up; with the service stopped it exits early having checked nothing. Running the check *as* the `borg` user means any lock file borg creates under the repository is owned like the rest of that repository, not root-in-container.
 
 ```bash
-./scripts/20-check-repos.sh              # every client found under HOST_REPO_BASE
-./scripts/20-check-repos.sh <client>     # just that one
+./scripts/20-check-repos.sh              # self-balancing sweep -- what the timer runs
+./scripts/20-check-repos.sh <client>     # that one repository, unconditionally
 ```
 
-Clients are discovered by walking `HOST_REPO_BASE/<client>` on disk, the same way `70-create-snapshot.sh` does — not from `clients.conf` — so a repository present on disk is checked whether or not its roster line is intact.
+Repositories are discovered by walking `HOST_REPO_BASE/<client>` on disk, the same way `70-create-snapshot.sh` does — not from `clients.conf` — so a repository present on disk is checked whether or not its roster line is intact.
 
-**Result states**, per repository, on the `[check] <client>: …` line:
-
-borg is invoked with `-v`: without it borg prints nothing on a clean check (verified against borg 1.2.8 and 1.4.0), which would leave a `--max-duration` partial run indistinguishable from a full pass. With `-v` it always ends on `Finished full repository check, …` or `Finished partial repository check, …`, and those lines land in the log as the evidence behind the verdict.
+borg is invoked with `-v`: without it borg prints nothing on a clean check (verified against borg 1.2.8 and 1.4.0), which would leave a `--max-duration` partial run indistinguishable from a full pass. With `-v` it always ends on `Finished full repository check, …` or `Finished partial repository check, …`, and those lines land in the journal as the evidence behind the verdict.
 
 | Line | Meaning |
 |---|---|
 | `FULL pass, no problems found` | segment checksums **and** the repository index checked, clean |
-| `PARTIAL pass (time-boxed …)` | only possible with `CHECK_MAX_DURATION` set: segment checksums checked as far as the budget allowed, **index check skipped**; the next run resumes where this stopped |
+| `PARTIAL pass (time-boxed …)` | only with `CHECK_MAX_DURATION` set: segments checked as far as it allowed, **index check skipped**; the next run resumes where this stopped |
+| `<client>: skipped this run` | (sweep only) does not fit the budget left this run — it is the oldest next run |
 | `failed` + `podman exec … failed` | the exec itself failed (the container stopped mid-sweep); borg did not run for this client |
-| `failed` + `lock could not be taken within …s` | a backup held the repository lock longer than `CHECK_LOCK_WAIT`; **not checked** this run, retried next run |
+| `failed` + `lock could not be taken within …s` | a backup held the repository lock longer than `CHECK_LOCK_WAIT`; **not checked**, retried next run |
 | `failed` + `problem with the repository structure` | borg reported real damage — see Chapter 9.14 |
 
-One repository failing does not stop the sweep. The script exits `0` only if every repository came back clean (a clean `PARTIAL` counts), `1` otherwise — the signal the timer's `OnFailure=` or a cron `MAILTO` catches. The central distinction the log draws is **"could not check"** (lock, container down) versus **"checked and found damage"** — different operator responses.
+One repository failing does not stop the sweep. A `<client>` run exits with that one check's result; a sweep exits `0` only if every check it ran came back clean **and** no repository's last full check is older than `CHECK_STALE_DAYS`. That non-zero status is what the timer's `OnFailure=` catches.
 
-**Tuning knobs** — environment overrides, not `config.sh` entries (kept out for the same reason the snapshot retention knobs are — `config.sh` stays short enough to diff on upgrade):
+### The self-balancing sweep (no argument)
+
+A `borg check` of a 100 GB repository on a USB spinning disk is ~20 min (~100 MB/s at best, longer under contention or without UASP), and a deployment can hold many repositories. So the no-argument sweep does not check everything every run. It keeps an **append-only log**, `HOST_LOG_BASE/check-repos.log` — one tab-separated line per check, `<epoch> <iso> <client> <du-KiB> <duration-s> <ok|partial|fail>` — and each run:
+
+1. reads every repository's size from its enforcing XFS project quota (`df`, no `sudo`), sums it, and sets `budget = total / CHECK_CYCLE_DIVISOR` (default 6);
+2. orders the repositories **never-checked first, then oldest full check first**;
+3. checks the first one **unconditionally** — the progress guarantee, so nothing ever starves, even a repository larger than the whole budget;
+4. then works down the order, checking each whose size fits the budget left, **skipping** (not stopping at) any that does not, until the budget is spent, `CHECK_MAX_RUNTIME` is reached, or the list ends.
+
+A repository not reached this run is simply the oldest next run, so a failed run, a new repository, or a slow store all self-correct. With `7 × budget ≥ total` per week the cycle settles at ~6 days. There is **no hard deadline**: `CHECK_STALE_DAYS` is a warning (in the summary and in `29-check-timer-status.sh`) and makes a sweep exit non-zero, not a scheduling override. A repository whose last check took longer than `CHECK_MAX_RUNTIME` cannot complete in one run on this store — `29-` names it and points at `CHECK_MAX_DURATION` for that one repository, or a snapshot-based check.
+
+A `<client>` run is different: it checks that repository **unconditionally** — regardless of age, not bounded by the budget or `CHECK_MAX_RUNTIME` — and still writes the log line, so a manual check counts and the next sweep will not immediately re-check it. Use it by hand and after Chapter 9.14.
+
+**Tuning knobs** — environment overrides, not `config.sh` entries (so that file stays short enough to diff on upgrade):
 
 | Variable | Default | Effect |
 |---|---|---|
-| `CHECK_LOCK_WAIT` | `600` | seconds to wait for the repository lock before giving up — a check firing during a backup waits rather than failing. Does not delay the client, which already holds the lock |
-| `CHECK_MAX_DURATION` | `0` (off) | when > 0, passed as `borg check --max-duration SECONDS`. **Opt-in, and a weaker check:** borg's manual — a partial check "can only perform non-cryptographic checksum checks on the segment files" and **skips the repository index check**, so it never reports a full pass. borg recommends it "with very large repositories only" where a full weekly check would not finish. Leave it off unless a real repository is genuinely too large to check in one sitting |
-| `CHECK_NICE` | `19` | `nice(1)` increment for the borg process inside the container |
+| `CHECK_CYCLE_DIVISOR` | `6` | `budget per run = total size / this`. Lower it for a bigger budget per run |
+| `CHECK_MAX_RUNTIME` | `3600` | seconds; a run stops **starting** repositories past this (it cannot interrupt one already running) |
+| `CHECK_STALE_DAYS` | `9` | a full check older than this is a warning and makes a sweep exit non-zero. Never-checked = "awaiting first check", not stale |
+| `CHECK_MIN_AGE_DAYS` | `0` | if > 0, a sweep does not re-check a repository checked more recently than this even with budget to spare (the oldest is still always checked) |
+| `CHECK_LOCK_WAIT` | `600` | `--lock-wait`: a check firing during a backup waits for the repository lock instead of failing. Does not delay the client |
+| `CHECK_MAX_DURATION` | `0` (off) | `borg check --max-duration SECONDS`. **Opt-in, and a weaker check:** borg's manual — a partial check "can only perform non-cryptographic checksum checks on the segment files" and **skips the repository index check**, so it never reports a full pass. borg recommends it "with very large repositories only". Set it only for a single repository too large for `CHECK_MAX_RUNTIME` |
+| `CHECK_NICE` | `19` | `nice(1)` increment for the borg process in the container |
 
-### The weekly timer — 21-/22-/29-
+### The daily timer — 21-/22-/29-
 
-`21-check-timer-install.sh` installs a rootless **user** timer (`check-repos_<CONTAINER>.timer`, from `scripts/check-repos.timer`) that fires the all-clients sweep **Sunday 05:00**, offset from `snapshot-create.timer`'s daily 03:00. Weekly, not daily: a full check reads about half of each repository, and corruption is slow. `Persistent=true` runs a missed week's check once on the next boot. It needs `loginctl enable-linger $USER` to survive logout — the same requirement the container service already documents ([Deployment](DEPLOYMENT.md) 6.2.3) — and **no sudoers entry**, since it uses `podman exec` rather than any privileged host command.
+`21-check-timer-install.sh` installs a rootless **user** timer (`check-repos_<CONTAINER>.timer`, from `scripts/check-repos.timer`) that fires the sweep **daily at 05:00**, offset from `snapshot-create.timer`'s 03:00 so a check never starts into a snapshot run. `Persistent=true` runs one missed sweep on the next boot (only one, not one per missed day — the sweep self-corrects over the following runs). It needs `loginctl enable-linger $USER` to survive logout — as the container service already documents ([Deployment](DEPLOYMENT.md) 6.2.3) — and **no sudoers entry**, since it uses `podman exec` rather than any privileged host command.
 
 ```bash
 ./scripts/21-check-timer-install.sh      # install + enable
-./scripts/29-check-timer-status.sh       # is it scheduled, did the last run come back clean, is the container up
-./scripts/22-check-timer-uninstall.sh    # remove the schedule (repositories and 20- itself untouched)
+./scripts/29-check-timer-status.sh       # scheduled? last run clean? container up? coverage current?
+./scripts/22-check-timer-uninstall.sh    # remove the schedule (repositories, 20- and the log untouched)
 systemctl --user start check-repos_<CONTAINER>.service   # run one sweep now, off-schedule
 ```
 
-`29-check-timer-status.sh` mirrors `snapshots/79-` — timer scheduled, last service `Result`, and (in place of 79-'s unattended-sudo section) whether the container is up. `99-container-status.sh` calls it at the end of its own report, so one `./scripts/99-container-status.sh` covers the container and the check schedule together. `22-` does not refuse while a run is in progress: `borg check --repository-only` is read-only and releases its lock on exit, so an interrupted sweep leaves nothing half-made.
+`29-check-timer-status.sh` reports the timer schedule, the last service `Result`, whether the container is up, and a **Coverage** section from `check-repos.log`: repository count and total size, the daily budget, the oldest full-check age against `CHECK_STALE_DAYS`, how many are awaiting a first check, and any repository whose last check overran `CHECK_MAX_RUNTIME`. `99-container-status.sh` calls it at the end of its own report. `22-` does not refuse while a run is in progress: `borg check --repository-only` is read-only and releases its lock on exit.
 
-### Splitting the sweep across the week — for many repos or a slow store
-
-The single Sunday sweep is fine when the whole run fits the quiet window. On a slow backing store (a USB spinning disk reads ~100 MB/s at best, so ~100 GB is ~20 min ungestört, longer under contention or without UASP) or with many clients, spread the work: check a **subset each day** instead of everything once. Each daily run is still a *full* check (segments + index) of its repos — no `--max-duration` trade-off — and over seven days everything is covered, keeping the weekly guarantee. A short daily run also has a smaller collision window with backups and loses less if a run is interrupted (only that day's repos miss the cycle).
-
-Two ways, both without changing `20-check-repos.sh`:
-
-- **One daily timer, a wrapper that picks today's slice.** Keep the units from `21-check-timer-install.sh`, set `check-repos.timer` to `OnCalendar=*-*-* 05:00:00`, and point the rendered service's `ExecStart` at a small wrapper of your own that hands `20-check-repos.sh` the clients whose turn it is — e.g. every client whose position in the roster is congruent to today's `date +%u` modulo 7 (sketch; `clients_lines` in `scripts/lib.sh` is the roster parser the other scripts use):
-
-  ```sh
-  #!/bin/sh
-  cd "$(dirname "$0")/.."          # repo root
-  DOW=$(date +%u); n=0; rc=0
-  for c in $(awk 'NF && $1 !~ /^#/ {print $1}' config/clients.conf); do
-      n=$((n + 1))
-      [ "$(( (n - 1) % 7 + 1 ))" -eq "$DOW" ] || continue
-      ./scripts/20-check-repos.sh "$c" || rc=1
-  done
-  exit "$rc"
-  ```
-
-- **Seven day-specific timer units.** `check-repos_<CONTAINER>-mon.timer` (`OnCalendar=Mon *-*-* 05:00:00`) … each triggering a service that runs `20-check-repos.sh` with a fixed client list for that day. More unit files, no wrapper logic; pick this if you want the day→client mapping written out explicitly rather than computed.
-
-**The limit:** this splits across *repositories*, one whole repo at a time. A single repository too large to check in one run cannot be broken up this way — only `borg check --max-duration` can do that, with the index-check cost above. And a plain round-robin by count gives uneven daily runtimes when repo sizes differ a lot; bin-pack by size, or accept that the day the biggest repo lands on is the long one.
-
-A self-balancing version of this — the check keeps a per-repository "last full check" timestamp and each daily run takes the oldest until a time or count budget is hit — is a [Roadmap](../ROADMAP.md) 11.3 follow-up.
+**If one daily run cannot keep up** — `29-` shows the oldest full check drifting past `CHECK_STALE_DAYS`, or the cycle stretching — lower `CHECK_CYCLE_DIVISOR` (bigger budget per run), add a second daily timer at a different hour, or move the one or two biggest repositories to their own schedule (a `check-repos_<CONTAINER>-big.timer` running `20-check-repos.sh <that-client>`).
 
 ### Run it by hand after anything that changes a repository
 

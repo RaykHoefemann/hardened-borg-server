@@ -75,12 +75,15 @@ Open, to settle at implementation:
 
 ## 11.3. Automated Integrity Verification (`borg check`)
 
-> **The core has shipped and is verified** — `scripts/20-check-repos.sh` and its
-> weekly timer ([Design](docs/DESIGN.md) Chapter 3.3, [Operations](docs/OPERATIONS.md)
-> Chapter 9.13; [Verification](docs/VERIFICATION.md) section 13, staged on the
-> FCOS bench 2026-08-30 against borg 1.2.8 and 1.4.0). What remains open here is
-> only the client-facing "last checked" line below — a deliberate follow-up.
-> This section can collapse to a pointer with that follow-up spelled out.
+> **Shipped.** `scripts/20-check-repos.sh` — the read-only `borg check
+> --repository-only` sweep, verified on the FCOS bench 2026-08-30 against borg
+> 1.2.8 and 1.4.0 ([Verification](docs/VERIFICATION.md) section 13) — and its
+> daily **self-balancing scheduler** (append-only `check-repos.log`,
+> oldest-first within a `total / CHECK_CYCLE_DIVISOR` budget, `29-`'s coverage
+> report). Design and operation: [Design](docs/DESIGN.md) Chapter 3.3,
+> [Operations](docs/OPERATIONS.md) Chapter 9.13. What remains open here is the
+> client-facing "last checked" line below — a deliberate follow-up that reuses
+> the scheduler's per-repository "last full check" state.
 
 Scheduled, operator-side integrity checking of the hosted repositories via `borg check`, so that silent on-disk corruption (bit rot, a truncated segment, an inconsistent index) is detected proactively rather than discovered at restore time.
 
@@ -111,47 +114,26 @@ Three things that wording has to get right, and the reason this is a separate de
 
 Plumbing note: `info` is rendered once at container start (`build_authorized_keys.sh` → `/run/borg-info/…`). A changing timestamp means either the check pokes the container to re-render, or the wrapper reads a small live `last-check` file per request — an architecture choice this feature does not otherwise force. When it lands it needs its own [Verification](docs/VERIFICATION.md) check (the `info` channel is already tested — 0.5A, 5.5B) and a [Design](docs/DESIGN.md) Chapter 2.4 update.
 
-### A self-balancing "check the oldest first" scheduler (follow-up)
+### The self-balancing scheduler — shipped
 
-The shipped `20-check-repos.sh` sweeps every repository in one run. That is fine while the whole sweep fits a quiet window (100 GB on a USB spinning disk is ~20 min). When the total genuinely outgrows a weekly window, an operator splits it across the week by hand ([Operations](docs/OPERATIONS.md) Chapter 9.13). This is the automatic version of that split, and it should be built only when a real deployment needs it.
+The scheduler is built (`b13221d`), tested (`tests/check-repos-scripts.sh`), and
+documented in [Operations](docs/OPERATIONS.md) Chapter 9.13. In brief: an
+append-only `HOST_LOG_BASE/check-repos.log` (`<epoch> <iso> <client> <du-KiB>
+<duration-s> <ok|partial|fail>`); a daily timer; per run, order the
+repositories never-checked-then-oldest, check the first unconditionally, then
+work down the order checking whatever fits `total_size / CHECK_CYCLE_DIVISOR`
+(default 6), skipping oversized entries; `29-check-timer-status.sh` reports the
+coverage (oldest full-check age vs `CHECK_STALE_DAYS`, awaiting-first-check
+count, per-repo overruns of `CHECK_MAX_RUNTIME`). A `<client>` argument still
+checks that one repository unconditionally and still writes the log line. Not
+yet exercised on a VM at the time of writing.
 
-**State — one append-only log.** `HOST_LOG_BASE/check-repos.log`, one line per check event:
-
-```
-<iso-date>  <repo>  <du-bytes>  <duration-s>  <ok|fail>
-```
-
-A repository's state is its last `ok` line (its `du` and the date). No `ok` line ever = never checked. `duration-s` is for the operator to eyeball whether the budget maps to an acceptable wall time — the algorithm does not read it.
-
-**Driven by a daily timer** (`OnCalendar=*-*-* 05:00:00`), a mode of `20-check-repos.sh`. Per run:
-
-```
-enumerate repos on disk; du -s data/ each  -> du(repo), total_du
-limit     = total_du / CHECK_CYCLE_DIVISOR          # default 6
-order     = [ never-checked, by name ]
-         ++ [ checked, by last-ok date ascending, then name ]
-remaining = limit
-first     = true
-for repo in order:
-    if not first and (remaining <= 0 or elapsed >= CHECK_MAX_RUNTIME): break
-    if not first and du(repo) > remaining: continue    # skip, try the next that fits
-    borg check -v --repository-only <repo>              # 20-check-repos.sh's existing per-repo check
-    append log line; on ok -> repo's new "last ok"; on fail -> "last ok" unchanged
-    remaining -= du(repo)
-    first = false
-```
-
-`order[0]` is checked **unconditionally** — the progress guarantee. So nothing starves: a repository larger than `limit` is simply always the first repo of some run (never a "fits the remaining budget" pick), and its check interval stays ~`CHECK_CYCLE_DIVISOR` days like everything else. A failed check leaves the repository at the front of `order` for the next run.
-
-The loop above is what a **no-argument** run does — the automatic selection. A run **given a client name** (`20-check-repos.sh <client>`, the manual form the weekly sweep already supports and Chapter 9.14 relies on) skips selection entirely: it checks that one repository unconditionally, regardless of when it was last checked, not bounded by `limit` or `CHECK_MAX_RUNTIME`, and **writes the same log line**. So a manual check counts — the repository's age resets for the automatic scheduler, and an operator who checks `bc1` by hand today does not get it re-checked by tomorrow's timer.
-
-**Knobs:** `CHECK_CYCLE_DIVISOR` (default 6 — a daily timer then has ~1 run/week of slack), `CHECK_MAX_RUNTIME` (default 60m, the hard per-run ceiling). Optional `CHECK_MIN_AGE_DAYS` to keep a run from re-checking very fresh repositories when the budget has slack.
-
-**What it guarantees, and what it does not.** No repository is ever dropped from `order`; the oldest (or a never-checked one) is always next. Per-run work is bounded by `max(limit + one repo, CHECK_MAX_RUNTIME)`. With `7 × limit ≥ total_du` per week the cycle settles at ~`CHECK_CYCLE_DIVISOR` days and the oldest repository stays within ~a day of that. There is **no hard deadline**: a sustained run of failures, a long power-off (systemd runs only one `Persistent=true` catch-up, not one per missed day), or a genuine I/O deficit can stretch the oldest age further. That drift is the operator's signal, surfaced by the status report — `29-check-timer-status.sh` reports `total_du`, `limit`, the oldest age, a count over `CHECK_STALE_DAYS` (a warning, not a scheduling override), the estimated cycle length, and any repository whose last `duration-s` exceeded `CHECK_MAX_RUNTIME` (which cannot be checked in one run on this store — the operator uses `--max-duration` for that one repository, or a snapshot-based check, Chapter 9.13). The run exits non-zero if any check failed or any repository is over `CHECK_STALE_DAYS`.
-
-The per-repository "last ok" date this keeps is the same value the client-facing "last checked" line above needs, so the two follow-ups share their state.
-
-**Considered and dropped:** a fixed *day × client* map (brittle — a client added to `clients.conf` but forgotten in the map is never checked, and a day whose run always fails silently skips that day's clients); and a measured-throughput / growth-forecasting model (near-zero payoff — repository size enters only through the `du` budget, recomputed each run, and ordering by age needs no forecast at all).
+**Considered and dropped:** a fixed *day × client* map (brittle — a client
+added to `clients.conf` but forgotten in the map is never checked, and a day
+whose run always fails silently skips that day's clients); and a
+measured-throughput / growth-forecasting model (near-zero payoff — repository
+size enters only through the budget, recomputed each run, and ordering by age
+needs no forecast at all).
 
 Practical considerations: `borg check` is I/O-intensive, so scheduling must avoid colliding with active backup windows, and each per-repository check runs under the same isolation the rest of the server uses.
 
