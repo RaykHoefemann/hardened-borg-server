@@ -9,7 +9,8 @@ limits are enforced by the host filesystem — not merely tracked. No web UI, no
 orchestration, no auxiliary interfaces: a small, predictable, privacy-preserving
 attack surface by design.
 
-> **Status:** Current stable release `v1.0.0` — a breaking change from 0.x
+> **Status:** Current stable release `v1.1.0` — adds scheduled repository
+> integrity checking (`borg check`). Upgrading from 0.x is a breaking change
 > (client groups removed, Podman Quadlet unit); read the upgrade note in
 > [Server Installation](docs/SERVERINSTALL.md). Follow
 > [Deployment](docs/DEPLOYMENT.md) for how to run it.
