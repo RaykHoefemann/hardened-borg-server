@@ -75,6 +75,13 @@ Open, to settle at implementation:
 
 ## 11.3. Automated Integrity Verification (`borg check`)
 
+> **The core has shipped** — `scripts/20-check-repos.sh` and its weekly timer
+> ([Design](docs/DESIGN.md) Chapter 3.3, [Operations](docs/OPERATIONS.md)
+> Chapter 9.13). What remains here: the [Verification](docs/VERIFICATION.md)
+> section 13 checks are still ⚠️ pending their first run on a real deployment,
+> and the client-facing "last checked" line below is a deliberate, still-open
+> follow-up. This section collapses to a pointer once section 13 is verified.
+
 Scheduled, operator-side integrity checking of the hosted repositories via `borg check`, so that silent on-disk corruption (bit rot, a truncated segment, an inconsistent index) is detected proactively rather than discovered at restore time.
 
 The privacy model (Chapter 2.1) directly shapes what this feature can and cannot do — this is the central design constraint, not an afterthought:
@@ -93,7 +100,7 @@ A client relying on this server has the same legitimate interest in *whether int
 
 ```
 Repository check: last passed 2026-08-28 (structure of the repository only;
-archive contents are yours to verify — CLIENTUSE.md Chapter 9)
+archive contents are yours to verify — CLIENTUSE.md Chapter 8)
 ```
 
 Three things that wording has to get right, and the reason this is a separate decision rather than part of the first cut:

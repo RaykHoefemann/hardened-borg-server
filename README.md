@@ -141,7 +141,7 @@ end to end. [Deployment](docs/DEPLOYMENT.md) covers the architecture, the
 | [Recovery](docs/RECOVERY.md) | Incident handling: accidental deletion, operator error, data loss, restoring data |
 | [Verification](docs/VERIFICATION.md) | Test every claimed guarantee against your own installation — don't take them on faith |
 | [Best Practices](docs/BEST_PRACTICES.md) | Required operational baseline and defense-in-depth hardening |
-| [Roadmap](ROADMAP.md) | What is planned but not yet built: offline export helper, scheduled `borg check`, executable verification checks, applying config without a restart |
+| [Roadmap](ROADMAP.md) | What is planned but not yet built: offline export helper, executable verification checks, applying config without a restart |
 | [Security Policy](SECURITY.md) | Reporting a vulnerability — including a documented guarantee that turns out not to hold |
 | [Contributing](CONTRIBUTING.md) | Issues, pull requests, and the non-goals a change has to stay clear of |
 

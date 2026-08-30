@@ -293,7 +293,7 @@ Alongside security (Chapter 1) and privacy (Chapter 2), the third thing this pro
 
 As with privacy, integrity here is built from several independent layers rather than a single mechanism, and it is bounded by the same client/server trust split: the server can guarantee and verify some things on its own, while the strongest guarantees are anchored on the client side, where the encryption key lives (Chapter 2.1).
 
-> **Note:** this chapter is deliberately an early scaffold. Some of the mechanisms below — in particular proactive `borg check` verification — are still on the roadmap (Chapter 11.3), and this chapter is expected to grow as they land.
+> **Note:** this chapter grows as integrity mechanisms land. Proactive `borg check` verification (3.3) is one that has since shipped; further layers may be added the same way.
 
 ## 3.1. Cryptographic Integrity (Borg)
 
@@ -305,11 +305,19 @@ Because the key never exists on the server (Chapter 2.1), this cryptographic gua
 
 Integrity is not only about individual bytes being correct, but about history being preserved. The append-only semantics enforced at the application layer (Chapter 1.2.4) mean existing archives cannot be modified or deleted through a client connection. A compromised client — or a client-side attacker attempting to destroy backup history, e.g. ransomware — therefore cannot rewrite or erase what has already been stored. Existing backups remain intact and verifiable.
 
-## 3.3. Proactive Verification (`borg check`) — Roadmap
+## 3.3. Proactive Verification (`borg check`)
 
-Cryptographic tags catch corruption *when data is read*. To catch on-disk corruption (bit rot, a truncated segment, an inconsistent index) *before* it is discovered at restore time, the roadmap adds scheduled, operator-side `borg check` verification (Chapter 11.3).
+Cryptographic tags (3.1) catch corruption *when data is read*. To catch on-disk corruption (bit rot, a truncated segment, an inconsistent index) *before* a client meets it at restore time, the server runs scheduled, operator-side verification: `scripts/20-check-repos.sh`, driven by a weekly systemd timer, runs `borg check --repository-only` against every hosted repository ([Operations](OPERATIONS.md) Chapter 9.13).
 
-This is bounded by the same trust split as privacy: the server can run repository-level checks (`borg check --repository-only`) without the key, but deep archive-content verification (`borg check --verify-data`) requires the key and therefore remains a **client-side** responsibility. See Chapter 11.3 for the full design, including how it must respect append-only (repair stays a deliberate operator action) and host-side-only observability.
+It is bounded by the same trust split as privacy:
+
+- **Repository-structure checks run server-side, without a key.** `borg check --repository-only` validates the repository's own structures — segment files, their hashes, index/manifest consistency — and decrypts nothing. This is the class of damage the server is positioned to detect, and where scheduled server-side checking adds value.
+- **Archive-content verification stays client-side.** `borg check --verify-data`, and the archive-consistency half of a full check, re-read chunk contents and need the repository key — which by design never exists on the server (Chapter 2.1). Deep verification is the responsibility of whoever holds the key ([Client Usage](CLIENTUSE.md) Chapter 8); the server cannot, and must not be able to, perform it.
+
+Two properties from Chapters 1 and 2 constrain how it runs, and both hold:
+
+- **Append-only is preserved (Chapter 1.2.4).** `borg check` has a `--repair` mode that *modifies* the repository. The scheduled check never passes it — it is strictly read-only. Repair is a separate, deliberate, sometimes two-party operator action, off any schedule and unreachable from a client connection ([Operations](OPERATIONS.md) Chapter 9.14).
+- **Observability is host-side only (Chapter 1.2.6).** Results are a log and an exit status on the host (`29-check-timer-status.sh`, which `99-container-status.sh` also calls); the client `info` channel is unchanged. Whether a conservative "last checked" line is later added there is a deliberate, still-open decision ([Roadmap](../ROADMAP.md) 11.3).
 
 ## 3.4. Integrity of Server-Side Control Files
 
@@ -345,8 +353,9 @@ It exists because those boundaries are otherwise scattered across five documents
 | Undetected modification of stored data | Borg per-chunk authentication tags, verified on read (3.1) | — |
 | Password guessing, credential reuse | Key-only SSH; passwords and root login disabled (1.2.1) | Test 1.5 |
 | Operator error or host-side software destroys a repository's files | Point-in-time reflink snapshots of `HOST_REPO_BASE`, client-scoped restore ([Snapshots](SNAPSHOTS.md)) | Test 11 |
+| Silent on-disk corruption of a stored repository | Scheduled `borg check --repository-only`, weekly (3.3) | Test 13 |
 
-The residual risk across every row but the last is the same single point: those properties depend on the client's key being bound to the forced command. One `authorized_keys` line without it voids all of them simultaneously, and nothing else in the system would look wrong. That is why Test 3 exists. The snapshot row is the exception — it is host-side tooling that answers accident and non-malicious host-side damage rather than a client acting against the server, and it depends instead on the immutable flag holding and the snapshot volume being intact (Test 11).
+The residual risk across every row but the last two is the same single point: those properties depend on the client's key being bound to the forced command. One `authorized_keys` line without it voids all of them simultaneously, and nothing else in the system would look wrong. That is why Test 3 exists. The snapshot and integrity-check rows are the exceptions — both are host-side tooling that answers accident and non-malicious host-side damage rather than a client acting against the server, and both depend on the storage volume being intact rather than on the key binding (Tests 11 and 13).
 
 ## 4.2. Handed to the operator
 
@@ -367,7 +376,6 @@ Documented as roadmap items, and **absent today**. A deployment must be planned 
 | Gap | Consequence today | Item |
 |---|---|---|
 | No offline export helper | Copying repositories to removable media is a hand-run `rsync` | 11.2 |
-| No scheduled integrity verification | On-disk corruption is detected when data is read, not before | 11.3 |
 
 Deliberately **not** on this list because it will not be built: automated pruning (Chapter 4.6). Nothing is ever deleted; capacity is bounded by quotas and managed by monitoring instead ([Operations](OPERATIONS.md) 10).
 

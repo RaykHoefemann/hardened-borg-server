@@ -2320,7 +2320,7 @@ ls /var/mnt/extern1/.snapshots/BorgTestB/
 
 ## 13. Repository integrity checking is read-only and catches corruption
 
-**Claim** — [Design](DESIGN.md) Chapter 3.3 / [Roadmap](../ROADMAP.md) 11.3: `scripts/20-check-repos.sh` runs `borg check --repository-only` against each hosted repository — for one client or all, by hand or on the weekly timer — so that on-disk corruption (bit rot, a truncated segment, an inconsistent index) is found here rather than by a client at restore time. It needs no encryption key and the server holds none ([Design](DESIGN.md) Chapter 2.1); it never passes `--repair`, on any code path, so a run cannot modify a repository; and one repository failing does not stop the sweep — the exit status is `1` if any repository did not come back clean.
+**Claim** — [Design](DESIGN.md) Chapter 3.3, [Operations](OPERATIONS.md) Chapter 9.13: `scripts/20-check-repos.sh` runs `borg check --repository-only` against each hosted repository — for one client or all, by hand or on the weekly timer — so that on-disk corruption (bit rot, a truncated segment, an inconsistent index) is found here rather than by a client at restore time. It needs no encryption key and the server holds none ([Design](DESIGN.md) Chapter 2.1); it never passes `--repair`, on any code path, so a run cannot modify a repository; and one repository failing does not stop the sweep — the exit status is `1` if any repository did not come back clean.
 
 **Why it matters** — this is the server's half of the integrity model. If the check could write to a repository, a scheduled job would be a standing risk to the thing it exists to protect. If it needed a key, running it at all would break the privacy guarantee. If one corrupt repository aborted the sweep, a single damaged client would blind the operator to the state of every other.
 
@@ -2362,7 +2362,7 @@ diff /tmp/before.sums /tmp/after.sums
 
 **Negative test** — not yet staged. The failing direction is the same run with `--repair` added; it has not been shown that this check's `diff` would then be non-empty on a real deployment.
 
-**What this does not show** — that a *needed* repair is ever performed. It is not, by design — repair stays a deliberate manual operator action ([Operations](OPERATIONS.md)).
+**What this does not show** — that a *needed* repair is ever performed. It is not, by design — repair stays a deliberate manual operator action ([Operations](OPERATIONS.md) Chapter 9.14).
 
 ### 13C — a corrupted segment is reported, and the sweep still completes ⚠️
 
@@ -2472,9 +2472,9 @@ below, and 5.5A's own note on the one sub-case (`unreadable`) no recipe has
 reached.
 
 **Test 13 is not in that count.** Its four checks are ⚠️ — written from
-`scripts/20-check-repos.sh` ([Roadmap](../ROADMAP.md) 11.3) ahead of its first
-verification run, and its negative test (13C, a deliberately corrupted segment)
-is **not yet staged**. A clean test-13 sweep today means the check ran, not that
+`scripts/20-check-repos.sh` ([Operations](OPERATIONS.md) Chapter 9.13) ahead of
+its first verification run, and its negative test (13C, a deliberately corrupted
+segment) is **not yet staged**. A clean test-13 sweep today means the check ran, not that
 it has been shown to catch a bad segment; a deployment cannot yet "fail" test 13
 in the demonstrated sense. This entry moves to ✅ when both directions have been
 exercised against a live deployment.

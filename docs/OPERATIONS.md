@@ -673,6 +673,122 @@ Then confirm from the host:
 
 An unmarked `QUOTA` and `CONFIGURED` for that client is what says the project id survived step 2. That check is verification `5.5A`, and running it here costs nothing.
 
+## 9.13. 20-check-repos.sh — scheduled repository integrity checks
+
+Runs `borg check --repository-only` against each hosted repository, so that on-disk corruption — bit rot, a truncated segment, an inconsistent index — is found here rather than by a client at restore time. This is the operator half of [Design](DESIGN.md) Chapter 3.3; the archive-content half (`borg check --verify-data`) needs the key and stays with the client ([Client Usage](CLIENTUSE.md) Chapter 8).
+
+**It reaches borg through the running container.** `20-check-repos.sh` does `podman exec --user borg <container> borg check --repository-only /repo/<client>`. It therefore runs **on the host**, as the operator (no `sudo` — unlike the snapshot tooling), and needs the container to be up; with the service stopped it exits early having checked nothing. Running the check *as* the `borg` user means any lock file borg creates under the repository is owned like the rest of that repository, not root-in-container.
+
+```bash
+./scripts/20-check-repos.sh              # every client found under HOST_REPO_BASE
+./scripts/20-check-repos.sh <client>     # just that one
+```
+
+Clients are discovered by walking `HOST_REPO_BASE/<client>` on disk, the same way `70-create-snapshot.sh` does — not from `clients.conf` — so a repository present on disk is checked whether or not its roster line is intact.
+
+**Result states**, per repository, on the `[check] <client>: …` line:
+
+| Line | Meaning |
+|---|---|
+| `FULL pass, no problems found` | checked end to end, clean |
+| `PARTIAL pass … next run resumes` | clean *as far as checked* — `CHECK_MAX_DURATION` was reached; the next run resumes from where this one stopped |
+| `failed` + `podman exec … failed` | the exec itself failed (the container stopped mid-sweep); borg did not run for this client |
+| `failed` + `lock could not be taken within …s` | a backup held the repository lock longer than `CHECK_LOCK_WAIT`; **not checked** this run, retried next run |
+| `failed` + `problem with the repository structure` | borg reported real damage — see Chapter 9.14 |
+
+One repository failing does not stop the sweep. The script exits `0` only if every repository came back clean (a clean `PARTIAL` counts), `1` otherwise — the signal the timer's `OnFailure=` or a cron `MAILTO` catches. The central distinction the log draws is **"could not check"** (lock, container down) versus **"checked and found damage"** — different operator responses.
+
+**Tuning knobs** — environment overrides, not `config.sh` entries (kept out for the same reason the snapshot retention knobs are — `config.sh` stays short enough to diff on upgrade):
+
+| Variable | Default | Effect |
+|---|---|---|
+| `CHECK_LOCK_WAIT` | `600` | seconds to wait for the repository lock before giving up — a check firing during a backup waits rather than failing. Does not delay the client, which already holds the lock |
+| `CHECK_MAX_DURATION` | `3600` | seconds per repository per run (`borg check --max-duration`, valid only with `--repository-only`). `0` disables time-boxing — every run is then a full pass, and a large repository may run for hours |
+| `CHECK_NICE` | `19` | `nice(1)` increment for the borg process inside the container |
+
+### The weekly timer — 21-/22-/29-
+
+`21-check-timer-install.sh` installs a rootless **user** timer (`check-repos_<CONTAINER>.timer`, from `scripts/check-repos.timer`) that fires the all-clients sweep **Sunday 05:00**, offset from `snapshot-create.timer`'s daily 03:00. Weekly, not daily: a full check reads about half of each repository, and corruption is slow. `Persistent=true` runs a missed week's check once on the next boot. It needs `loginctl enable-linger $USER` to survive logout — the same requirement the container service already documents ([Deployment](DEPLOYMENT.md) 6.2.3) — and **no sudoers entry**, since it uses `podman exec` rather than any privileged host command.
+
+```bash
+./scripts/21-check-timer-install.sh      # install + enable
+./scripts/29-check-timer-status.sh       # is it scheduled, did the last run come back clean, is the container up
+./scripts/22-check-timer-uninstall.sh    # remove the schedule (repositories and 20- itself untouched)
+systemctl --user start check-repos_<CONTAINER>.service   # run one sweep now, off-schedule
+```
+
+`29-check-timer-status.sh` mirrors `snapshots/79-` — timer scheduled, last service `Result`, and (in place of 79-'s unattended-sudo section) whether the container is up. `99-container-status.sh` calls it at the end of its own report, so one `./scripts/99-container-status.sh` covers the container and the check schedule together. `22-` does not refuse while a run is in progress: `borg check --repository-only` is read-only and releases its lock on exit, so an interrupted sweep leaves nothing half-made.
+
+### Run it by hand after anything that changes a repository
+
+The weekly sweep covers steady-state bit rot. Run `20-check-repos.sh <client>` yourself right after any privileged, mutating operation on a repository — `borg check --repair` (Chapter 9.14), a snapshot restore ([Snapshots](SNAPSHOTS.md)), or manual reclamation — and around an offline export ([Roadmap](../ROADMAP.md) 11.2, once built). Those are the ways a repository changes between scheduled runs.
+
+### Checking a snapshot or an offline copy
+
+`20-check-repos.sh` only sees the live repositories the container has mounted at `/repo`. A storage snapshot (`SNAPSHOT_BASE/…`) or an offline export on removable media is **not** in the container's view. Check one with a throwaway container from the same image:
+
+```bash
+podman run --rm --user borg \
+  --security-opt label=disable \
+  -v <directory>:/repo:ro \
+  <the image from config.sh's IMAGE> \
+  borg check --repository-only --bypass-lock /repo
+```
+
+`--bypass-lock` because a completed snapshot generation is `chattr +i` and borg cannot create its lock directory in it; `--security-opt label=disable` rather than `:Z` because the tree carries the live repository's SELinux MCS label and a `:Z` relabel would lock the real container out of it (the failure `77-restore-last-snapshot.sh`'s header names). It is a read-only, key-less, single-use container; disabling its SELinux confinement for one check is acceptable.
+
+## 9.14. Repairing a repository — by hand
+
+> **A delicate operation with no script, off any schedule, and often two-party.** `borg check --repair` *modifies* the repository — it can rewrite the index and it can **drop damaged chunks**, which silently removes whatever files those chunks belonged to from the affected archives. Reach for it only once `20-check-repos.sh` (or `29-`'s "last run did not come back clean") has reported a structural problem, and read this whole section first: the risky part is not the command, it is deciding repair is the right answer and confirming afterwards what it cost.
+
+**Step 0 — snapshot first.** Freeze the pre-repair state so a repair that makes things worse can be rolled back:
+
+```bash
+./snapshots/70-create-snapshot.sh
+```
+
+If the repair is a mistake, `./snapshots/77-restore-last-snapshot.sh <client>` returns the repository to exactly this point ([Snapshots](SNAPSHOTS.md), [Recovery](RECOVERY.md) Chapter 5).
+
+**Step 1 — stop the scheduled check** so a weekly sweep does not collide with the repair:
+
+```bash
+systemctl --user stop check-repos_<CONTAINER>.timer
+```
+
+**Step 2 — read what borg actually said.** Re-run the read-only check against the one repository and keep its output:
+
+```bash
+podman exec --user borg --env BORG_BASE_DIR=/tmp/borg-check-base <container> \
+  borg check --repository-only /repo/<client>
+```
+
+An index or manifest inconsistency is cheap to rebuild and loses nothing. A message naming corrupted or missing **segments** means chunk data is gone, and repair will remove what referenced it — that is the case where the client has to be involved before you proceed.
+
+**Step 3 — repair, deliberately, against that one repository:**
+
+```bash
+podman exec --user borg --env BORG_BASE_DIR=/tmp/borg-check-base <container> \
+  borg check --repair --repository-only /repo/<client>
+```
+
+Run it against one named repository, never a loop over all of them. `--repair` is an operator action by construction: it is never reachable from a client connection (the wrapper only ever execs `borg serve --append-only`), and `20-check-repos.sh` never passes it.
+
+**Step 4 — confirm, from both sides.** From the host, the structure check must now be clean:
+
+```bash
+./scripts/20-check-repos.sh <client>
+```
+
+From the **client**, whoever holds the key runs `borg check --verify-data` and `borg list` against the repository: only they can confirm whether archive *contents* survived, and which archives lost files to dropped chunks ([Client Usage](CLIENTUSE.md) Chapter 8). A repository that passes Step 4's host check can still have archives that are now short a file — Step 2's segment message is the warning that this is likely.
+
+**Step 5 — re-enable the schedule:**
+
+```bash
+systemctl --user start check-repos_<CONTAINER>.timer
+```
+
+**If repair dropped data the client needs**, this is the same territory as a lost key ([Design](DESIGN.md) Chapter 2.1.1): the server cannot reconstruct it. Recovery is from another copy the client keeps — a client-side offsite copy, or the operator's offline export ([Roadmap](../ROADMAP.md) 11.2) — restored the same way [Recovery](RECOVERY.md) covers.
+
 ---
 
 ---

@@ -6,7 +6,8 @@
 # inside the running container via `podman exec`, so that on-disk corruption
 # (bit rot, a truncated segment, an inconsistent index) is found here rather
 # than discovered by a client at restore time. This is the executable half of
-# [Design](../docs/DESIGN.md) Chapter 3.3 / [Roadmap](../ROADMAP.md) 11.3.
+# [Design](../docs/DESIGN.md) Chapter 3.3, [Operations](../docs/OPERATIONS.md)
+# Chapter 9.13.
 #
 # WHAT THIS CHECKS, AND WHAT IT DELIBERATELY DOES NOT.
 #   - `--repository-only` validates the repository's own structures -- segment
@@ -20,12 +21,12 @@
 #   - `--repair` is NEVER passed here, on any code path. It modifies the
 #     repository and must stay a deliberate, manual operator action -- take a
 #     snapshot first (snapshots/70-create-snapshot.sh), investigate, then
-#     repair on purpose. See docs/OPERATIONS.md.
+#     repair on purpose. See docs/OPERATIONS.md chapter 9.14.
 #
 # LIVE REPOSITORIES ONLY. This checks HOST_REPO_BASE/<client>, the repositories
 # the container has mounted at /repo. It does not touch storage snapshots or an
 # offline export copy -- those live outside what the container can see and are
-# checked with a throwaway container instead (docs/OPERATIONS.md).
+# checked with a throwaway container instead (docs/OPERATIONS.md chapter 9.13).
 #
 # Usage:
 #   ./scripts/20-check-repos.sh              # every client found on disk
@@ -92,7 +93,7 @@
 # If it is not, this script stops with a clear message and does nothing.
 #
 # Must run on the HOST, not inside the container -- see docs/OPERATIONS.md
-# chapter 9.12.
+# chapter 9.13.
 #
 
 set -e
@@ -187,7 +188,7 @@ check_client() {
                         echo "       borg reported a problem with the repository structure --"
                         echo "       this is what this check exists to catch. Do NOT run"
                         echo "       'borg check --repair' blindly: take a snapshot first,"
-                        echo "       investigate, then repair deliberately (docs/OPERATIONS.md)."
+                        echo "       investigate, then repair deliberately (OPERATIONS.md 9.14)."
                         ;;
                 esac
                 ;;

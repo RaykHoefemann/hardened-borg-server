@@ -152,7 +152,7 @@ It is a defense-in-depth option for operators with the means and requirement for
 # 📝 6. Monitoring & Verification (SHOULD)
 
 - Monitor logs in `/log` regularly
-- Run periodic `borg check` integrity validation
+- Keep the weekly repository integrity check enabled: `./scripts/21-check-timer-install.sh`, and `./scripts/29-check-timer-status.sh` (or the tail of `99-container-status.sh`) to confirm the last run came back clean. This is `borg check --repository-only` — repository structure, not archive contents; the deep `borg check --verify-data` is the client's, since it needs the key (OPERATIONS Chapter 9.13, [Client Usage](CLIENTUSE.md) Chapter 8)
 - Audit backup execution behavior
 - Ensure backups are actually being created and not silently failing
 - Verify quota enforcement is active: `ssh borgserver info` must report the client's own limit (e.g. `of 50.0 GiB`), not the size of the whole underlying disk. A whole-disk figure indicates the repository mount is missing enforcing `prjquota` (see README, Chapter 7) — meaning per-client hard limits are not in effect
