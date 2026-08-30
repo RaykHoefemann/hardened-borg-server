@@ -239,6 +239,12 @@ TAB="$(printf '\t')"
 set_size()    { printf '%s\t%s\t%s\n' "$HRB/$1" 1 "$2" >> "$DF_DATA"; }              # <client> <used-KiB>
 set_noquota() { printf '%s\t%s\t%s\n' "$HRB/$1" 1000000000 500 >> "$DF_DATA"; }      # col2 == volume col2 -> "no project quota"
 CHECKLOG="";  # set per new_check_tree
+# lib.sh quota_short, mirrored so seeded lines carry field 4 in the same shape
+# the script writes (human-readable, space-free). Nothing reads field 4 back.
+_qshort() { awk -v k="$1" 'BEGIN{
+    if (k>=1048576) printf "%.1fGiB", k/1048576;
+    else if (k>=1024) printf "%.1fMiB", k/1024;
+    else printf "%dKiB", k; }'; }
 seed_hist() {  # seed_hist <days-ago> <client> <du-KiB> <ok|partial|fail>
     mkdir -p "$LOGDIR"
     local ep; ep="$(( $(date +%s) - $1 * 86400 ))"
@@ -246,7 +252,8 @@ seed_hist() {  # seed_hist <days-ago> <client> <du-KiB> <ok|partial|fail>
     # back, so seeded lines carry a literal "-"; the real value is asserted
     # against lines the script itself appends.
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$ep" "$(date -u -d "@$ep" +%Y-%m-%dT%H:%M:%SZ)" "$2" "$3" 0 "$4" - >> "$LOGDIR/check-repos.history"
+        "$ep" "$(date -u -d "@$ep" +%Y-%m-%dT%H:%M:%SZ)" "$2" "$(_qshort "$3")" 0 "$4" - \
+        >> "$LOGDIR/check-repos.history"
 }
 checked_order() { grep -oE '/repo/[A-Za-z0-9_-]+' "$PODMAN_LOG" | sed 's|/repo/||'; }
 
@@ -443,11 +450,13 @@ unset CHECK_MIN_AGE_DAYS
 
 new_check_tree; reset_env
 mkclient c1
+set_size c1 80487
 run "$T/scripts/20-check-repos.sh"
 LINE="$(tail -1 "$LOGDIR/check-repos.history")"
 { [ "$(printf '%s' "$LINE" | awk -F'\t' '{print NF}')" -eq 7 ] \
-  && printf '%s' "$LINE" | awk -F'\t' '$1 ~ /^[0-9]+$/ && $6 == "ok" && $7 == "-" {ok=1} END{exit !ok}'; }
-assert "20.22 the log line is 7 tab-separated fields: numeric epoch ... result, days-since-prev '-' on a first check" $?
+  && printf '%s' "$LINE" | awk -F'\t' '$1 ~ /^[0-9]+$/ && $6 == "ok" && $7 == "-" {ok=1} END{exit !ok}' \
+  && [ "$(printf '%s' "$LINE" | cut -f4)" = "78.6MiB" ]; }
+assert "20.22 the log line is 7 tab-separated fields: epoch ... human-readable size ... result, days-since-prev '-' on a first check" $?
 
 new_check_tree; reset_env
 mkclient c1

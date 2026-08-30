@@ -2334,7 +2334,7 @@ The **self-balancing scheduler** (the no-argument mode: `check-repos.history`, t
 
 | Case | Invariant |
 |---|---|
-| 20.22 / 20.22b / 20.22c | history field 7 (`days-since-prev`) is `-` on a client's first check, else whole days to its own previous check, **rounded to nearest** (`2d23h` → `3`). |
+| 20.22 / 20.22b / 20.22c | history field 4 is the repo size human-readable and space-free (`78.6MiB`); field 7 (`days-since-prev`) is `-` on a client's first check, else whole days to its own previous check, **rounded to nearest** (`2d23h` → `3`). |
 | 20.30 / 20.30b | a pre-upgrade **6-field** history line still drives the `CHECK_STALE_DAYS` warning, and field 7 is still computed when the client's previous line has only 6 fields (no migration step). |
 | 20.31 | a recent `partial` counts for scheduling **order** (the repository is no longer "oldest") but not for the `CHECK_STALE_DAYS` clock — that stays measured from the last *full* pass. |
 | 20.32 / 20.33 | field 7 counts the client's previous line whatever its verdict (`fail` included), and is computed **per client**, not against the file's previous line. |

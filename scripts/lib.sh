@@ -98,6 +98,15 @@ quota_human() {
         else printf "%d KiB", k; }'
 }
 
+# Same, without the space -- for a field inside a tab-separated record, where a
+# space would let a naive whitespace split truncate the unit.
+quota_short() {
+    awk -v k="$1" 'BEGIN{
+        if (k>=1048576) printf "%.1fGiB", k/1048576;
+        else if (k>=1024) printf "%.1fMiB", k/1024;
+        else printf "%dKiB", k; }'
+}
+
 # Hard limit currently enforced on directory $1, in KiB (empty if unreadable).
 quota_enforced_kib() { df -kP "$1" 2>/dev/null | awk 'NR==2{print $2}'; }
 

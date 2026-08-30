@@ -29,10 +29,12 @@
 #       repositories not reached this run are simply the oldest next run.
 #
 # STATE -- one append-only history file, HOST_LOG_BASE/check-repos.history, tab-separated:
-#       <epoch>  <iso8601-utc>  <client>  <du-KiB>  <duration-s>  <ok|partial|fail>  <days-since-prev>
-#   Field 7 is this client's gap to its own previous check, in whole days,
-#   rounded to nearest ((now - prev + 43200) / 86400); `-` on the client's first
-#   ever check. It is written for the eye only -- nothing reads it back.
+#       <epoch>  <iso8601-utc>  <client>  <repo-size>  <duration-s>  <ok|partial|fail>  <days-since-prev>
+#   Field 4 is the repository size at check time, human-readable and space-free
+#   (`78.6MiB`, `9.1GiB`, `512KiB`). Field 7 is this client's gap to its own
+#   previous check, in whole days, rounded to nearest
+#   ((now - prev + 43200) / 86400); `-` on the client's first ever check.
+#   Fields 4 and 7 are written for the eye only -- nothing reads them back.
 #   A repository's "last checked" for ordering is its most recent `ok` OR
 #   `partial` line; its "last full check" (for the CHECK_STALE_DAYS warning) is
 #   its most recent `ok` line. No line ever = never checked = first in line.
@@ -287,7 +289,7 @@ check_and_time() {
 
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$_cat_end" "$_cat_now" "$_cat_user" \
-        "$_cat_dukib" "$_cat_dur" "$_cat_tok" "$_cat_prevage" >> "$CHECK_HISTORY"
+        "$(quota_short "${_cat_dukib:-0}")" "$_cat_dur" "$_cat_tok" "$_cat_prevage" >> "$CHECK_HISTORY"
 
     # Per-client status for the info channel (DESIGN 2.4): one file per client,
     # containing ONLY this client, so borg-wrapper.sh can read it in the

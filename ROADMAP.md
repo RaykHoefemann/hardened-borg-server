@@ -112,7 +112,7 @@ Verification: [Verification](docs/VERIFICATION.md) section 13 (13E); the `info` 
 
 The scheduler is built (`b13221d`), tested (`tests/check-repos-scripts.sh`), and
 documented in [Operations](docs/OPERATIONS.md) Chapter 9.13. In brief: an
-append-only `HOST_LOG_BASE/check-repos.history` (`<epoch> <iso> <client> <du-KiB>
+append-only `HOST_LOG_BASE/check-repos.history` (`<epoch> <iso> <client> <repo-size>
 <duration-s> <ok|partial|fail> <days-since-prev>`); a daily timer; per run, order the
 repositories never-checked-then-oldest, check the first unconditionally, then
 work down the order checking whatever fits `total_size / CHECK_CYCLE_DIVISOR`
