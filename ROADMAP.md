@@ -77,7 +77,7 @@ Open, to settle at implementation:
 
 > **Shipped and verified.** `scripts/20-check-repos.sh` — the read-only `borg
 > check --repository-only` sweep and its daily **self-balancing scheduler**
-> (append-only `check-repos.log`, oldest-first within a `total /
+> (append-only `check-repos.history`, oldest-first within a `total /
 > CHECK_CYCLE_DIVISOR` budget, `29-`'s coverage report). Both exercised on the
 > FCOS bench 2026-08-30 against borg 1.2.8 and 1.4.0 ([Verification](docs/VERIFICATION.md)
 > section 13). Design and operation: [Design](docs/DESIGN.md) Chapter 3.3,
@@ -118,14 +118,14 @@ Plumbing note: `info` is rendered once at container start (`build_authorized_key
 
 The scheduler is built (`b13221d`), tested (`tests/check-repos-scripts.sh`), and
 documented in [Operations](docs/OPERATIONS.md) Chapter 9.13. In brief: an
-append-only `HOST_LOG_BASE/check-repos.log` (`<epoch> <iso> <client> <du-KiB>
+append-only `HOST_LOG_BASE/check-repos.history` (`<epoch> <iso> <client> <du-KiB>
 <duration-s> <ok|partial|fail>`); a daily timer; per run, order the
 repositories never-checked-then-oldest, check the first unconditionally, then
 work down the order checking whatever fits `total_size / CHECK_CYCLE_DIVISOR`
 (default 6), skipping oversized entries; `29-check-timer-status.sh` reports the
 coverage (oldest full-check age vs `CHECK_STALE_DAYS`, awaiting-first-check
 count, per-repo overruns of `CHECK_MAX_RUNTIME`). A `<client>` argument still
-checks that one repository unconditionally and still writes the log line.
+checks that one repository unconditionally and still appends its history line.
 Exercised on the FCOS bench 2026-08-30 ([Verification](docs/VERIFICATION.md)
 section 13).
 

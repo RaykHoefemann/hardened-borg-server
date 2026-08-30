@@ -29,14 +29,14 @@ SERVICE_NAME="${CHECK_TIMER_NAME}.service"
 
 # Same knobs and log 20-check-repos.sh uses, so the coverage section below does
 # the same budget / staleness arithmetic.
-CHECK_LOG="${HOST_LOG_BASE}/check-repos.log"
+CHECK_HISTORY="${HOST_LOG_BASE}/check-repos.history"
 CHECK_CYCLE_DIVISOR="${CHECK_CYCLE_DIVISOR:-6}"
 CHECK_STALE_DAYS="${CHECK_STALE_DAYS:-9}"
 CHECK_MAX_RUNTIME="${CHECK_MAX_RUNTIME:-3600}"
 
 # _flog <client>  ->  "<last-any-epoch> <last-full-epoch> <last-duration-s>"
 _flog() {
-    [ -f "$CHECK_LOG" ] || { echo "0 0 0"; return; }
+    [ -f "$CHECK_HISTORY" ] || { echo "0 0 0"; return; }
     awk -F'	' -v c="$1" '
         $3 == c {
             if ($1 + 0 > any)   any = $1 + 0
@@ -44,7 +44,7 @@ _flog() {
             if ($1 + 0 >= lastep) { lastep = $1 + 0; dur = $5 + 0 }
         }
         END { printf "%d %d %d\n", any, full, dur }
-    ' "$CHECK_LOG" 2>/dev/null
+    ' "$CHECK_HISTORY" 2>/dev/null
 }
 
 echo "------------------------------------------------------------"
@@ -164,17 +164,17 @@ fi
 
 echo
 echo "------------------------------------------------------------"
-echo "[status] Coverage (check-repos.log)"
+echo "[status] Coverage (from check-repos.history)"
 echo "------------------------------------------------------------"
 
 # What the self-balancing sweep has actually got through: the per-repository
-# "last full check" ages from HOST_LOG_BASE/check-repos.log, against
+# "last full check" ages from HOST_LOG_BASE/check-repos.history, against
 # CHECK_STALE_DAYS and the daily budget. A repository never fully checked is
 # "awaiting its first check" (first in line), not stale; one whose last full
 # check is older than CHECK_STALE_DAYS means the sweep is behind.
 COV_OK=1
-if [ ! -f "$CHECK_LOG" ]; then
-    echo "Log:         $CHECK_LOG — none yet. The sweep has not run."
+if [ ! -f "$CHECK_HISTORY" ]; then
+    echo "History:     $CHECK_HISTORY — none yet. The sweep has not run."
     COV_OK=""
 else
     NOW="$(date +%s)"

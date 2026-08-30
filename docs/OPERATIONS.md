@@ -701,7 +701,7 @@ One repository failing does not stop the sweep. A `<client>` run exits with that
 
 ### The self-balancing sweep (no argument)
 
-A `borg check` of a 100 GB repository on a USB spinning disk is ~20 min (~100 MB/s at best, longer under contention or without UASP), and a deployment can hold many repositories. So the no-argument sweep does not check everything every run. It keeps an **append-only log**, `HOST_LOG_BASE/check-repos.log` — one tab-separated line per check, `<epoch> <iso> <client> <du-KiB> <duration-s> <ok|partial|fail>` — and each run:
+A `borg check` of a 100 GB repository on a USB spinning disk is ~20 min (~100 MB/s at best, longer under contention or without UASP), and a deployment can hold many repositories. So the no-argument sweep does not check everything every run. It keeps an **append-only history file**, `HOST_LOG_BASE/check-repos.history` — one tab-separated line per check, `<epoch> <iso> <client> <du-KiB> <duration-s> <ok|partial|fail>` — and each run:
 
 1. reads every repository's size from its enforcing XFS project quota (`df`, no `sudo`), sums it, and sets `budget = total / CHECK_CYCLE_DIVISOR` (default 6);
 2. orders the repositories **never-checked first, then oldest full check first**;
@@ -710,7 +710,7 @@ A `borg check` of a 100 GB repository on a USB spinning disk is ~20 min (~100 MB
 
 A repository not reached this run is simply the oldest next run, so a failed run, a new repository, or a slow store all self-correct. With `7 × budget ≥ total` per week the cycle settles at ~6 days. There is **no hard deadline**: `CHECK_STALE_DAYS` is a warning (in the summary and in `29-check-timer-status.sh`) and makes a sweep exit non-zero, not a scheduling override. A repository whose last check took longer than `CHECK_MAX_RUNTIME` cannot complete in one run on this store — `29-` names it and points at `CHECK_MAX_DURATION` for that one repository, or a snapshot-based check.
 
-A `<client>` run is different: it checks that repository **unconditionally** — regardless of age, not bounded by the budget or `CHECK_MAX_RUNTIME` — and still writes the log line, so a manual check counts and the next sweep will not immediately re-check it. Use it by hand and after Chapter 9.14.
+A `<client>` run is different: it checks that repository **unconditionally** — regardless of age, not bounded by the budget or `CHECK_MAX_RUNTIME` — and still appends its `check-repos.history` line, so a manual check counts and the next sweep will not immediately re-check it. Use it by hand and after Chapter 9.14.
 
 **Tuning knobs** — environment overrides, not `config.sh` entries (so that file stays short enough to diff on upgrade):
 
@@ -731,11 +731,11 @@ A `<client>` run is different: it checks that repository **unconditionally** —
 ```bash
 ./scripts/21-check-timer-install.sh      # install + enable
 ./scripts/29-check-timer-status.sh       # scheduled? last run clean? container up? coverage current?
-./scripts/22-check-timer-uninstall.sh    # remove the schedule (repositories, 20- and the log untouched)
+./scripts/22-check-timer-uninstall.sh    # remove the schedule (repositories, 20- and check-repos.history untouched)
 systemctl --user start check-repos_<CONTAINER>.service   # run one sweep now, off-schedule
 ```
 
-`29-check-timer-status.sh` reports the timer schedule, the last service `Result`, whether the container is up, and a **Coverage** section from `check-repos.log`: repository count and total size, the daily budget, the oldest full-check age against `CHECK_STALE_DAYS`, how many are awaiting a first check, and any repository whose last check overran `CHECK_MAX_RUNTIME`. `99-container-status.sh` calls it at the end of its own report. `22-` does not refuse while a run is in progress: `borg check --repository-only` is read-only and releases its lock on exit.
+`29-check-timer-status.sh` reports the timer schedule, the last service `Result`, whether the container is up, and a **Coverage** section from `check-repos.history`: repository count and total size, the daily budget, the oldest full-check age against `CHECK_STALE_DAYS`, how many are awaiting a first check, and any repository whose last check overran `CHECK_MAX_RUNTIME`. `99-container-status.sh` calls it at the end of its own report. `22-` does not refuse while a run is in progress: `borg check --repository-only` is read-only and releases its lock on exit.
 
 **If one daily run cannot keep up** — `29-` shows the oldest full check drifting past `CHECK_STALE_DAYS`, or the cycle stretching — lower `CHECK_CYCLE_DIVISOR` (bigger budget per run), add a second daily timer at a different hour, or move the one or two biggest repositories to their own schedule (a `check-repos_<CONTAINER>-big.timer` running `20-check-repos.sh <that-client>`).
 

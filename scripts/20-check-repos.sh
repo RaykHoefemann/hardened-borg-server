@@ -14,7 +14,7 @@
 #       last checked, not bounded by any budget or CHECK_MAX_RUNTIME. The form
 #       to use by hand, and after any mutating operation (`borg compact`, `borg
 #       check --repair`, a snapshot restore -- Operations 9.14). It still writes
-#       the log line below, so a manual check counts toward the schedule and the
+#       its history line below, so a manual check counts toward the schedule and the
 #       next timer run will not re-check that repository straight away.
 #
 #   ./scripts/20-check-repos.sh            (no argument -- what the timer runs)
@@ -28,7 +28,7 @@
 #       fails partway, a new repository, or a slow store all self-correct: the
 #       repositories not reached this run are simply the oldest next run.
 #
-# STATE -- one append-only log, HOST_LOG_BASE/check-repos.log, tab-separated:
+# STATE -- one append-only history file, HOST_LOG_BASE/check-repos.history, tab-separated:
 #       <epoch>  <iso8601-utc>  <client>  <du-KiB>  <duration-s>  <ok|partial|fail>
 #   A repository's "last checked" for ordering is its most recent `ok` OR
 #   `partial` line; its "last full check" (for the CHECK_STALE_DAYS warning) is
@@ -140,7 +140,7 @@ if [ "$CHECK_CYCLE_DIVISOR" -lt 1 ]; then
     exit 1
 fi
 
-CHECK_LOG="${HOST_LOG_BASE}/check-repos.log"
+CHECK_HISTORY="${HOST_LOG_BASE}/check-repos.history"
 
 # check_client <username>
 #
@@ -233,7 +233,7 @@ check_client() {
 
 # check_and_time <client-dir> [du-KiB]
 #
-# Timing/counting wrapper around one check_client call, plus the log line.
+# Timing/counting wrapper around one check_client call, plus the check-repos.history line.
 # TOTAL and FAILED are the script's own globals. If du-KiB is omitted it is
 # read from the quota.
 check_and_time() {
@@ -261,7 +261,7 @@ check_and_time() {
     esac
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$_cat_end" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_cat_user" \
-        "$_cat_dukib" "$_cat_dur" "$_cat_tok" >> "$CHECK_LOG"
+        "$_cat_dukib" "$_cat_dur" "$_cat_tok" >> "$CHECK_HISTORY"
 }
 
 # repo_used_kib <client>
@@ -288,7 +288,7 @@ repo_epochs() {
     _re_u="$1"
     _re_any=0
     _re_full=0
-    if [ -f "$CHECK_LOG" ]; then
+    if [ -f "$CHECK_HISTORY" ]; then
         while IFS="$TAB" read -r _re_ep _re_iso _re_cl _re_du _re_dur _re_res; do
             [ "$_re_cl" = "$_re_u" ] || continue
             case "$_re_ep" in ''|*[!0-9]*) continue ;; esac
@@ -301,7 +301,7 @@ repo_epochs() {
                     [ "$_re_ep" -gt "$_re_any" ] && _re_any="$_re_ep"
                     ;;
             esac
-        done < "$CHECK_LOG"
+        done < "$CHECK_HISTORY"
     fi
     echo "$_re_any $_re_full"
 }
