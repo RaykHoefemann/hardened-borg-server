@@ -311,7 +311,7 @@ Cryptographic tags (3.1) catch corruption *when data is read*. To catch on-disk 
 
 It is bounded by the same trust split as privacy:
 
-- **Repository-structure checks run server-side, without a key.** `borg check --repository-only` validates the repository's own structures — segment files, their hashes, index/manifest consistency — and decrypts nothing. This is the class of damage the server is positioned to detect, and where scheduled server-side checking adds value.
+- **Repository-structure checks run server-side, without a key.** `borg check --repository-only` validates the repository's own structures — segment files, their hashes, index/manifest consistency — and decrypts nothing. This is the class of damage the server is positioned to detect, and where scheduled server-side checking adds value. (borg's `--max-duration`, which time-boxes a check across multiple runs, is deliberately *not* used by default: a time-boxed check skips the index-consistency part and only ever verifies segment checksums. It is an opt-in for repositories too large to check in one sitting — [Operations](OPERATIONS.md) Chapter 9.13.)
 - **Archive-content verification stays client-side.** `borg check --verify-data`, and the archive-consistency half of a full check, re-read chunk contents and need the repository key — which by design never exists on the server (Chapter 2.1). Deep verification is the responsibility of whoever holds the key ([Client Usage](CLIENTUSE.md) Chapter 8); the server cannot, and must not be able to, perform it.
 
 Two properties from Chapters 1 and 2 constrain how it runs, and both hold:

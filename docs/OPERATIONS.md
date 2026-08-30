@@ -688,10 +688,12 @@ Clients are discovered by walking `HOST_REPO_BASE/<client>` on disk, the same wa
 
 **Result states**, per repository, on the `[check] <client>: …` line:
 
+borg is invoked with `-v`: without it borg prints nothing on a clean check (verified against borg 1.2.8 and 1.4.0), which would leave a `--max-duration` partial run indistinguishable from a full pass. With `-v` it always ends on `Finished full repository check, …` or `Finished partial repository check, …`, and those lines land in the log as the evidence behind the verdict.
+
 | Line | Meaning |
 |---|---|
-| `FULL pass, no problems found` | checked end to end, clean |
-| `PARTIAL pass … next run resumes` | clean *as far as checked* — `CHECK_MAX_DURATION` was reached; the next run resumes from where this one stopped |
+| `FULL pass, no problems found` | segment checksums **and** the repository index checked, clean |
+| `PARTIAL pass (time-boxed …)` | only possible with `CHECK_MAX_DURATION` set: segment checksums checked as far as the budget allowed, **index check skipped**; the next run resumes where this stopped |
 | `failed` + `podman exec … failed` | the exec itself failed (the container stopped mid-sweep); borg did not run for this client |
 | `failed` + `lock could not be taken within …s` | a backup held the repository lock longer than `CHECK_LOCK_WAIT`; **not checked** this run, retried next run |
 | `failed` + `problem with the repository structure` | borg reported real damage — see Chapter 9.14 |
@@ -703,7 +705,7 @@ One repository failing does not stop the sweep. The script exits `0` only if eve
 | Variable | Default | Effect |
 |---|---|---|
 | `CHECK_LOCK_WAIT` | `600` | seconds to wait for the repository lock before giving up — a check firing during a backup waits rather than failing. Does not delay the client, which already holds the lock |
-| `CHECK_MAX_DURATION` | `3600` | seconds per repository per run (`borg check --max-duration`, valid only with `--repository-only`). `0` disables time-boxing — every run is then a full pass, and a large repository may run for hours |
+| `CHECK_MAX_DURATION` | `0` (off) | when > 0, passed as `borg check --max-duration SECONDS`. **Opt-in, and a weaker check:** borg's manual — a partial check "can only perform non-cryptographic checksum checks on the segment files" and **skips the repository index check**, so it never reports a full pass. borg recommends it "with very large repositories only" where a full weekly check would not finish. Leave it off unless a real repository is genuinely too large to check in one sitting |
 | `CHECK_NICE` | `19` | `nice(1)` increment for the borg process inside the container |
 
 ### The weekly timer — 21-/22-/29-
@@ -767,11 +769,14 @@ An index or manifest inconsistency is cheap to rebuild and loses nothing. A mess
 **Step 3 — repair, deliberately, against that one repository:**
 
 ```bash
-podman exec --user borg --env BORG_BASE_DIR=/tmp/borg-check-base <container> \
+podman exec --user borg \
+  --env BORG_BASE_DIR=/tmp/borg-check-base \
+  --env BORG_CHECK_I_KNOW_WHAT_I_AM_DOING=YES \
+  <container> \
   borg check --repair --repository-only /repo/<client>
 ```
 
-Run it against one named repository, never a loop over all of them. `--repair` is an operator action by construction: it is never reachable from a client connection (the wrapper only ever execs `borg serve --append-only`), and `20-check-repos.sh` never passes it.
+`--repair` prompts interactively for a literal `YES`, and `podman exec` gives it no terminal to answer on — `BORG_CHECK_I_KNOW_WHAT_I_AM_DOING=YES` is that answer, and typing it into the command *is* the deliberate confirmation. Run it against one named repository, never a loop over all of them. `--repair` is an operator action by construction: it is never reachable from a client connection (the wrapper only ever execs `borg serve --append-only`), and `20-check-repos.sh` never passes it.
 
 **Step 4 — confirm, from both sides.** From the host, the structure check must now be clean:
 
@@ -779,7 +784,7 @@ Run it against one named repository, never a loop over all of them. `--repair` i
 ./scripts/20-check-repos.sh <client>
 ```
 
-From the **client**, whoever holds the key runs `borg check --verify-data` and `borg list` against the repository: only they can confirm whether archive *contents* survived, and which archives lost files to dropped chunks ([Client Usage](CLIENTUSE.md) Chapter 8). A repository that passes Step 4's host check can still have archives that are now short a file — Step 2's segment message is the warning that this is likely.
+From the **client**, whoever holds the key runs `borg check --verify-data` and `borg list` against the repository: only they can confirm whether archive *contents* survived, and which archives lost files to dropped chunks ([Client Usage](CLIENTUSE.md) Chapter 8). This step is not optional after a segment repair: on the VM, a repair that made `20-check-repos.sh` report a clean `FULL pass` still left `borg check --verify-data` on the client reporting `New missing file chunk detected … Replacing with all-zero chunk` in two archives. Step 2's segment message is the warning that this is coming.
 
 **Step 5 — re-enable the schedule:**
 

@@ -55,16 +55,20 @@
 # failing outright. This does not delay the client: the client already holds
 # the lock and proceeds normally; only this check waits.
 #
-# CHECK_MAX_DURATION (default 3600, 0 disables). Passed as `borg check
-# --max-duration` (valid only together with `--repository-only`). It time-boxes
-# each repository per run: when the budget runs out borg stops cleanly, records
-# how far it got, and the NEXT run resumes from there. A large repository is
-# therefore covered over several runs and a single run never grows into the
-# backup window. The cost: one run of a large repository is a slice, not a full
-# pass -- the per-client line says PARTIAL vs FULL. That label is best-effort,
-# read from borg's own output, whose exact wording is version-dependent
-# (confirmed against the shipped borg in docs/VERIFICATION.md); a missed label
-# only mis-prints a partial pass as FULL, it does not affect the exit status.
+# CHECK_MAX_DURATION (default 0 = off). When > 0 it is passed as `borg check
+# --max-duration SECONDS`, which time-boxes each repository per run and resumes
+# from where it stopped on the next run. **This is opt-in, and it is a weaker
+# check.** borg's own manual (verified against borg 1.4.0 on the VM): a check
+# run with `--max-duration` "can only perform non-cryptographic checksum checks
+# on the segment files" and *skips the repository index check* -- so it never
+# reports a "full" pass, only "partial", on every run. It exists for
+# repositories so large that a full weekly check would not finish; borg
+# recommends it "with very large repositories only". Leave it at 0 unless a
+# real repository is too big to check in one sitting, and know that turning it
+# on trades the index/manifest consistency check for bounded runtime. The
+# per-client line reads FULL (index check done) or PARTIAL (index check
+# skipped), from borg's own summary line -- `20-` passes `-v` so that line is
+# always emitted.
 #
 # CHECK_NICE (default 19). nice(1) increment for the borg process inside the
 # container -- a pure fairness knob, never needs privilege. `ionice` is
@@ -102,7 +106,7 @@ set -e
 
 # --- Tuning knobs (environment overrides, see the header) -------------------
 CHECK_LOCK_WAIT="${CHECK_LOCK_WAIT:-600}"
-CHECK_MAX_DURATION="${CHECK_MAX_DURATION:-3600}"
+CHECK_MAX_DURATION="${CHECK_MAX_DURATION:-0}"
 CHECK_NICE="${CHECK_NICE:-19}"
 
 for _kv in "CHECK_LOCK_WAIT=$CHECK_LOCK_WAIT" "CHECK_MAX_DURATION=$CHECK_MAX_DURATION" "CHECK_NICE=$CHECK_NICE"; do
@@ -142,7 +146,7 @@ check_client() {
     _cc_rc=0
     _cc_out=""
 
-    echo "[check] ${_cc_username}: borg check --repository-only ${_cc_repo}"
+    echo "[check] ${_cc_username}: borg check -v --repository-only ${_cc_repo}"
 
     # BORG_BASE_DIR points borg's config/cache/security dirs at the container's
     # /tmp tmpfs: the image root filesystem is read-only
@@ -152,14 +156,24 @@ check_client() {
     # --repository-only does not decrypt anything, so it must not need one; if a
     # future borg somehow asks, the prompt hits EOF and the check fails loudly
     # here rather than hanging.
+    #
+    # `-v` is load-bearing, not cosmetic. Without it borg prints NOTHING on a
+    # clean check (verified against borg 1.2.8 and 1.4.0) -- so a run cut short
+    # by --max-duration is indistinguishable from a full pass, and this script
+    # would label a partial check "FULL pass". With -v, borg 1.2.8/1.4.0 always
+    # end with one of:
+    #   Finished full repository check, no problems found.
+    #   Finished partial repository check, no problems found.
+    #   Finished full repository check, errors found.
+    # which is what the classification below keys on.
     if [ "$CHECK_MAX_DURATION" -gt 0 ]; then
         _cc_out="$(podman exec --user borg --env BORG_BASE_DIR=/tmp/borg-check-base "$CONTAINER" \
-            nice -n "$CHECK_NICE" borg check --repository-only \
+            nice -n "$CHECK_NICE" borg check -v --repository-only \
             --lock-wait "$CHECK_LOCK_WAIT" --max-duration "$CHECK_MAX_DURATION" \
             "$_cc_repo" 2>&1)" || _cc_rc=$?
     else
         _cc_out="$(podman exec --user borg --env BORG_BASE_DIR=/tmp/borg-check-base "$CONTAINER" \
-            nice -n "$CHECK_NICE" borg check --repository-only \
+            nice -n "$CHECK_NICE" borg check -v --repository-only \
             --lock-wait "$CHECK_LOCK_WAIT" \
             "$_cc_repo" 2>&1)" || _cc_rc=$?
     fi
@@ -196,12 +210,23 @@ check_client() {
         return 1
     fi
 
+    # borg 1.2.8 / 1.4.0 with -v end a clean check with exactly one of these
+    # (verified on the VM, borg 1.2.8 and 1.4.0):
+    #   "Finished partial repository check, no problems found."  -> --max-duration hit
+    #   "Finished full repository check, no problems found."      -> whole repo checked
     case "$_cc_out" in
-        *[Pp]"artial repository check"*|*"will be continued"*|*"resume"*)
-            echo "[check] ${_cc_username}: PARTIAL pass (time-boxed at ${CHECK_MAX_DURATION}s); next run resumes."
+        *"partial repository check"*)
+            echo "[check] ${_cc_username}: PARTIAL pass (time-boxed at ${CHECK_MAX_DURATION}s) -- borg resumes from here next run."
+            ;;
+        *"full repository check, no problems found"*)
+            echo "[check] ${_cc_username}: FULL pass, no problems found."
             ;;
         *)
-            echo "[check] ${_cc_username}: FULL pass, no problems found."
+            # rc 0 but neither summary line present: an unrecognised borg
+            # version or a future wording change. Report it passed, but say the
+            # coverage label is a guess rather than print a confident "FULL" --
+            # a wrong criterion has to stay visible (VERIFICATION section 13).
+            echo "[check] ${_cc_username}: passed (exit 0), but borg's summary line was not recognised -- see its output above for whether the whole repository was checked."
             ;;
     esac
     return 0

@@ -2324,11 +2324,13 @@ ls /var/mnt/extern1/.snapshots/BorgTestB/
 
 **Why it matters** — this is the server's half of the integrity model. If the check could write to a repository, a scheduled job would be a standing risk to the thing it exists to protect. If it needed a key, running it at all would break the privacy guarantee. If one corrupt repository aborted the sweep, a single damaged client would blind the operator to the state of every other.
 
-Four checks, all against a disposable client from [Test Environment](TESTENV.md), with at least one other client present. 13A confirms the check completes with no key on the server; 13B confirms a run leaves a healthy repository's stored data byte-for-byte unchanged; 13C is the negative test — a deliberately corrupted segment, and whether the check reports it *and* still finishes the sweep; 13D confirms the borg process runs as the unprivileged container user.
+Four checks, staged on the FCOS bench 2026-08-30 against two disposable clients — `bc1` populated from a **borg 1.2.8** client (Linux Mint), `bc2` from a **borg 1.4.0** client (Debian), the server image's own borg being 1.4.0. 13A: the check completes with no key on the server. 13B: a run leaves a healthy repository's stored data byte-for-byte unchanged. 13C: a deliberately corrupted segment is reported *and* the sweep still finishes. 13D: the borg process runs as the unprivileged container user.
 
-The weekly systemd timer that drives it unattended (`scripts/21-check-timer-install.sh`, `scripts/check-repos.timer`) is not exercised by any check here — the same way test 11 verifies the snapshot scripts but not `snapshots/71-`'s timer.
+`20-check-repos.sh` runs `borg check -v --repository-only`. The `-v` is load-bearing: without it borg 1.2.8 and 1.4.0 both print **nothing** on a clean check, so a `--max-duration` partial run would be indistinguishable from a full pass. With `-v`, borg ends on `Finished full repository check, …` (segment checksums **and** the repository index checked) or `Finished partial repository check, …` (segments only — `--max-duration` skips the index check, which is why `CHECK_MAX_DURATION` defaults to off; [Operations](OPERATIONS.md) Chapter 9.13).
 
-### 13A — the check runs and passes with no key on the server ⚠️
+The weekly systemd timer that drives it unattended (`scripts/21-check-timer-install.sh`, `scripts/check-repos.timer`) is covered by `tests/check-repos-scripts.sh` in CI, not by a check here — the same way test 11 verifies the snapshot scripts but not `snapshots/71-`'s timer. A manual install/run/uninstall of it (`21-`/`29-`/`22-`) was exercised in the same 2026-08-30 bench session.
+
+### 13A — the check runs and passes with no key on the server (✅)
 
 **Run**
 
@@ -2337,15 +2339,17 @@ The weekly systemd timer that drives it unattended (`scripts/21-check-timer-inst
 ./scripts/20-check-repos.sh <client>
 ```
 
-**Pass** — the client's line reads `FULL pass, no problems found` (or `PARTIAL pass … next run resumes`, if `CHECK_MAX_DURATION` was reached), the summary reads `1/1 repositories came back clean`, and the script exits `0`. borg was never prompted for a passphrase.
+**Pass** — the client's line reads `FULL pass, no problems found`, the summary reads `N/N repositories came back clean`, and the script exits `0`. borg is never prompted for a passphrase and the run does not hang.
 
 **Fail** — a passphrase prompt, a hang, or an error naming a missing key means `--repository-only` is reaching key-bound archive metadata it should not touch. A non-zero exit with no corruption present means the check cannot pass against a correct deployment.
 
-**Negative test** — not yet staged, and likely *cappable* rather than stageable: the failing direction is a borg whose `--repository-only` path consults the key, which the shipped borg cannot be made to do.
+**Negative test** — *capped*, not stageable: the failing direction is a borg whose `--repository-only` path consults the key, which the shipped borg cannot be made to do.
+
+> Verified 2026-08-30 (`FCOS-BorgBackupServer`, image `@sha256:bdd01e62…`): `20-check-repos.sh` swept `bc1` (borg 1.2.8 repo) and `bc2` (borg 1.4.0 repo) with no `BORG_PASSPHRASE` in the environment and no keyfile anywhere under `HOST_REPO_BASE` — both `FULL pass, no problems found.`, `2/2 repositories came back clean`, exit `0`. borg's own `-v` lines (`Starting repository check` … `Starting repository index check` … `Index object count match.` … `Finished full repository check, no problems found.`) appeared indented in the output.
 
 **What this does not show** — that the check would *notice* corruption; that is 13C. A pass here only means it ran and read the repository clean.
 
-### 13B — a run does not modify a healthy repository ⚠️
+### 13B — a run does not modify a healthy repository ✅
 
 **Run**
 
@@ -2360,45 +2364,49 @@ diff /tmp/before.sums /tmp/after.sums
 
 **Fail** — any difference in the `data/` segment hashes means the check is writing to the repository. Re-read `scripts/20-check-repos.sh` for a stray `--repair`.
 
-**Negative test** — not yet staged. The failing direction is the same run with `--repair` added; it has not been shown that this check's `diff` would then be non-empty on a real deployment.
+**Negative test** — staged 2026-08-30: `borg check --repair --repository-only` was run against the same repository (Chapter 9.14 procedure) after 13C's corruption. It *did* rewrite the repository — `20-check-repos.sh` then reported a clean `FULL pass`, but the client's `borg check --verify-data` reported `New missing file chunk detected … Replacing with all-zero chunk` in two archives. `--repair` changes the repository; the read-only check the timer runs does not.
+
+> Verified 2026-08-30: `sha256sum` over every file under `bc1/data/` was identical before and after `./scripts/20-check-repos.sh bc1`. During the run, `bc1/lock.exclusive/` existed and was removed by the time the script returned.
 
 **What this does not show** — that a *needed* repair is ever performed. It is not, by design — repair stays a deliberate manual operator action ([Operations](OPERATIONS.md) Chapter 9.14).
 
-### 13C — a corrupted segment is reported, and the sweep still completes ⚠️
+### 13C — a corrupted segment is reported, and the sweep still completes ✅
 
 **This check has a stake in it.** It deliberately corrupts a repository. Run it only against a disposable client from [Test Environment](TESTENV.md) whose loss you can afford, never one holding backups you rely on.
 
-**Run** — intended procedure (see **Negative test**):
+**Run** — against a disposable client, with at least one other client present:
 
 ```bash
-SEG=$(sudo find /var/mnt/extern1/borg-server/<client>/data -type f | sort | tail -1)
-sudo dd if=/dev/urandom of="$SEG" bs=1 count=16 seek=1024 conv=notrunc   # flip 16 bytes mid-segment
-./scripts/20-check-repos.sh                                              # full sweep, every client
+# the LARGEST segment: the small trailing segments are commit markers with
+# nothing borg re-checksums, so flipping a byte there is not noticed
+SEG=$(sudo find /var/mnt/extern1/borg-server/<client>/data -type f -printf '%s\t%p\n' | sort -n | tail -1 | cut -f2)
+sudo dd if=/dev/urandom of="$SEG" bs=1 count=128 seek=2048 conv=notrunc status=none
+./scripts/20-check-repos.sh          # full sweep, every client
 ```
 
-**Pass** — the corrupted client's line reads `failed`, borg's own error (naming the bad segment / a chunk-integrity or index mismatch) is shown indented beneath it, the sweep continues to every *other* client — each reading `ok` — and the script exits `1` with `… repositories need attention`.
+**Pass** — the corrupted client's line reads `failed`, borg's own error is shown indented beneath it (`Data integrity error: Segment entry checksum mismatch [segment N, offset M]`, then `Index object count mismatch.`, then `Finished full repository check, errors found.`), the script's `ERROR: … problem with the repository structure … OPERATIONS.md 9.14` guidance follows, the sweep continues to every *other* client — each reading `ok` — and the script exits `1` with `1 repositories need attention`.
 
 **Fail** — the corrupted client reads `ok` (the check did not notice the damage), **or** the sweep stops at the corrupted client and never reaches the others (one bad repository blinds the operator to the rest).
 
-**Negative test** — this check *is* the feature's negative test, and it is **not yet staged**: no run has corrupted a real segment on a real deployment and confirmed `20-check-repos.sh` both reports it and finishes the sweep. The `dd` line above is the proposed way to stage it, not a recipe that has been executed. Until it has, read a clean sweep as "the check ran", not "the check discriminates".
+**Negative test** — this check *is* the feature's negative test. Staged 2026-08-30 (`FCOS-BorgBackupServer`): 128 bytes overwritten at offset 2048 of `bc1`'s largest segment (`data/0/2`); `./scripts/20-check-repos.sh` reported `bc1: failed` with borg's `Segment entry checksum mismatch` error indented, continued to `bc2: FULL pass`, printed `1/2 repositories came back clean` / `1 repositories need attention`, and exited `1`. A first attempt that flipped a byte in a 17-byte trailing segment was *not* caught — hence the "largest segment" targeting above.
 
 **What this does not show** — that the damage is *recoverable*. Detection is this project's job; a second copy that makes detected corruption also recoverable is the operator's storage design and a client-side offsite copy ([Design](DESIGN.md) Chapter 3.5).
 
-### 13D — borg runs as the unprivileged container user ⚠️
+### 13D — borg runs as the unprivileged container user ✅
 
 **Run**
 
 ```bash
-grep -n 'podman exec' scripts/20-check-repos.sh          # must carry --user borg
-# then, while a run is in progress, from another shell:
-sudo ls -lan /var/mnt/extern1/borg-server/<client>/lock.exclusive 2>/dev/null
+grep -n 'podman exec' scripts/20-check-repos.sh                    # must carry --user borg
+podman exec --user borg <container> id                            # uid=1111(borg)
+sudo stat -c '%u:%g' /var/mnt/extern1/borg-server/<client>/config  # the repo's own mapped-subuid owner
 ```
 
-**Pass** — the script invokes `podman exec --user borg`, and any `lock.exclusive` present mid-run is owned by the same uid as the repository's own segment files (the mapped `borg` subuid), not by the host operator's uid or the container's root map.
+**Pass** — the script invokes `podman exec --user borg`; borg inside the container is uid 1111, which maps to the same host uid the repository's own files carry.
 
-**Fail** — `--user borg` absent, or a lock/temporary file owned by a uid that differs from the rest of the repository: borg is running with the wrong identity and can leave files the container itself cannot manage.
+**Fail** — `--user borg` absent, or the mapped uid differs from the rest of the repository: borg is running with the wrong identity and can leave files the container itself cannot manage.
 
-**Negative test** — not yet staged. The failing direction is `podman exec` without `--user`; the ownership difference it produces has not been observed on a real deployment.
+**Negative test** — staged 2026-08-30: `podman exec` *without* `--user` runs as container-root (uid 0), and a file it created under `/repo/<client>` was owned `1000:1000` (the host operator `core`) — a different uid than the repository's own files (`525398:525398`). `--user borg` is what keeps borg's writes owned like the rest of the repository.
 
 **What this does not show** — that the operator user itself is unprivileged (test 4C) or that the container is rootless (4A/4B). This is only that the check does not run borg as a different, more privileged identity than the repository's own.
 
@@ -2452,10 +2460,10 @@ check itself has been shown to discriminate — and **Your run** is yours to tic
 | 12E | A client cannot name a path that resolves into the other instance | ✅ | ☐ |
 | 12F | Each instance's snapshot tree contains only its own clients | ✅ | ☐ |
 | 12G | The per-instance operator scripts act only on their own instance | ✅ | ☐ |
-| 13A | The check runs and passes with no key on the server | ⚠️ | ☐ |
-| 13B | A run does not modify a healthy repository | ⚠️ | ☐ |
-| 13C | A corrupted segment is reported, and the sweep still completes | ⚠️ | ☐ |
-| 13D | borg runs as the unprivileged container user | ⚠️ | ☐ |
+| 13A | The check runs and passes with no key on the server | (✅) | ☐ |
+| 13B | A run does not modify a healthy repository | ✅ | ☐ |
+| 13C | A corrupted segment is reported, and the sweep still completes | ✅ | ☐ |
+| 13D | borg runs as the unprivileged container user | ✅ | ☐ |
 
 Thirty-eight ✅ and two `(✅)` out of the forty checks in tests 0–12 — every one
 of those has had both directions demonstrated against a live deployment except
@@ -2471,13 +2479,15 @@ plain ✅ later. That does not make the page complete — see
 below, and 5.5A's own note on the one sub-case (`unreadable`) no recipe has
 reached.
 
-**Test 13 is not in that count.** Its four checks are ⚠️ — written from
-`scripts/20-check-repos.sh` ([Operations](OPERATIONS.md) Chapter 9.13) ahead of
-its first verification run, and its negative test (13C, a deliberately corrupted
-segment) is **not yet staged**. A clean test-13 sweep today means the check ran, not that
-it has been shown to catch a bad segment; a deployment cannot yet "fail" test 13
-in the demonstrated sense. This entry moves to ✅ when both directions have been
-exercised against a live deployment.
+**Test 13** (`scripts/20-check-repos.sh`, [Operations](OPERATIONS.md) Chapter
+9.13) was staged on the FCOS bench 2026-08-30 against borg 1.2.8 and borg 1.4.0
+client repositories: 13B/13C/13D in both directions — 13C's corrupted segment
+reported while the sweep completed and exited 1; 13D's `--user borg` (uid maps to
+the repo's own owner) vs container-root (files owned by the operator instead);
+13B's read-only run vs a `--repair` that did rewrite the repository. 13A is
+*capped* like 0A/12C: a `--repository-only` check that consults the key cannot be
+produced. Not in the "forty checks" count above only because it post-dates that
+paragraph.
 
 A deployment that fails **0A** has not been verified at all — the remaining
 results describe an artifact of unknown origin, and **0B** is what keeps that

@@ -89,13 +89,19 @@ else
     EXIT_STATUS="$(service_prop ExecMainStatus)"
 
     echo "Service:     ${SERVICE_NAME}"
-    # Result, not the Exec* timestamps, is the "has this run at all" signal: a
-    # run started by the timer's own Persistent=true catch-up leaves
-    # ExecMainStartTimestamp/ExecMainExitTimestamp empty even though Result and
-    # ExecMainStatus are populated -- the same quirk snapshots/79- documents
-    # against a real deployment. The timestamps are still printed when present.
-    if [ -z "$RESULT" ]; then
+    # "Has this run at all?" cannot be read from Result alone: systemd reports
+    # Result=success / ExecMainStatus=0 for a oneshot service that has been
+    # loaded (21-check-timer-install.sh's daemon-reload + enable) but never
+    # executed -- verified on the VM, 2026-08-30. What separates "never ran"
+    # from "a Persistent=true catch-up ran" (which also leaves ExecMain*
+    # timestamps empty) is the TIMER's LastTriggerUSec: 0/empty until the timer
+    # has actually fired once. snapshots/79- keys on Result alone and has the
+    # same latent gap; worth syncing there in a follow-up.
+    if [ -z "$RESULT" ] || { [ "$RESULT" = "success" ] && [ -z "$STARTED" ] && { [ -z "${LAST:-}" ] || [ "${LAST:-0}" = "0" ]; }; }; then
         echo "Last run:    never (no run recorded yet for this installation)"
+        echo "→ The timer is scheduled but has not fired yet. Run one now to confirm"
+        echo "  it works: systemctl --user start ${SERVICE_NAME}"
+        RUN_OK=""
     else
         echo "Result:      ${RESULT}$( [ -n "$EXIT_STATUS" ] && echo " (exit status ${EXIT_STATUS})" )"
         [ -n "$STARTED" ] && echo "Started:     ${STARTED}"

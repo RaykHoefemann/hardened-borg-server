@@ -76,16 +76,18 @@ mkclient() { mkdir -p "$HRB/$1"; echo "payload for $1" > "$HRB/$1/config"; }
 STUB="$WORK/stubs"
 mkdir -p "$STUB"
 
-# `podman exec ... borg check --repository-only [--max-duration N] /repo/<c>`
+# `podman exec ... borg check -v --repository-only [--max-duration N] /repo/<c>`
 # The full command line is logged to $PODMAN_LOG so a test can assert which
-# repositories were reached and whether --max-duration was passed. The
+# repositories were reached and whether -v / --max-duration were passed. The
 # outcome per client is $BORG_STATE_DIR/<client> if present, else $BORG_RESULT,
-# else "full":
-#   full     -> "Finished full repository check, no problems found."   rc 0
-#   partial  -> "... partial repository check ..."                     rc 0
-#   damage   -> an integrity error                                     rc 2
-#   lock     -> "Failed to create/acquire the lock"                    rc 2
-#   execfail -> podman exec itself fails                               rc 125
+# else "full". The success/partial/damage wording is borg 1.2.8 / 1.4.0's own,
+# captured on the VM (see the header):
+#   full     -> "Finished full repository check, no problems found."     rc 0
+#   partial  -> "Finished partial repository check, no problems found."  rc 0
+#   damage   -> "Data integrity error: ..." + "... errors found."        rc 1
+#   lock     -> "Failed to create/acquire the lock"                      rc 2
+#   execfail -> podman exec itself fails                                 rc 125
+#   quiet    -> rc 0 with no recognised summary line (unknown borg)      rc 0
 cat > "$STUB/podman" <<'EOF'
 #!/bin/sh
 echo "podman $*" >> "${PODMAN_LOG:-/dev/null}"
@@ -98,23 +100,27 @@ state="${BORG_RESULT:-full}"
 case "$state" in
     full)
         echo "Starting repository check"
+        echo "finished segment check at segment 9"
         echo "Finished full repository check, no problems found."
         exit 0 ;;
     partial)
         echo "Starting repository check"
-        echo "Finished partial repository check, first segment checked is 3, last is 41."
+        echo "finished partial segment check, last segment checked is 15"
+        echo "Finished partial repository check, no problems found."
         exit 0 ;;
     damage)
-        echo "Starting repository check"
-        echo "Index mismatch for key b'...'. wanted (1, 2), got (3, 4)"
-        echo "Data integrity error: Object id ... not found."
-        exit 2 ;;
+        echo "Data integrity error: Segment entry checksum mismatch [segment 2, offset 8]"
+        echo "Index object count mismatch."
+        echo "Finished full repository check, errors found."
+        exit 1 ;;
     lock)
         echo "Failed to create/acquire the lock /repo/... (timeout)." >&2
         exit 2 ;;
     execfail)
         echo "Error: can only create exec sessions on running containers" >&2
         exit 125 ;;
+    quiet)
+        exit 0 ;;
     *) exit 0 ;;
 esac
 EOF
@@ -284,9 +290,11 @@ assert "20.8 a failed 'podman exec' (container gone mid-sweep) is its own messag
 new_check_tree; reset_env
 mkclient client1
 set_borg client1 partial
+export CHECK_MAX_DURATION=3600
 run "$T/scripts/20-check-repos.sh"
 { [ "$RC" -eq 0 ] && [[ "$OUT" == *"client1: PARTIAL pass"* ]] && [[ "$OUT" == *"1/1 repositories came back clean"* ]]; }
-assert "20.9 a time-boxed partial pass counts as clean, is labelled PARTIAL" $?
+assert "20.9 with --max-duration on, a partial check counts as clean and is labelled PARTIAL" $?
+unset CHECK_MAX_DURATION
 
 new_check_tree; reset_env
 mkclient client1
@@ -298,8 +306,29 @@ assert "20.10 a single-client run checks only that client" $?
 new_check_tree; reset_env
 mkclient client1
 run "$T/scripts/20-check-repos.sh"
-grep -q -- "--max-duration 3600" "$PODMAN_LOG"
-assert "20.11 the default CHECK_MAX_DURATION is passed to borg check" $?
+{ [ "$RC" -eq 0 ] && ! grep -q -- "--max-duration" "$PODMAN_LOG" && [[ "$OUT" == *"FULL pass"* ]]; }
+assert "20.11 by default no --max-duration -- a full check (segments + index)" $?
+
+new_check_tree; reset_env
+mkclient client1
+export CHECK_MAX_DURATION=7200
+run "$T/scripts/20-check-repos.sh"
+grep -q -- "--max-duration 7200" "$PODMAN_LOG"
+assert "20.11a an explicit CHECK_MAX_DURATION is passed through to borg check" $?
+unset CHECK_MAX_DURATION
+
+new_check_tree; reset_env
+mkclient client1
+run "$T/scripts/20-check-repos.sh"
+grep -q -- "borg check -v --repository-only" "$PODMAN_LOG"
+assert "20.11b borg check is run with -v (so the full/partial summary line is emitted)" $?
+
+new_check_tree; reset_env
+mkclient client1
+set_borg client1 quiet
+run "$T/scripts/20-check-repos.sh"
+{ [ "$RC" -eq 0 ] && [[ "$OUT" == *"summary line was not recognised"* ]] && [[ "$OUT" != *"FULL pass"* ]]; }
+assert "20.11c rc 0 with no recognised summary line is passed, but not labelled FULL" $?
 
 new_check_tree; reset_env
 mkclient client1
@@ -401,12 +430,24 @@ run "$T/scripts/29-check-timer-status.sh"
 { [ "$RC" -eq 0 ] && [[ "$OUT" == *"not installed for this user"* ]] && [[ "$OUT" == *"NOT fully functional"* ]]; }
 assert "29.1 nothing installed is reported as not installed, not functional" $?
 
+# A fired timer + a clean last run. LastTriggerUSec on the timer is what says
+# the timer has actually fired -- without it, systemd's default Result=success
+# on a never-run oneshot would read as a clean run (VM finding, 2026-08-30).
+TRIGGERED='LastTriggerUSec=1756900000000000'
+
 new_check_tree; reset_env
-seed_unit "$TIMER_NAME" "LoadState=loaded" "UnitFileState=alias" "ActiveState=active" "SubState=waiting"
-seed_unit "$SERVICE_NAME" "LoadState=loaded" "ActiveState=inactive" "SubState=dead" "Result=success" "ExecMainStatus=0"
+seed_unit "$TIMER_NAME" "LoadState=loaded" "UnitFileState=alias" "ActiveState=active" "SubState=waiting" "$TRIGGERED"
+seed_unit "$SERVICE_NAME" "LoadState=loaded" "ActiveState=inactive" "SubState=dead" "Result=success" "ExecMainStatus=0" "ExecMainStartTimestamp=Sat 2026-08-30"
 run "$T/scripts/29-check-timer-status.sh"
 { [ "$RC" -eq 0 ] && [[ "$OUT" == *"Functional: scheduled, last run came back clean, container is up."* ]]; }
 assert "29.2 scheduled + last run clean + container up -- fully functional" $?
+
+new_check_tree; reset_env
+seed_unit "$TIMER_NAME" "LoadState=loaded" "UnitFileState=alias" "ActiveState=active" "SubState=waiting"
+seed_unit "$SERVICE_NAME" "LoadState=loaded" "Result=success" "ExecMainStatus=0"
+run "$T/scripts/29-check-timer-status.sh"
+{ [ "$RC" -eq 0 ] && [[ "$OUT" == *"Last run:    never"* ]] && [[ "$OUT" == *"NOT fully functional"* ]]; }
+assert "29.2b a freshly installed timer that never fired reads 'never', not a clean run" $?
 
 new_check_tree; reset_env
 seed_unit "$TIMER_NAME" "LoadState=loaded" "UnitFileState=alias" "ActiveState=active" "SubState=waiting"
@@ -430,19 +471,22 @@ run "$T/scripts/29-check-timer-status.sh"
 assert "29.5 a failed last run is reported, not just 'ran'" $?
 
 new_check_tree; reset_env
-seed_unit "$TIMER_NAME" "LoadState=loaded" "UnitFileState=alias" "ActiveState=active" "SubState=waiting"
-seed_unit "$SERVICE_NAME" "LoadState=loaded" "Result=success"
+seed_unit "$TIMER_NAME" "LoadState=loaded" "UnitFileState=alias" "ActiveState=active" "SubState=waiting" "$TRIGGERED"
+seed_unit "$SERVICE_NAME" "LoadState=loaded" "Result=success" "ExecMainStartTimestamp=Sat 2026-08-30"
 seed_unit "$CONTAINER_UNIT" "LoadState=loaded" "ActiveState=inactive"
 run "$T/scripts/29-check-timer-status.sh"
 { [ "$RC" -eq 0 ] && [[ "$OUT" == *"is NOT active"* ]] && [[ "$OUT" == *"NOT fully functional"* ]]; }
 assert "29.6 a scheduled, clean-last-run timer is still NOT functional if the container is down" $?
 
 new_check_tree; reset_env
-seed_unit "$TIMER_NAME" "LoadState=loaded" "UnitFileState=alias" "ActiveState=active" "SubState=waiting"
+# A Persistent=true catch-up run: the timer fired (LastTriggerUSec set) and the
+# service ran, but ExecMain* timestamps are left empty -- must still count as a
+# real run, not "never".
+seed_unit "$TIMER_NAME" "LoadState=loaded" "UnitFileState=alias" "ActiveState=active" "SubState=waiting" "$TRIGGERED"
 seed_unit "$SERVICE_NAME" "LoadState=loaded" "Result=success"
 run "$T/scripts/29-check-timer-status.sh"
-{ [ "$RC" -eq 0 ] && [[ "$OUT" != *"never (no run recorded"* ]] && [[ "$OUT" != *"DID NOT COME BACK CLEAN"* ]]; }
-assert "29.7 a Persistent=true catch-up run (Result set, no Exec* timestamps) still counts as clean" $?
+{ [ "$RC" -eq 0 ] && [[ "$OUT" != *"Last run:    never"* ]] && [[ "$OUT" != *"DID NOT COME BACK CLEAN"* ]]; }
+assert "29.7 a Persistent=true catch-up run (timer fired, no Exec* timestamps) still counts as clean" $?
 
 # ============================================================================
 echo ""
