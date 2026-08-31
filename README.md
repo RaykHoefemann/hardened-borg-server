@@ -72,6 +72,12 @@ a recommendation:
 
 This project intentionally targets a narrow deployment model. If your environment doesn't match these requirements, another Borg-based solution will likely be a better fit.
 
+The guarantees above also depend on work outside the server. Because encryption
+keys never reach it, verifying archive integrity (`borg check --verify-data`)
+and restore-testing are the **client's** to run at sensible intervals — the
+server structurally cannot. [Design](docs/DESIGN.md) Chapter 4.2 collects
+everything the operator and the client must each do for the guarantees to hold.
+
 ### Supported BorgBackup versions: 1.x only
 
 > **BorgBackup 2.x is NOT supported. Do not use a Borg 2 client against this
@@ -148,8 +154,8 @@ end to end. [Deployment](docs/DEPLOYMENT.md) covers the architecture, the
 
 New here and evaluating? Read this page, then
 [Design & Threat Model](docs/DESIGN.md) — start with its Chapter 4, which
-states in one place what this project does, what it leaves to you, and what it
-cannot do at all. Want to try it before committing hardware? [Test Environment](docs/TESTENV.md)
+states in one place what this project does, what it leaves to the operator and
+the client, and what it cannot do at all. Want to try it before committing hardware? [Test Environment](docs/TESTENV.md)
 gets you to a working setup on a single throwaway VM. Ready to run it for real?
 Follow [Server Installation](docs/SERVERINSTALL.md) end to end, then hand
 [Client Usage](docs/CLIENTUSE.md) to whoever is being backed up.

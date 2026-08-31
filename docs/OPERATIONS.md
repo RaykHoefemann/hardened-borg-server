@@ -743,7 +743,7 @@ systemctl --user start check-repos_<CONTAINER>.service   # run one sweep now, of
 
 ### Run it by hand after anything that changes a repository
 
-The weekly sweep covers steady-state bit rot. Run `20-check-repos.sh <client>` yourself right after any privileged, mutating operation on a repository — `borg check --repair` (Chapter 9.14), a snapshot restore ([Snapshots](SNAPSHOTS.md)), or manual reclamation — and around an offline export ([Roadmap](../ROADMAP.md) 11.2, once built). Those are the ways a repository changes between scheduled runs.
+The sweep covers steady-state bit rot — each repository within about a week, nine days at the latest. Run `20-check-repos.sh <client>` yourself right after any privileged, mutating operation on a repository — `borg check --repair` (Chapter 9.14), a snapshot restore ([Snapshots](SNAPSHOTS.md)), or manual reclamation — and around an offline export ([Roadmap](../ROADMAP.md) 11.2, once built). Those are the ways a repository changes between scheduled runs.
 
 ### Checking a snapshot or an offline copy
 
@@ -771,7 +771,7 @@ podman run --rm --user borg \
 
 If the repair is a mistake, `./snapshots/77-restore-last-snapshot.sh <client>` returns the repository to exactly this point ([Snapshots](SNAPSHOTS.md), [Recovery](RECOVERY.md) Chapter 5).
 
-**Step 1 — stop the scheduled check** so a weekly sweep does not collide with the repair:
+**Step 1 — stop the scheduled check** so a scheduled sweep does not collide with the repair:
 
 ```bash
 systemctl --user stop check-repos_<CONTAINER>.timer

@@ -313,7 +313,7 @@ Cryptographic tags (3.1) catch corruption *when data is read*. To catch on-disk 
 It is bounded by the same trust split as privacy:
 
 - **Repository-structure checks run server-side, without a key.** `borg check --repository-only` validates the repository's own structures — segment files, their hashes, index/manifest consistency — and decrypts nothing. This is the class of damage the server is positioned to detect, and where scheduled server-side checking adds value. (borg's `--max-duration`, which time-boxes a check across multiple runs, is deliberately *not* used by default: a time-boxed check skips the index-consistency part and only ever verifies segment checksums. It is an opt-in for repositories too large to check in one sitting — [Operations](OPERATIONS.md) Chapter 9.13.)
-- **Archive-content verification stays client-side.** `borg check --verify-data`, and the archive-consistency half of a full check, re-read chunk contents and need the repository key — which by design never exists on the server (Chapter 2.1). Deep verification is the responsibility of whoever holds the key ([Client Usage](CLIENTUSE.md) Chapter 8); the server cannot, and must not be able to, perform it.
+- **Archive-content verification stays client-side.** `borg check --verify-data`, and the archive-consistency half of a full check, re-read chunk contents and need the repository key — which by design never exists on the server (Chapter 2.1). Deep verification, and restore-testing, are the responsibility of whoever holds the key — the client (Chapter 4.2, [Client Usage](CLIENTUSE.md) Chapter 8); the server cannot, and must not be able to, perform them.
 
 Two properties from Chapters 1 and 2 constrain how it runs, and both hold:
 
@@ -337,7 +337,7 @@ As with the host security layer (Chapter 1.1), some parts of integrity live belo
 
 # 4. Scope & Residual Risk
 
-Chapters 1–3 describe what this project does and why. This chapter states, in one place, **what it does not do** — what it hands to the operator, what is not built yet, and what can never be solved here at all.
+Chapters 1–3 describe what this project does and why. This chapter states, in one place, **what it does not do** — what it hands to the operator and the client, what is not built yet, and what can never be solved here at all.
 
 It exists because those boundaries are otherwise scattered across five documents, and scattered honesty reads like hidden honesty. An evaluator should be able to see the full picture without assembling it. Where a property is verifiable, the relevant test in [Verification](VERIFICATION.md) is named — nothing in the first table should be taken on trust.
 
@@ -354,13 +354,17 @@ It exists because those boundaries are otherwise scattered across five documents
 | Undetected modification of stored data | Borg per-chunk authentication tags, verified on read (3.1) | — |
 | Password guessing, credential reuse | Key-only SSH; passwords and root login disabled (1.2.1) | Test 1.5 |
 | Operator error or host-side software destroys a repository's files | Point-in-time reflink snapshots of `HOST_REPO_BASE`, client-scoped restore ([Snapshots](SNAPSHOTS.md)) | Test 11 |
-| Silent on-disk corruption of a stored repository | Scheduled `borg check --repository-only`, weekly (3.3) | Test 13 |
+| Silent on-disk corruption of a stored repository | Scheduled `borg check --repository-only` — daily budgeted sweep, every repository re-checked within ~9 days (3.3) | Test 13 |
 
 The residual risk across every row but the last two is the same single point: those properties depend on the client's key being bound to the forced command. One `authorized_keys` line without it voids all of them simultaneously, and nothing else in the system would look wrong. That is why Test 3 exists. The snapshot and integrity-check rows are the exceptions — both are host-side tooling that answers accident and non-malicious host-side damage rather than a client acting against the server, and both depend on the storage volume being intact rather than on the key binding (Tests 11 and 13).
 
-## 4.2. Handed to the operator
+## 4.2. Handed to the operator and the client
 
-This project provides **no host-level security whatsoever** (1.1). These are not shared responsibilities — they are entirely yours, and the application's guarantees inherit their weaknesses:
+The guarantees in 4.1 are the project's own. They only hold up if two parties outside it each do their part: the **operator**, who runs the host, and the **client**, who holds the key. Neither list below is a set of shared responsibilities — each item is wholly the named party's, and the application's guarantees inherit whatever is left undone.
+
+### The operator
+
+This project provides **no host-level security whatsoever** (1.1). The application's guarantees inherit the weaknesses of whatever the operator leaves undone here:
 
 | Concern | Who handles it |
 |---|---|
@@ -369,6 +373,22 @@ This project provides **no host-level security whatsoever** (1.1). These are not
 | Storage capacity over time | Quota sizing and monitoring — operator ([Operations](OPERATIONS.md) 10) |
 | Backing up the server's own configuration | Operator ([Operations](OPERATIONS.md) 7.5) |
 | Network exposure of the SSH port | Optional firewall/VPN; the application is designed to be safely exposed without one (1.1.3) |
+| Keeping the scheduled repository-structure check running | Enable and monitor the `borg check --repository-only` timer (3.3, [Operations](OPERATIONS.md) 9.13) |
+
+### The client
+
+Client-held keyfile encryption (2.1) puts the key on the client — and with it every check that needs the key. The server is *structurally* unable to do the items below: it holds no key, by design, and that absence is what makes a server compromise survivable (2.1.1). No operator action substitutes for them either.
+
+| Concern | What the client must do |
+|---|---|
+| Key and passphrase custody | Export the key offline, store it separately from the machine it protects, and test the copy — a lost key or passphrase is unrecoverable (2.1.1, [Client Usage](CLIENTUSE.md) Chapter 3.2) |
+| Integrity of its own archives | Run `borg check --verify-data` at sensible intervals — it re-reads every chunk and re-checks its authentication tag, which needs the key; the server cannot, and must not be able to (3.3, [Client Usage](CLIENTUSE.md) Chapter 8) |
+| Recoverability in practice | Restore-test at sensible intervals — extract real files and compare them against the originals. A backup never restored is a hypothesis ([Client Usage](CLIENTUSE.md) Chapter 8, [Best Practices](BEST_PRACTICES.md) Chapter 7) |
+| Backups actually running | Watch the client-side timer; a backup job that fails silently leaves nothing to restore ([Client Usage](CLIENTUSE.md) Chapter 5) |
+| Watching the `info` channel | Check `ssh borgserver info` regularly — the `Last Repo Structure Check` result (a `(fail)` means contact the operator), the enforced quota figure, and which server version is deployed (2.4, [Client Usage](CLIENTUSE.md) Chapters 2 and 6) |
+| Storage headroom | Watch quota usage and act before the ceiling — a timer firing against a full quota strands space it cannot reclaim ([Client Usage](CLIENTUSE.md) Chapter 6, [Operations](OPERATIONS.md) 10.4) |
+| An offsite copy | Keep an independent copy off this server — it holds no key of the client's and does not replicate (Chapter 4.6, [Client Usage](CLIENTUSE.md) Chapter 9) |
+| First-connection trust | Verify the server's host-key fingerprint out of band on the first connection ([Client Usage](CLIENTUSE.md) Chapter 1) |
 
 ## 4.3. Not built yet
 
@@ -394,9 +414,9 @@ Not gaps, and not roadmap items. These follow from the design and would require 
 
 ## 4.5. How to read this chapter
 
-If you are evaluating whether to run this: 4.1 is what you get, 4.2 is what you must build yourself, 4.3 is what you must plan around, and 4.4 is what you must accept.
+If you are evaluating whether to run this: 4.1 is what you get, 4.2 is what the operator and the client must each do for 4.1 to hold, 4.3 is what you must plan around, and 4.4 is what you must accept.
 
-A deployment that satisfies 4.1 but not 4.2 is not secure — the application layer alone was never sufficient (1.3). A deployment that satisfies both is hardened, and still loses everything to a failed disk or a lost site unless a copy is kept off this server — which, per 4.4, is the client's to keep, since this server does not replicate.
+A deployment that satisfies 4.1 but not 4.2 is not secure — the application layer alone was never sufficient (1.3). And 4.2 has two sides: an unmet client duty — an untested key, a backup job that has been failing unwatched, archives never verified with the key the server does not hold — defeats a guarantee just as completely as an unhardened host does. A deployment that satisfies both sides is hardened, and still loses everything to a failed disk or a lost site unless a copy is kept off this server — which, per 4.4, is the client's to keep, since this server does not replicate.
 
 ## 4.6. Deliberately not built
 

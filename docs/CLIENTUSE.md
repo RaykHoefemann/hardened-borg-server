@@ -29,6 +29,15 @@ the one that selects your backup key.
 > server holds no key and no escrow, by design. Chapter 3 is not optional
 > reading.
 
+> **What is yours to do:** key custody is the first of several things this
+> setup leaves entirely to you — verifying your own archives with `borg check
+> --verify-data`, restore-testing at sensible intervals, watching that backups
+> actually complete, watching the `info` channel, keeping an offsite copy. The
+> server cannot stand in for the key-dependent ones: it holds no key, by
+> design. All of them are collected in one place in
+> [Design](DESIGN.md) Chapter 4.2 ("Handed to the operator and the client");
+> the chapters below are the how-to for each.
+
 ---
 
 ## 1. Prepare the client
@@ -424,12 +433,16 @@ key material is ever sent to the server or to your operator.
 
 A backup you have never restored is a hypothesis.
 
+Both checks below are yours to run. They sit in the client column of the
+responsibilities split ([Design](DESIGN.md) Chapter 4.2), and the server is
+structurally unable to stand in for either — it holds no key.
+
 **Restore-test on a schedule**, not on suspicion. Extract a few real files
 into a scratch directory and compare them against the originals. Do it often
 enough that the procedure is familiar before you need it under pressure
 ([Best Practices](BEST_PRACTICES.md) Chapter 7).
 
-**Verify archive contents periodically** — and note that only you can:
+**Verify archive contents at sensible intervals** — and note that only you can:
 
 ```bash
 borg check --verify-data ::
@@ -555,5 +568,6 @@ configuration can change without telling you.
 | Repository initialized with the wrong encryption mode | Operator clears the directory; you re-initialize — and lose what was in it (Chapter 3.1) |
 | Interrupted `borg init` — `DENY: no repository segments found` | Operator clears the directory; you re-initialize, losing nothing (Chapter 3.1) |
 | `DENY: repository directory missing – needs operator action` | **Operator only**, and they have a script for it. Your repository directory is not on the server; nothing you retry will change that, and the server will not create one on its own — doing so would leave you with no storage quota at all. Report the message. What the repair restores is your *access*: whatever was in the repository went with the directory, so you will be initializing a fresh one (Chapter 3.1) |
-| Verifying archive contents | **Only you** — the server has no key |
+| Verifying archive contents (`borg check --verify-data`) | **Only you** — the server has no key (Chapter 8) |
+| Restore-testing your backups | **Only you** — extract and compare on a schedule; the server has no key and cannot (Chapter 8) |
 | An offsite copy against site loss or a server compromise | **Only you** — the server keeps no copy elsewhere and does not replicate (Chapter 9) |

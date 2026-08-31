@@ -152,7 +152,7 @@ It is a defense-in-depth option for operators with the means and requirement for
 # 📝 6. Monitoring & Verification (SHOULD)
 
 - Monitor logs in `/log` regularly
-- Keep the weekly repository integrity check enabled: `./scripts/21-check-timer-install.sh`, and `./scripts/29-check-timer-status.sh` (or the tail of `99-container-status.sh`) to confirm the last run came back clean. This is `borg check --repository-only` — repository structure, not archive contents; the deep `borg check --verify-data` is the client's, since it needs the key (OPERATIONS Chapter 9.13, [Client Usage](CLIENTUSE.md) Chapter 8)
+- Keep the scheduled repository integrity check enabled: `./scripts/21-check-timer-install.sh`, and `./scripts/29-check-timer-status.sh` (or the tail of `99-container-status.sh`) to confirm the last run came back clean. This is `borg check --repository-only` — repository structure, not archive contents; the deep `borg check --verify-data` is the client's, since it needs the key (OPERATIONS Chapter 9.13, [Client Usage](CLIENTUSE.md) Chapter 8)
 - Audit backup execution behavior
 - Ensure backups are actually being created and not silently failing
 - Verify quota enforcement is active: `ssh borgserver info` must report the client's own limit (e.g. `of 50.0 GiB`), not the size of the whole underlying disk. A whole-disk figure indicates the repository mount is missing enforcing `prjquota` (see README, Chapter 7) — meaning per-client hard limits are not in effect
@@ -160,11 +160,26 @@ It is a defense-in-depth option for operators with the means and requirement for
 
 ---
 
-# 🧪 7. Restore Testing (SHOULD — CRITICAL)
+# 🧪 7. Restore Testing & Integrity Verification (SHOULD — CRITICAL)
 
-- Regular restore tests MUST be performed
-- Backups are only valid if restoration works
-- Test recovery under realistic conditions
+A backup is only valid if restoration works, and only trustworthy if its
+contents have been verified. Both are done on a schedule, not on suspicion —
+and the split follows the key:
+
+- **Client-held data — the client's responsibility.** Only the client holds
+  the repository key, so only the client can run `borg check --verify-data`
+  (re-reads every chunk and re-checks its authentication tag) or restore-test
+  its own archives (extract real files, compare against the originals). The
+  server cannot do either and must not be able to — it holds no key, by
+  design. This is the client column of the responsibilities split
+  ([Design](DESIGN.md) Chapter 4.2); the how-to is [Client Usage](CLIENTUSE.md)
+  Chapter 8. Hand that chapter to every client and make the interval explicit.
+- **Host-side recovery paths — the operator's responsibility.** Rehearse a
+  snapshot restore (Chapter 9, [Verification](VERIFICATION.md) Test 11) and, if
+  an offline export is kept, a restore from it. Confirm the scheduled
+  `borg check --repository-only` timer is enabled and its last run came back
+  clean (Chapter 6).
+- Test recovery under realistic conditions, not just that a command exits 0.
 
 ---
 
