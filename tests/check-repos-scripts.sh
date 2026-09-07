@@ -708,6 +708,38 @@ run "$T/scripts/21-check-timer-install.sh"
   && [ -L "$UNIT_DIR/$TIMER_NAME" ] && [ -L "$UNIT_DIR/$SERVICE_NAME" ]; }
 assert "21.5 re-running is idempotent -- old symlinks replaced, not duplicated" $?
 
+# A symlink pointing anywhere other than this checkout's own unit is another
+# installation's, sharing this UNIT_DIR because CHECK_TIMER_NAME was never
+# made distinct (scripts/config.sh). Mirrors 50-service-install.sh's own
+# not-this-checkout's-Quadlet check.
+new_check_tree; reset_env
+echo decoy > "$WORK/foreign.timer"
+ln -s "$WORK/foreign.timer" "$UNIT_DIR/$TIMER_NAME"
+run "$T/scripts/21-check-timer-install.sh"
+{ [ "$RC" -ne 0 ] && [[ "$OUT" == *"already in use"* ]] \
+  && [ "$(readlink "$UNIT_DIR/$TIMER_NAME")" = "$WORK/foreign.timer" ] \
+  && [ ! -e "$UNIT_DIR/$SERVICE_NAME" ]; }
+assert "21.6 a timer symlink belonging to another installation is refused, untouched" $?
+
+new_check_tree; reset_env
+echo decoy > "$WORK/foreign.service"
+ln -s "$WORK/foreign.service" "$UNIT_DIR/$SERVICE_NAME"
+run "$T/scripts/21-check-timer-install.sh"
+{ [ "$RC" -ne 0 ] && [[ "$OUT" == *"already in use"* ]] \
+  && [ "$(readlink "$UNIT_DIR/$SERVICE_NAME")" = "$WORK/foreign.service" ] \
+  && [ ! -e "$UNIT_DIR/$TIMER_NAME" ]; }
+assert "21.7 a service symlink belonging to another installation is refused, untouched" $?
+
+# A plain file (not a symlink this or any install ever wrote) is refused too
+# -- something placed it by hand, and silently replacing it would destroy
+# whatever that was.
+new_check_tree; reset_env
+echo "not a symlink" > "$UNIT_DIR/$TIMER_NAME"
+run "$T/scripts/21-check-timer-install.sh"
+{ [ "$RC" -ne 0 ] && [[ "$OUT" == *"not a symlink this script wrote"* ]] \
+  && [ ! -L "$UNIT_DIR/$TIMER_NAME" ] && [ -f "$UNIT_DIR/$TIMER_NAME" ]; }
+assert "21.8 a hand-placed regular file at the timer path is refused, untouched" $?
+
 # ============================================================================
 # 22. 22-check-timer-uninstall.sh
 # ============================================================================

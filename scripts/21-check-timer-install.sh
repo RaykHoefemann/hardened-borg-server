@@ -66,9 +66,46 @@ fi
 echo "[install] Rendering $RENDERED_SERVICE from template"
 sed "s|@@SCRIPT@@|${SCRIPT}|" "$SERVICE_TEMPLATE" > "$RENDERED_SERVICE"
 
-echo "[install] Installing systemd units as symlinks..."
 mkdir -p "$SERVICE_DIR"
 
+# Refuse to clobber another installation's timer/service units.
+#
+# Both are namespaced by CHECK_TIMER_NAME (scripts/config.sh), but two
+# checkouts that forgot to give the second a distinct name would both
+# resolve to the same $SERVICE_DIR/$TIMER_NAME and $SERVICE_DIR/$SERVICE_NAME
+# -- a plain install would silently replace the first checkout's units, and
+# because ExecStart embeds that checkout's own REPO_ROOT, the daily sweep
+# would end up running the wrong scripts under the second checkout's name.
+# Fail loudly instead, the same check 50-service-install.sh already applies
+# to the Quadlet: if the symlink is already here and does NOT point at this
+# checkout's own file, it belongs to another installation.
+check_not_foreign() {
+    TARGET="$1"; SOURCE="$2"
+    if [ -L "$TARGET" ]; then
+        EXISTING_TARGET="$(readlink -f "$TARGET" 2>/dev/null || true)"
+        SOURCE_REAL="$(readlink -f "$SOURCE" 2>/dev/null || echo "$SOURCE")"
+        if [ "$EXISTING_TARGET" != "$SOURCE_REAL" ]; then
+            echo "ERROR: '$TARGET' already exists and points at"
+            echo "       '${EXISTING_TARGET:-<unresolvable>}', not this checkout's"
+            echo "       '$SOURCE_REAL'."
+            echo "       CHECK_TIMER_NAME='${CHECK_TIMER_NAME}' is already in use by"
+            echo "       another installation of this project on this host. Give this"
+            echo "       one a distinct CHECK_TIMER_NAME in config.sh, or run"
+            echo "       ./scripts/22-check-timer-uninstall.sh from the other checkout"
+            echo "       first."
+            exit 1
+        fi
+    elif [ -e "$TARGET" ]; then
+        echo "ERROR: '$TARGET' exists but is not a symlink this script wrote."
+        echo "       Something placed it by hand. Move it aside and re-run."
+        exit 1
+    fi
+}
+
+check_not_foreign "$SERVICE_DIR/$TIMER_NAME" "$TIMER_UNIT"
+check_not_foreign "$SERVICE_DIR/$SERVICE_NAME" "$RENDERED_SERVICE"
+
+echo "[install] Installing systemd units as symlinks..."
 for TARGET in "$SERVICE_DIR/$TIMER_NAME" "$SERVICE_DIR/$SERVICE_NAME"; do
     if [ -e "$TARGET" ]; then
         echo "[install] Removing old file $TARGET"
