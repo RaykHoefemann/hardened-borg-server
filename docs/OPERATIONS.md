@@ -114,7 +114,7 @@ location: Frankfurt, DE
 contact: admin@example.com
 
 [software]
-version: 1.1.2
+version: 1.1.3
 source: https://github.com/RaykHoefemann/hardened-borg-server
 
 [client]
@@ -541,8 +541,8 @@ Because the Quadlet removes the container on stop and creates a fresh one on sta
 Shows a combined status view, opening with the release identity of this installation:
 
 ```
-Host scripts:     1.1.2
-Running version:  1.1.2
+Host scripts:     1.1.3
+Running version:  1.1.3
 Configured image: ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest>
 Running image:    ghcr.io/raykhoefemann/hardened-borg-server@sha256:<digest>
 Bundled borg:     borg 1.4.0
