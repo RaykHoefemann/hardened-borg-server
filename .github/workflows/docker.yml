@@ -96,9 +96,18 @@ jobs:
           output: trivy-results.sarif
 
       - name: Upload vulnerability report to the Security tab
+        # ref/sha pin this to the commit the tag points at (which is what
+        # github.sha already resolves to on a tag push), not the tag ref
+        # itself. Without this, results attach to refs/tags/<tag> and the
+        # Security tab's default view -- which only shows the default
+        # branch -- never surfaces them; they exist but only via the API
+        # with ?ref=refs/tags/<tag> explicitly. v1.1.3's own upload has
+        # this problem; every release from here on does not.
         uses: github/codeql-action/upload-sarif@fddeee1a7ece751b577e409a89057319e3172939 # v4
         with:
           sarif_file: trivy-results.sarif
+          ref: refs/heads/main
+          sha: ${{ github.sha }}
 
       - name: Vulnerability gate (fixable CRITICAL only)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
