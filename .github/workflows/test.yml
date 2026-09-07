@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # The suite drives the real wrapper against real Borg repositories, so
       # borgbackup is needed both as the `borg` CLI (to build fixtures) and as
@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # The job above runs the wrapper against the runner's borg. The image
       # ships its own, and the two drifted apart unnoticed once "stable" moved
@@ -65,7 +65,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # build_authorized_keys.sh writes to absolute paths (/config, /log,
       # /repo, /home/borg/.ssh); bubblewrap gives each case a tmpfs root with
@@ -94,7 +94,7 @@ jobs:
     # next manual VM verification.
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: snapshots/ scripts
         run: tests/snapshot-scripts.sh
@@ -111,7 +111,7 @@ jobs:
     # classification -- is checked on every push.
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: scripts/ repository-check tooling
         run: tests/check-repos-scripts.sh
@@ -121,7 +121,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: VERSION, git tag, image tag and SOURCE_URL
         run: tests/doc-image-tags.sh consistency
@@ -139,7 +139,7 @@ jobs:
     if: github.event_name != 'push'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Check documented tags against GHCR
         run: tests/doc-image-tags.sh registry
@@ -155,7 +155,7 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Compare the pinned digest against the upstream tag
         run: tests/base-image-freshness.sh
@@ -169,7 +169,7 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Compare the pinned package versions against the base image's pool
         run: tests/package-pin-freshness.sh
@@ -185,7 +185,7 @@ jobs:
     # A linter that finds a platform-specific bug on day one is not advisory.
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install shellcheck
         run: |
