@@ -1,0 +1,11 @@
+version: 2
+updates:
+  # Workflow actions are pinned by commit SHA (tests/... has no equivalent
+  # freshness check for them, unlike the Docker base image and apt package
+  # pins — this is the off-the-shelf mechanism for the same problem).
+  # Dependabot opens a PR bumping the SHA when an action releases; normal CI
+  # runs against it before merge.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
