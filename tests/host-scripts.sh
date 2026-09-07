@@ -910,11 +910,25 @@ OUT="$(printf 'y\n' | PATH="$STUB:$DF_BIN:$PATH" "$WORK/sh" "$T/scripts/00-ssh-c
 assert "10.17 the same run under bash-as-sh behaves identically" $?
 
 # podman missing is checked before anything is created, not halfway through.
+#
+# The script still needs the ordinary coreutils that live in /usr/bin, so
+# this can't just point PATH at NOPODMAN and stop. It also can't append
+# /usr/bin itself: some runner images now ship a real podman there, which
+# would make "missing" stop being missing. So SAFEBIN mirrors /usr/bin with
+# symlinks, minus podman, and PATH never touches the real /usr/bin at all —
+# /bin is commonly a symlink to /usr/bin (merged-usr), so excluding the
+# directory instead of the one file would have thrown out every coreutil too.
 setup_create
 NOPODMAN="$WORK/nopodman"; mkdir -p "$NOPODMAN"
 cp "$STUB/sudo" "$STUB/xfs_quota" "$STUB/lsattr" "$NOPODMAN/"
+SAFEBIN="$WORK/safebin"; mkdir -p "$SAFEBIN"
+for f in /usr/bin/*; do
+    b="${f##*/}"
+    [ "$b" = "podman" ] && continue
+    ln -s "$f" "$SAFEBIN/$b" 2>/dev/null
+done
 df_stub "$T/repo:$((4000 * GIB)):0"
-OUT="$(printf 'y\n' | PATH="$NOPODMAN:$DF_BIN:/usr/bin:/bin" "$T/scripts/00-ssh-create-user.sh" user1 50G 2>&1)"; RC=$?
+OUT="$(printf 'y\n' | PATH="$NOPODMAN:$DF_BIN:$SAFEBIN" "$T/scripts/00-ssh-create-user.sh" user1 50G 2>&1)"; RC=$?
 [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'podman not found'
 assert "10.18 a missing podman is reported before anything is created" $?
 
