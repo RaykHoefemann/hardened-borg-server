@@ -14,6 +14,7 @@ jobs:
       packages: write
       id-token: write        # required to mint the Sigstore signing identity
       attestations: write    # required to publish the build attestation
+      security-events: write # required to upload the Trivy SARIF report
 
     steps:
       - name: Checkout
@@ -68,6 +69,46 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
+          sbom: true
+
+      # Scans the amd64 image (Trivy's default platform on an amd64 runner,
+      # unmodified here); the two architectures share a Dockerfile and an apt
+      # install pinned to the same package versions (Dockerfile), so they do
+      # not carry different vulnerabilities.
+      #
+      # Two runs against the same digest, not one, because they answer
+      # different questions and fail the build in different ways:
+      #   - This one is the full picture (every severity, fixed or not),
+      #     uploaded to the Security tab so it is visible without blocking
+      #     anything. It never fails the job (no exit-code set).
+      #   - The gate below is deliberately narrow: CRITICAL only, and
+      #     --ignore-unfixed so a CVE with no available fix cannot block a
+      #     release indefinitely over something no commit here can act on
+      #     (the same reasoning tests/base-image-freshness.sh's header gives
+      #     for not running on pull requests -- a red build with no
+      #     available fix teaches people to ignore red builds).
+      - name: Vulnerability scan (report, all severities)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/raykhoefemann/hardened-borg-server@${{ steps.push.outputs.digest }}
+          scanners: vuln
+          format: sarif
+          output: trivy-results.sarif
+
+      - name: Upload vulnerability report to the Security tab
+        uses: github/codeql-action/upload-sarif@fddeee1a7ece751b577e409a89057319e3172939 # v4
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Vulnerability gate (fixable CRITICAL only)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/raykhoefemann/hardened-borg-server@${{ steps.push.outputs.digest }}
+          scanners: vuln
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: 1
 
       - name: Attest build provenance
         # Not pushed to the OCI registry (push-to-registry defaults to false):
