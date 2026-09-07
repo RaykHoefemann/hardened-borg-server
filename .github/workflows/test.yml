@@ -160,6 +160,20 @@ jobs:
       - name: Compare the pinned digest against the upstream tag
         run: tests/base-image-freshness.sh
 
+  package-pin-freshness:
+    name: package pins are current
+    runs-on: ubuntu-latest
+    # Schedule and manual dispatch only, for the same reason as
+    # base-image-freshness above: a newer package in the pool is a
+    # maintenance signal, not a defect in the commit under test.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compare the pinned package versions against the base image's pool
+        run: tests/package-pin-freshness.sh
+
   shellcheck:
     name: shellcheck
     runs-on: ubuntu-latest
