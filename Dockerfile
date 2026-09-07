@@ -28,10 +28,22 @@ FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc401
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install base packages
+# Pinned by exact version, for the same reason the base image is pinned by
+# digest: apt always installs whatever is currently in trixie's package pool,
+# so two builds of the same commit — and same base image digest — can still
+# carry a different borgbackup or openssh-server. That gap matters more for
+# borgbackup than for most packages: borg-wrapper.sh's encryption check reads
+# the repository manifest's TYPE byte directly (see its own top-of-file
+# comment), so which borg version actually ships is not a detail.
+#
+# The cost is symmetric with the base image, too: apt refuses to install a
+# version that has aged out of the pool, so a stale pin here does not decay
+# silently — it fails the very next build. tests/package-pin-freshness.sh
+# also polls weekly, the same way tests/base-image-freshness.sh does for the
+# base image, so the pin can be bumped deliberately before that happens.
 RUN apt-get update && apt-get install -y \
-    borgbackup \
-    openssh-server \
+    borgbackup=1.4.0-5 \
+    openssh-server=1:10.0p1-7+deb13u4 \
     && rm -rf /var/lib/apt/lists/*
 
 # Prepare SSH
